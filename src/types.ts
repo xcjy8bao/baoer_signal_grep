@@ -1,5 +1,7 @@
-export const DEFAULT_PAGE_SIZE = 20;
+export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 100;
+export const DEFAULT_RESULT_TOKEN_BUDGET = 2_000;
+export const ESTIMATED_CHARACTERS_PER_TOKEN = 4;
 export const DEFAULT_SUMMARY_FILE_LIMIT = 30;
 export const MAX_STORED_MATCHES = 50_000;
 export const MAX_LINE_CHARACTERS = 500;
@@ -62,4 +64,5 @@ export interface SignalGrepDetails {
 export interface SignalGrepResult {
   text: string;
   details: SignalGrepDetails;
+  normalText?: string;
 }

@@ -1,6 +1,4 @@
-import type { GrepToolInput } from "@earendil-works/pi-coding-agent";
-import { normalizeRequest } from "./request.js";
-import type { SignalGrepInput } from "./service.js";
+import { ESTIMATED_CHARACTERS_PER_TOKEN } from "./types.js";
 
 export const METRICS_STATUS_KEY = "signal-grep-metrics";
 
@@ -12,45 +10,10 @@ export interface MetricsSnapshot {
   normalBytes: number;
   searches: number;
   cursorPages: number;
-  skippedSearches: number;
-}
-
-export type NormalGrepInputResult =
-  | { supported: true; input: GrepToolInput }
-  | { supported: false; reason: string };
-
-function smartCaseIsInsensitive(pattern: string): boolean {
-  return pattern === pattern.toLocaleLowerCase();
-}
-
-export function createNormalGrepInput(input: SignalGrepInput): NormalGrepInputResult {
-  if (!input.pattern?.trim()) return { supported: false, reason: "pattern is unavailable" };
-  const request = normalizeRequest(input);
-  if (!request.hidden) {
-    return { supported: false, reason: "normal grep always includes hidden files" };
-  }
-  if (request.exclude.length > 0) {
-    return { supported: false, reason: "normal grep does not support exclude globs" };
-  }
-  if (request.glob.length > 1) {
-    return { supported: false, reason: "normal grep accepts only one include glob" };
-  }
-
-  return {
-    supported: true,
-    input: {
-      pattern: request.pattern,
-      ...(request.path ? { path: request.path } : {}),
-      ...(request.glob[0] ? { glob: request.glob[0] } : {}),
-      literal: request.literal,
-      ignoreCase: request.ignoreCase ?? smartCaseIsInsensitive(request.pattern),
-      context: request.context,
-    },
-  };
 }
 
 export function estimateTextTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / ESTIMATED_CHARACTERS_PER_TOKEN);
 }
 
 function formatTokens(count: number): string {
@@ -110,11 +73,6 @@ export class SearchMetrics {
     this.#snapshot.cursorPages += 1;
   }
 
-  recordSkippedSearch(): void {
-    if (!this.#snapshot.enabled) return;
-    this.#snapshot.skippedSearches += 1;
-  }
-
   get enabled(): boolean {
     return this.#snapshot.enabled;
   }
@@ -126,19 +84,14 @@ export class SearchMetrics {
   formatStatus(): string {
     const snapshot = this.snapshot;
     const result = comparison(snapshot);
-    const warning = snapshot.skippedSearches > 0 ? ` · ⚠${snapshot.skippedSearches}` : "";
-    return `SG ${formatTokens(snapshot.signalTokens)} / normal ${formatTokens(snapshot.normalTokens)} · ${result.improved ? "↓" : "↑"}${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%)${warning}`;
+    return `SG ${formatTokens(snapshot.signalTokens)} / normal ${formatTokens(snapshot.normalTokens)} · ${result.improved ? "↓" : "↑"}${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%)`;
   }
 
   formatReport(): string {
     const snapshot = this.snapshot;
     const result = comparison(snapshot);
     const outcome = result.improved ? "saved" : "used an additional";
-    const skipped =
-      snapshot.skippedSearches > 0
-        ? ` ${snapshot.skippedSearches} unsupported search${snapshot.skippedSearches === 1 ? " was" : "es were"} excluded from the comparison.`
-        : "";
-    return `Signal Grep metrics: SG ${formatTokens(snapshot.signalTokens)} estimated tokens (${formatBytes(snapshot.signalBytes)}) / normal ${formatTokens(snapshot.normalTokens)} (${formatBytes(snapshot.normalBytes)}) · ${outcome} ${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%) across ${snapshot.searches} searches and ${snapshot.cursorPages} cursor pages.${skipped}`;
+    return `Signal Grep metrics: SG ${formatTokens(snapshot.signalTokens)} estimated tokens (${formatBytes(snapshot.signalBytes)}) / normal ${formatTokens(snapshot.normalTokens)} (${formatBytes(snapshot.normalBytes)}) · ${outcome} ${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%) across ${snapshot.searches} searches and ${snapshot.cursorPages} cursor pages.`;
   }
 
   #empty(enabled: boolean): MetricsSnapshot {
@@ -150,7 +103,6 @@ export class SearchMetrics {
       normalBytes: 0,
       searches: 0,
       cursorPages: 0,
-      skippedSearches: 0,
     };
   }
 }

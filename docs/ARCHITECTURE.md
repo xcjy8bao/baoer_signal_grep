@@ -5,6 +5,9 @@ Signal Grep is intentionally a small composition of single-purpose components. I
 ## Data flow
 
 ```text
+config.ts ─── selects additive `signal_grep` or opt-in built-in `grep` override
+    │
+    ▼
 Pi tool input
     │
     ▼
@@ -25,9 +28,13 @@ format.ts ─── owns model-facing summary, page, byte, and context formattin
     └─► metrics.ts ── optionally compares cumulative result text with normal grep
 ```
 
-`index.ts` is the Pi adapter. It defines the schema, registers the tool and commands, and wires lifecycle cleanup. It contains no search algorithm. When the user explicitly enables metrics, the adapter executes Pi's normal grep after each comparable new search and passes both result texts to `metrics.ts`.
+`index.ts` is the Pi adapter. It defines the schema, registers exactly one Signal Grep tool, registers commands, and wires lifecycle cleanup. `runtime.ts` owns the service/metrics/cursor coordination used by the tool. It contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`.
 
 ## Responsibilities
+
+### Persistent tool mode
+
+`config.ts` owns the user-global `signal-grep.json` contract and staged writes. Missing config means additive mode. A one-shot `startMetricsOnNextLoad` handoff lets `/signal-grep-metrics on` persist the override, reload, clear the handoff, and start session-local Metrics without requiring a second command. Invalid JSON or a mistyped value fails clearly instead of silently changing which public tool owns `grep`. Override commands inspect the active grep source and refuse to persist when another extension already owns it. Pi's extension loader also rejects duplicate `grep` registrations, so conflicts fail closed rather than creating ambiguous ownership.
 
 ### Request normalization
 
@@ -49,24 +56,27 @@ It never formats model output or owns cursor state.
 
 `SnapshotStore` owns cursor identity, expiry, memory bounds, and eviction. Cursors reference a snapshot and offset; they never encode a command to rerun. This makes pagination stable even if files change after the initial search.
 
-Snapshots are session-local and are cleared at shutdown. No state is persisted or dual-written.
+Snapshots are session-local and are cleared at shutdown. Results without a cursor are released immediately, and a paginated snapshot is released after its final page, so inaccessible compact results cannot evict active cursors. No state is persisted or dual-written.
 
 ### Policy composition
 
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
 1. no matches → explicit complete empty result;
-2. `summary`, or broad `auto` → file distribution plus detail cursor;
-3. small `auto`, `matches`, or cursor → bounded detail page;
-4. retention bound exceeded → explicit partial result.
+2. `summary` → file distribution plus detail cursor;
+3. `auto` complete result fits the adaptive budget → return every grouped detail directly;
+4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
+5. other `auto` results that exceed the adaptive budget or retention is partial → return a summary first;
+6. `matches` or cursor → return one adaptive-budget detail page;
+7. retention bound exceeded → explicit partial result.
 
 ### Output formatting
 
-`format.ts` owns only presentation boundaries. Detail pages stop before either the match count or byte budget is exceeded. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page, may reflect edits made after the snapshot, and is omitted explicitly for files over 5 MiB or files that can no longer be read.
+`format.ts` owns only presentation boundaries. Detail pages target about 2,000 estimated result-text tokens and stop before the match-count, character, or hard byte budget is exceeded. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page, may reflect edits made after the snapshot, and is omitted explicitly for files over 5 MiB or files that can no longer be read. The normal-format metrics baseline is also rendered here from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
 
 ### Opt-in comparison metrics
 
-`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. New comparable searches contribute one Signal Grep result and one Pi normal grep baseline; tracked cursor pages contribute only their Signal Grep result. Inputs normal grep cannot represent equivalently are visibly excluded instead of producing a misleading ratio. Metrics never alter model-facing search text, persist state, or transmit data.
+`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. Every new search contributes one Signal Grep result and one normal-format rendering of the exact same snapshot; tracked cursor pages contribute only their Signal Grep result. Metrics never run a second search, alter model-facing search text, persist state, or transmit data.
 
 ## Core invariants
 
@@ -76,8 +86,10 @@ Snapshots are session-local and are cleared at shutdown. No state is persisted o
 - Process errors never become an empty successful result.
 - Limits have one source of truth in `types.ts`.
 - Runtime source uses Node.js 22+ APIs and remains executable under Bun 1.4+.
-- Disabled metrics execute no normal grep baseline and add no status.
-- Metrics never recount a normal baseline for cursor continuation and never hide negative savings or unsupported comparisons.
+- Disabled metrics render no normal-format baseline and add no status.
+- Metrics never recount a normal baseline for cursor continuation and never hide negative savings.
+- Additive and override modes each register exactly one Signal Grep-owned public tool.
+- Compact complete searches return directly; adaptive policy never changes the underlying match set.
 
 ## Deliberate non-goals
 
