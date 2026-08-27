@@ -18,13 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ripgrep
       - name: Verify ripgrep
         run: rg --version
       - name: Install dependencies
@@ -52,13 +55,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ripgrep
       - name: Verify ripgrep
         run: rg --version
       - name: Install dependencies
