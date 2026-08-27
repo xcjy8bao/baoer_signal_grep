@@ -4,6 +4,12 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-27
+
+### Fixed
+
+- Included the contributor documentation referenced by the packaged README so npm and Pi Gallery links resolve.
+
 ## [0.1.0] - 2026-08-27
 
 ### Changed

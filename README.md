@@ -8,7 +8,7 @@
 
 Context-efficient, correctness-first content search for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Latest release:** `0.1.0`.
+> **Latest release:** `0.1.1`.
 
 ## Why Signal Grep?
 
