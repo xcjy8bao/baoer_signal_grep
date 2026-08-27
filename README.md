@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/xcjy8bao/pi-plugin-signal-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/xcjy8bao/pi-plugin-signal-grep/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/xcjy8bao/pi-plugin-signal-grep/actions/workflows/codeql.yml/badge.svg)](https://github.com/xcjy8bao/pi-plugin-signal-grep/actions/workflows/codeql.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [简体中文](README.zh-CN.md) · English
 
@@ -208,4 +208,4 @@ All changes—including AI-authored changes—must use pull requests. Read:
 
 ## License
 
-[MIT](LICENSE)
+[GNU AGPL v3.0 only](LICENSE)

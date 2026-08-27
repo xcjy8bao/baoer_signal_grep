@@ -4,6 +4,10 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+### Changed
+
+- Relicensed the project from MIT to GNU AGPL v3.0 only.
+
 ### Added
 
 - Adaptive `signal_grep` tool with summary-first broad search.

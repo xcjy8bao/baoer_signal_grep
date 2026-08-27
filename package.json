@@ -16,7 +16,7 @@
   "bugs": {
     "url": "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "author": "baoer",
   "repository": {
     "type": "git",
