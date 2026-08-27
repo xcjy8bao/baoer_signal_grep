@@ -2,27 +2,26 @@
   "name": "pi-plugin-signal-grep",
   "version": "0.1.0",
   "description": "Context-efficient, correctness-first ripgrep search for the Pi coding agent",
-  "type": "module",
+  "keywords": [
+    "ai-agent",
+    "context-engineering",
+    "grep",
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "ripgrep",
+    "search"
+  ],
+  "homepage": "https://github.com/xcjy8bao/pi-plugin-signal-grep#readme",
+  "bugs": {
+    "url": "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
+  },
   "license": "MIT",
   "author": "baoer",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xcjy8bao/pi-plugin-signal-grep.git"
   },
-  "homepage": "https://github.com/xcjy8bao/pi-plugin-signal-grep#readme",
-  "bugs": {
-    "url": "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
-  },
-  "keywords": [
-    "pi",
-    "pi-package",
-    "pi-extension",
-    "ripgrep",
-    "grep",
-    "search",
-    "context-engineering",
-    "ai-agent"
-  ],
   "files": [
     "src",
     "docs",
@@ -32,41 +31,44 @@
     "CHANGELOG.md",
     "SECURITY.md"
   ],
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ]
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
-    "format": "biome format --write .",
-    "format:check": "biome format .",
-    "lint": "biome lint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:node": "bun run scripts/node-smoke.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run test:node",
     "pack:check": "bun pm pack --dry-run"
   },
-  "engines": {
-    "bun": ">=1.4.0",
-    "node": ">=22.19.0"
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3",
+    "@types/bun": "^1.4.0",
+    "oxfmt": "^0.65.0",
+    "oxlint": "^1.80.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "typebox": "^1.3.19",
+    "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.4.0",
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
-    "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3",
-    "@types/bun": "^1.4.0",
-    "typebox": "^1.3.19",
-    "typescript": "^7.0.2"
+  "engines": {
+    "bun": ">=1.4.0",
+    "node": ">=22.19.0"
   },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
+  "packageManager": "bun@1.4.0",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
   }
 }

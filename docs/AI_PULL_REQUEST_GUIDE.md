@@ -4,7 +4,7 @@ This document is the authoritative pull-request protocol for AI contributors and
 
 ## 1. Before editing
 
-1. Read `AGENTS.md`, this guide, and the architecture document.
+1. Read `AGENTS.md`, this guide, the architecture document, and `QUALITY_GATES.md`.
 2. Confirm the issue or requested outcome in observable terms.
 3. Identify the public contract, failure semantics, and lifecycle boundaries touched.
 4. Inspect current implementation and tests before proposing a new abstraction.

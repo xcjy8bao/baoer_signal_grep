@@ -29,6 +29,24 @@ export interface RipgrepRunnerOptions {
   maxStoredMatches?: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isRgText(value: unknown): value is RgText {
+  return isRecord(value) && (typeof value.text === "string" || typeof value.bytes === "string");
+}
+
+function isRgMatchEvent(value: unknown): value is RgMatchEvent {
+  if (!isRecord(value) || value.type !== "match" || !isRecord(value.data)) return false;
+  return (
+    isRgText(value.data.path) &&
+    isRgText(value.data.lines) &&
+    typeof value.data.line_number === "number" &&
+    Number.isSafeInteger(value.data.line_number)
+  );
+}
+
 function decodeRgText(value: RgText, field: string): string {
   if (typeof value.text === "string") return value.text;
   if (typeof value.bytes === "string") return Buffer.from(value.bytes, "base64").toString("utf8");
@@ -115,10 +133,16 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       lines.on("line", (line) => {
         if (protocolError || line.length === 0) return;
         try {
-          const event = JSON.parse(line) as { type?: string };
+          const event: unknown = JSON.parse(line);
+          if (!isRecord(event)) {
+            throw new SignalGrepError("ripgrep emitted a non-object JSON event");
+          }
           if (event.type !== "match") return;
+          if (!isRgMatchEvent(event)) {
+            throw new SignalGrepError("ripgrep emitted an invalid match event");
+          }
 
-          const matchEvent = event as RgMatchEvent;
+          const matchEvent = event;
           const rawPath = decodeRgText(matchEvent.data.path, "path");
           const rawContent = decodeRgText(matchEvent.data.lines, "line content")
             .replaceAll("\r", "")
@@ -150,10 +174,10 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
 
       child.once("error", (error) => {
         settle(() => {
-          const message =
-            (error as NodeJS.ErrnoException).code === "ENOENT"
-              ? `ripgrep executable not found: ${executable}`
-              : `Failed to start ripgrep: ${error.message}`;
+          const executableMissing = "code" in error && error.code === "ENOENT";
+          const message = executableMissing
+            ? `ripgrep executable not found: ${executable}`
+            : `Failed to start ripgrep: ${error.message}`;
           rejectSearch(new SignalGrepError(message, { cause: error }));
         });
       });

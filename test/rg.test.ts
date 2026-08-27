@@ -38,8 +38,12 @@ describe("ripgrep runner", () => {
   test("fails immediately for an already aborted search", async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(createRipgrepRunner()(request, ".", controller.signal)).rejects.toMatchObject({
-      name: "AbortError",
-    });
+    let failure: unknown;
+    try {
+      await createRipgrepRunner()(request, ".", controller.signal);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ name: "AbortError" });
   });
 });

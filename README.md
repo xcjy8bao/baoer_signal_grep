@@ -74,19 +74,19 @@ The planned npm package name is `pi-plugin-signal-grep`; no npm release exists y
 
 The extension registers one tool: `signal_grep`.
 
-| Parameter | Type | Default | Purpose |
-| --- | --- | --- | --- |
-| `pattern` | string | — | Regex or literal text; required for a new search |
-| `path` | string | `.` | File or directory relative to the working directory |
-| `glob` | string or string[] | `[]` | Include globs |
-| `exclude` | string or string[] | `[]` | Exclude globs |
-| `literal` | boolean | `false` | Use fixed-string matching |
-| `ignoreCase` | boolean | smart-case | Force insensitive or sensitive matching |
-| `hidden` | boolean | `true` | Include hidden files; `.git` is always excluded |
-| `context` | number | `0` | Before/after context, clamped to 0–20 |
-| `limit` | number | `20` | Detail matches per page, clamped to 1–100 |
-| `mode` | `auto`, `summary`, `matches` | `auto` | Select adaptive, summary, or detail output |
-| `cursor` | string | — | Continue a stable retained snapshot |
+| Parameter    | Type                         | Default    | Purpose                                             |
+| ------------ | ---------------------------- | ---------- | --------------------------------------------------- |
+| `pattern`    | string                       | —          | Regex or literal text; required for a new search    |
+| `path`       | string                       | `.`        | File or directory relative to the working directory |
+| `glob`       | string or string[]           | `[]`       | Include globs                                       |
+| `exclude`    | string or string[]           | `[]`       | Exclude globs                                       |
+| `literal`    | boolean                      | `false`    | Use fixed-string matching                           |
+| `ignoreCase` | boolean                      | smart-case | Force insensitive or sensitive matching             |
+| `hidden`     | boolean                      | `true`     | Include hidden files; `.git` is always excluded     |
+| `context`    | number                       | `0`        | Before/after context, clamped to 0–20               |
+| `limit`      | number                       | `20`       | Detail matches per page, clamped to 1–100           |
+| `mode`       | `auto`, `summary`, `matches` | `auto`     | Select adaptive, summary, or detail output          |
+| `cursor`     | string                       | —          | Continue a stable retained snapshot                 |
 
 ### Modes
 
@@ -140,6 +140,7 @@ All changes—including AI-authored changes—must use pull requests. Read:
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AI Pull Request Guide](docs/AI_PULL_REQUEST_GUIDE.md)
+- [Quality Gates](docs/QUALITY_GATES.md)
 - [AGENTS.md](AGENTS.md)
 
 ## License

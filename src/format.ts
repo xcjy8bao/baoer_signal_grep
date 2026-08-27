@@ -89,6 +89,8 @@ export async function formatMatchPage(
     if (signal?.aborted) throw abortError();
     const match = snapshot.matches[nextOffset];
     if (!match) break;
+    // Formatting is sequential because each block consumes the remaining shared byte budget.
+    // oxlint-disable-next-line no-await-in-loop
     let block = await formatBlock(match, snapshot.request.context, cache, omittedFiles, signal);
     const fileHeader = match.displayPath === currentFile ? "" : `${match.displayPath}\n`;
     const separator = output.length === 0 || fileHeader.length === 0 ? "" : "\n";
@@ -117,12 +119,12 @@ export async function formatMatchPage(
     body: output.join("\n"),
     returnedMatches,
     nextOffset,
-    contextOmittedFiles: [...omittedFiles].sort(),
+    contextOmittedFiles: [...omittedFiles].toSorted(),
   };
 }
 
 export function formatSummary(snapshot: SearchSnapshot, fileLimit: number) {
-  const files = [...snapshot.fileCounts.entries()].sort(([left], [right]) =>
+  const files = [...snapshot.fileCounts.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
   );
   const rows: string[] = [];

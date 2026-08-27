@@ -1,6 +1,6 @@
 # AI Contributor Instructions
 
-This repository is developed through pull requests, including AI-authored changes. Read this file and `docs/AI_PULL_REQUEST_GUIDE.md` before editing.
+This repository is developed through pull requests, including AI-authored changes. Read this file, `docs/AI_PULL_REQUEST_GUIDE.md`, and `docs/QUALITY_GATES.md` before editing.
 
 ## Engineering principles
 
@@ -12,7 +12,9 @@ This repository is developed through pull requests, including AI-authored change
 - Maintain one source of truth. Do not dual-write state or add compatibility layers without a documented public obligation.
 - Do not over-engineer hypothetical features.
 - Use Bun 1.4+ as the primary package manager and test runner, TypeScript 7+, and Node.js 22+ compatible runtime APIs.
+- Oxfmt is the only formatting authority. Oxlint is the only lint authority; keep type-aware lint enabled and deny warnings.
 - Use modern, erasable TypeScript. Do not introduce enums, namespaces, legacy decorators, CommonJS, or avoidable type assertions.
+- Do not suppress a lint rule without a precise local reason. Unused suppression directives fail CI.
 
 ## Search correctness invariants
 

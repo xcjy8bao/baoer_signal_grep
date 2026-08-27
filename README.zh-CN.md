@@ -74,19 +74,19 @@ pi -e ./src/index.ts
 
 插件只注册一个工具：`signal_grep`。
 
-| 参数 | 类型 | 默认值 | 作用 |
-| --- | --- | --- | --- |
-| `pattern` | string | — | 正则或纯文本；新搜索必填 |
-| `path` | string | `.` | 相对于工作目录的文件或目录 |
-| `glob` | string 或 string[] | `[]` | 包含规则 |
-| `exclude` | string 或 string[] | `[]` | 排除规则 |
-| `literal` | boolean | `false` | 固定字符串匹配 |
-| `ignoreCase` | boolean | 智能大小写 | 强制忽略或区分大小写 |
-| `hidden` | boolean | `true` | 搜索隐藏文件；始终排除 `.git` |
-| `context` | number | `0` | 前后文行数，限制在 0–20 |
-| `limit` | number | `20` | 每页具体匹配数，限制在 1–100 |
-| `mode` | `auto`、`summary`、`matches` | `auto` | 自适应、摘要或具体匹配模式 |
-| `cursor` | string | — | 继续读取稳定搜索快照 |
+| 参数         | 类型                         | 默认值     | 作用                          |
+| ------------ | ---------------------------- | ---------- | ----------------------------- |
+| `pattern`    | string                       | —          | 正则或纯文本；新搜索必填      |
+| `path`       | string                       | `.`        | 相对于工作目录的文件或目录    |
+| `glob`       | string 或 string[]           | `[]`       | 包含规则                      |
+| `exclude`    | string 或 string[]           | `[]`       | 排除规则                      |
+| `literal`    | boolean                      | `false`    | 固定字符串匹配                |
+| `ignoreCase` | boolean                      | 智能大小写 | 强制忽略或区分大小写          |
+| `hidden`     | boolean                      | `true`     | 搜索隐藏文件；始终排除 `.git` |
+| `context`    | number                       | `0`        | 前后文行数，限制在 0–20       |
+| `limit`      | number                       | `20`       | 每页具体匹配数，限制在 1–100  |
+| `mode`       | `auto`、`summary`、`matches` | `auto`     | 自适应、摘要或具体匹配模式    |
+| `cursor`     | string                       | —          | 继续读取稳定搜索快照          |
 
 ### 模式
 
@@ -140,6 +140,7 @@ bun run pack:check
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AI Pull Request Guide](docs/AI_PULL_REQUEST_GUIDE.md)
+- [质量门禁](docs/QUALITY_GATES.md)
 - [AGENTS.md](AGENTS.md)
 
 ## 许可证

@@ -48,6 +48,8 @@ describe("SignalGrepService with ripgrep", () => {
       pages.push(result.text);
       const cursor = result.details.cursor;
       if (!cursor) break;
+      // Cursor pages depend on the previous page and therefore cannot execute in parallel.
+      // oxlint-disable-next-line no-await-in-loop
       result = await service.search({ cursor }, root);
     }
 
@@ -105,9 +107,13 @@ describe("SignalGrepService with ripgrep", () => {
     const controller = new AbortController();
     controller.abort();
 
-    await expect(service.search({ cursor }, root, controller.signal)).rejects.toMatchObject({
-      name: "AbortError",
-    });
+    let failure: unknown;
+    try {
+      await service.search({ cursor }, root, controller.signal);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ name: "AbortError" });
   });
 
   test("marks a bounded snapshot partial instead of claiming completeness", async () => {

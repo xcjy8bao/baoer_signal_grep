@@ -9,5 +9,6 @@ All notable changes will be documented in this file. The project follows [Semant
 - Adaptive `signal_grep` tool with summary-first broad search.
 - Stable in-memory cursor snapshots with explicit partial-state reporting.
 - Bun 1.4 and Node.js 22 compatibility validation.
+- Type-aware Oxlint and deterministic Oxfmt quality gates.
 - English and Simplified Chinese documentation.
 - AI-specific pull request and review protocol.
