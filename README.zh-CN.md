@@ -8,7 +8,7 @@
 
 面向 [Pi 编码智能体](https://pi.dev) 的上下文高效、正确性优先的内容搜索插件。Signal Grep 避免宽泛的 `ripgrep` 结果淹没模型上下文，同时绝不会把被截断的结果伪装成完整结果。
 
-> **项目状态：** 预发布。首个实现正在通过 Pull Request 审查，尚未发布到 npm。
+> **最新版本：** `0.1.0`。
 
 ## 为什么需要 Signal Grep？
 
@@ -118,7 +118,13 @@ bun run benchmark
 
 ## 安装
 
-首个 Pull Request 合并后，可以从 GitHub 安装：
+从 npm 安装最新版本：
+
+```bash
+pi install npm:pi-plugin-signal-grep
+```
+
+也可以安装 GitHub 上的当前版本：
 
 ```bash
 pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
@@ -129,8 +135,6 @@ pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
 ```bash
 pi -e ./src/index.ts
 ```
-
-计划使用的 npm 包名是 `pi-plugin-signal-grep`，目前尚未发布 npm 版本。
 
 ## 工具接口
 
