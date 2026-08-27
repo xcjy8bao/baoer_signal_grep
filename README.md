@@ -78,6 +78,30 @@ Details are available from the stable snapshot with cursor="…".
 
 The agent can now narrow by `path`, or request every detail page. With the default page size, exhaustive retrieval is exactly 20 matches followed by 13—without duplicates or omissions.
 
+## Reproducible before/after test
+
+The repository includes a benchmark script that creates the fixture above, executes Pi's real built-in grep implementation and Signal Grep against the same files, and removes the fixture afterward:
+
+```bash
+bun run benchmark
+```
+
+Measured with Pi 0.84.3, Bun 1.4.0, Node.js 22.22.2, and ripgrep 15.2.0:
+
+| Measurement                        |   Pi built-in grep |                      Signal Grep |
+| ---------------------------------- | -----------------: | -------------------------------: |
+| Actual matches discovered          |                 33 |                               33 |
+| Files containing matches           |                  4 |                                4 |
+| Detail lines in the first response |                 33 |                0 (summary first) |
+| First model-facing response        |          898 bytes |                        220 bytes |
+| First-response reduction           |                  — |                        **75.5%** |
+| Exhaustive detail retrieval        | 33 in one response | 20 + 13 from one stable snapshot |
+| Combined exhaustive detail text    |          898 bytes |                        830 bytes |
+
+The result confirms the intended effect: the default broad-search response is substantially smaller while the complete 33-match result remains recoverable. Signal Grep's exhaustive detail is also grouped by file, so paths are not repeated on every matching line.
+
+This is a context-shape benchmark, not a search-speed or token-count benchmark. Byte counts cover model-facing tool text only; provider serialization, tool schemas, model tokenization, and the extra tool turn required for exhaustive pagination are intentionally excluded. Run the command on your own platform before using the numbers for capacity planning.
+
 ## Requirements
 
 ### Runtime
@@ -139,11 +163,12 @@ Signal Grep treats search completeness as a public contract:
 
 1. A `complete` snapshot retains every matching line discovered by `rg`.
 2. Cursor pages preserve snapshot order and do not duplicate or omit retained matches.
-3. A snapshot that exceeds 50,000 retained matches is marked `partial` in both text and structured details.
-4. Result pages are bounded by match count and 16 KiB of model-facing text.
-5. Lines longer than 500 characters are visibly clipped and counted in details.
-6. Context for files larger than 5 MiB, unreadable files, or a single block that exceeds the page byte budget is omitted and reported.
-7. Invalid cursors and subprocess failures are errors, never successful empty searches.
+3. Retained matching-line text is snapshot-stable. Optional surrounding context is read when a page is formatted and may reflect later file edits.
+4. A snapshot that exceeds 50,000 retained matches is marked `partial` in both text and structured details.
+5. Result pages are bounded by match count and 16 KiB of model-facing text.
+6. Lines longer than 500 characters are visibly clipped and counted in details.
+7. Context for files larger than 5 MiB, unreadable files, or a single block that exceeds the page byte budget is omitted and reported.
+8. Invalid cursors and subprocess failures are errors, never successful empty searches.
 
 See [Architecture](docs/ARCHITECTURE.md) for the ownership and lifecycle model.
 

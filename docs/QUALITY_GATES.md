@@ -75,6 +75,14 @@ bun run test:node
 
 The smoke test builds a temporary Node-targeted bundle, imports it with the configured Node.js executable, and removes the artifact. It verifies that Bun-first development does not introduce Bun-only runtime behavior into the Pi extension.
 
+## Context-shape benchmark
+
+```bash
+bun run benchmark
+```
+
+The benchmark runs Pi's pinned built-in grep and Signal Grep against the same generated 33-match fixture. It fails if match counts or the expected 20 + 13 exhaustive pagination contract changes, reports model-facing byte counts, and removes the fixture. It measures result shape rather than search speed or model tokenization.
+
 ## Package boundary
 
 ```bash
@@ -89,4 +97,4 @@ GitHub Actions runs the same commands on Linux, macOS, and Windows with Node.js 
 
 CI cannot prevent someone from opening a pull request. Repository rules prevent a non-compliant pull request from merging. Local hooks are intentionally not the authority because they can be bypassed and differ by contributor environment.
 
-Required checks and pull-request rules are configured on `main` after the initial workflow checks exist. Maintainers must not bypass a failed gate merely to merge faster.
+Required checks and pull-request rules are configured on `main` and apply to administrators. Maintainers must not bypass a failed gate merely to merge faster.
