@@ -1,6 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createGrepTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createNormalGrepInput, METRICS_STATUS_KEY, SearchMetrics } from "./metrics.js";
 import { createRipgrepRunner } from "./rg.js";
 import { SignalGrepService } from "./service.js";
 
@@ -44,8 +45,20 @@ const searchSchema = Type.Object({
   ),
 });
 
+function resultText(content: Array<{ type: string; text?: string }>): string {
+  return content
+    .filter(
+      (item): item is { type: "text"; text: string } =>
+        item.type === "text" && typeof item.text === "string",
+    )
+    .map((item) => item.text)
+    .join("\n");
+}
+
 export default function signalGrepExtension(pi: ExtensionAPI) {
   const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+  const metrics = new SearchMetrics();
+  const trackedCursors = new Set<string>();
 
   pi.registerTool({
     name: "signal_grep",
@@ -61,7 +74,43 @@ export default function signalGrepExtension(pi: ExtensionAPI) {
     parameters: searchSchema,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const inputCursor = params.cursor;
+      const trackedCursor = inputCursor ? trackedCursors.has(inputCursor) : false;
       const result = await service.search(params, ctx.cwd, signal);
+
+      if (metrics.enabled) {
+        if (trackedCursor && inputCursor) {
+          trackedCursors.delete(inputCursor);
+          metrics.recordCursorPage(result.text);
+          if (result.details.cursor) trackedCursors.add(result.details.cursor);
+        } else if (!inputCursor) {
+          const normalInput = createNormalGrepInput(params);
+          if (!normalInput.supported) {
+            metrics.recordSkippedSearch();
+            ctx.ui.notify(
+              `Signal Grep metrics skipped this search: ${normalInput.reason}`,
+              "warning",
+            );
+          } else {
+            try {
+              const normalResult = await createGrepTool(ctx.cwd).execute(
+                "signal-grep-normal-baseline",
+                normalInput.input,
+                signal,
+              );
+              metrics.recordComparison(result.text, resultText(normalResult.content));
+              if (result.details.cursor) trackedCursors.add(result.details.cursor);
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              metrics.recordSkippedSearch();
+              const message = error instanceof Error ? error.message : String(error);
+              ctx.ui.notify(`Signal Grep metrics baseline failed: ${message}`, "warning");
+            }
+          }
+        }
+        ctx.ui.setStatus(METRICS_STATUS_KEY, metrics.formatStatus());
+      }
+
       return {
         content: [{ type: "text", text: result.text }],
         details: result.details,
@@ -89,11 +138,61 @@ export default function signalGrepExtension(pi: ExtensionAPI) {
     description: "Clear all in-memory Signal Grep snapshots and invalidate their cursors",
     handler: async (_args, ctx) => {
       service.clear();
+      trackedCursors.clear();
       ctx.ui.notify("Signal Grep snapshots cleared", "info");
     },
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.registerCommand("signal-grep-metrics", {
+    description: "Toggle or inspect cumulative Signal Grep versus normal grep token estimates",
+    handler: async (args, ctx) => {
+      const action = args.trim().toLowerCase();
+      if (action === "on") {
+        if (metrics.enabled) {
+          ctx.ui.notify("Signal Grep metrics are already enabled", "info");
+          return;
+        }
+        metrics.enable();
+        trackedCursors.clear();
+        ctx.ui.setStatus(METRICS_STATUS_KEY, metrics.formatStatus());
+        ctx.ui.notify(
+          "Signal Grep metrics enabled. Token counts are estimated from model-facing result text.",
+          "info",
+        );
+        return;
+      }
+
+      if (action === "off") {
+        if (!metrics.enabled) {
+          ctx.ui.notify("Signal Grep metrics are already disabled", "info");
+          return;
+        }
+        const report = metrics.formatReport();
+        metrics.disable();
+        trackedCursors.clear();
+        ctx.ui.setStatus(METRICS_STATUS_KEY, undefined);
+        ctx.ui.notify(report, "info");
+        return;
+      }
+
+      if (action === "status" || action.length === 0) {
+        ctx.ui.notify(
+          metrics.enabled
+            ? metrics.formatReport()
+            : "Signal Grep metrics are disabled. Use /signal-grep-metrics on to start a new comparison window.",
+          "info",
+        );
+        return;
+      }
+
+      ctx.ui.notify("Usage: /signal-grep-metrics on|off|status", "warning");
+    },
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
     service.clear();
+    trackedCursors.clear();
+    metrics.disable();
+    ctx.ui.setStatus(METRICS_STATUS_KEY, undefined);
   });
 }

@@ -8,7 +8,7 @@
 
 面向 [Pi 编码智能体](https://pi.dev) 的上下文高效、正确性优先的内容搜索插件。Signal Grep 避免宽泛的 `ripgrep` 结果淹没模型上下文，同时绝不会把被截断的结果伪装成完整结果。
 
-> **最新版本：** `0.1.1`。
+> **最新版本：** `0.2.0`。
 
 ## 为什么需要 Signal Grep？
 
@@ -161,6 +161,32 @@ pi -e ./src/index.ts
 - `matches`：立即返回第一页具体匹配。
 - `cursor`：从原始快照继续分页，不重新执行搜索。
 
+## 可选的累计 Token 对比
+
+Token 对比默认关闭；关闭时不会执行额外的基准搜索。使用以下命令开启一个全新、仅限当前会话的统计区间：
+
+```text
+/signal-grep-metrics on
+```
+
+Pi 会在内置 Footer 统计下方追加一条紧凑的扩展状态，并在每次可对比搜索后更新：
+
+```text
+SG 3.2k / normal 11.8k · ↓8.6k (72.9%)
+```
+
+`SG` 是 Signal Grep 结果文本的累计估算 Token，`normal` 是相同新搜索使用 Pi 普通 grep 时结果文本的累计估算 Token。cursor 页面只累加到 `SG`，不会重新执行或重复计算普通 grep 基准。如果完整分页比普通 grep 消耗更多，状态会如实显示 `↑1.3k (11.0%)` 之类的负收益。
+
+Token 使用 Pi 同样的保守“字符数除以四”启发式估算，只覆盖进入模型的结果文本，不包括工具 Schema、供应商序列化，或请求 cursor 页面所需的额外模型轮次。最终报告同时保留精确的 UTF-8 字节数。开启统计后，每个可对比的新搜索会额外执行一次普通 grep。多个包含 glob、排除 glob 或 `hidden=false` 无法由普通 grep 等价表达，因此会带有明确警告并排除在对比之外。
+
+使用以下命令结束统计区间、仅移除 Signal Grep 状态并显示最终累计报告：
+
+```text
+/signal-grep-metrics off
+```
+
+使用 `/signal-grep-metrics status` 可以查看当前区间而不关闭。指标只保存在内存中，下次开启时归零，不会持久化或传输。
+
 ## 正确性契约
 
 Signal Grep 将搜索完整性视为公开契约：
@@ -180,6 +206,7 @@ Signal Grep 将搜索完整性视为公开契约：
 
 - `/signal-grep-health`：查看 ripgrep 版本和快照使用情况。
 - `/signal-grep-clear`：清空快照并使现有 cursor 失效。
+- `/signal-grep-metrics on|off|status`：控制或查看 Status Line 累计 Token 估算。
 
 Pi 会话关闭时也会自动清理快照。
 

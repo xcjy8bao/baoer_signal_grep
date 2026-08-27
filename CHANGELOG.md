@@ -4,6 +4,13 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-27
+
+### Added
+
+- Opt-in, session-local Status Line metrics comparing cumulative Signal Grep result-text token estimates with Pi's normal grep baseline.
+- Honest cumulative accounting for cursor pages, negative savings, and searches that normal grep cannot represent equivalently.
+
 ## [0.1.1] - 2026-08-27
 
 ### Fixed
