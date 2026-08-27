@@ -23,6 +23,44 @@ Signal Grep applies an adaptive response policy:
 
 No fuzzy fallback, silent truncation, background index, database, telemetry, or network request is involved.
 
+## A simple analogy: a research librarian, not a photocopier
+
+Imagine asking a librarian:
+
+> Show me every page in this library that contains `TODO`.
+
+Traditional grep behaves like a photocopier. It finds a matching page, copies it, and places every copy on your desk. If one noisy book contains the same term 30 times, those 30 pages can bury the three pages you actually needed.
+
+The desk is the model's context window. Every irrelevant page consumes space that could have been used to understand code, reason about behavior, or produce a correct change. Returning only the first 20 copies is not a complete solution either: it creates a cleaner desk by potentially throwing useful pages away.
+
+Signal Grep behaves like a research librarian. For a broad request, it first gives the model a catalog:
+
+```text
+33 matches across 4 files
+
+README.md       1
+noise.ts       30
+src/app.ts      1
+utils.ts        1
+```
+
+The model can immediately see where the noise is and request only the relevant file. If it truly needs every matching page, the librarian provides a numbered claim ticket—the cursor—for a sealed cart of results. Each page continues from the same cart, so later batches do not silently repeat or skip retained matches even if repository files change after the original search.
+
+If the cart exceeds the retention bound, Signal Grep labels it `partial`. It never discards material and then claims the search was complete.
+
+| Library analogy              | Signal Grep concept       |
+| ---------------------------- | ------------------------- |
+| Library                      | Repository                |
+| Book                         | File                      |
+| Matching page                | Grep match                |
+| Limited desk space           | Model context window      |
+| Catalog with per-book counts | Per-file search summary   |
+| Sealed result cart           | Stable in-memory snapshot |
+| Numbered claim ticket        | Cursor                    |
+| Capacity warning             | Explicit `partial` status |
+
+In one sentence: **traditional grep puts every photocopy on the model's desk; Signal Grep gives the model a catalog first, then retrieves exactly the material it asks for.**
+
 ## Example
 
 A repository contains 33 `TODO` lines: 30 in `noise.ts` and one each in three relevant files. Instead of sending all 33 lines to the model, the default response is shaped like this:
