@@ -8,7 +8,7 @@
 
 Context-efficient, correctness-first content search for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Latest release:** `0.1.1`.
+> **Latest release:** `0.2.0`.
 
 ## Why Signal Grep?
 
@@ -161,6 +161,32 @@ The extension registers one tool: `signal_grep`.
 - `matches`: return the first detail page immediately.
 - `cursor`: continue detail pages from the original snapshot; no search rerun.
 
+## Optional cumulative token comparison
+
+Token comparison is disabled by default and adds no baseline search while disabled. Start a fresh, session-local comparison window with:
+
+```text
+/signal-grep-metrics on
+```
+
+Pi adds a compact Extension Status below its built-in footer statistics and updates it after each comparable search:
+
+```text
+SG 3.2k / normal 11.8k · ↓8.6k (72.9%)
+```
+
+`SG` is the cumulative estimated token count of Signal Grep result text. `normal` is the cumulative estimate for Pi's normal grep result text on the same new searches. Cursor pages add to `SG` without rerunning or recounting the normal baseline. If exhaustive pagination costs more than normal grep, the indicator shows an honest increase such as `↑1.3k (11.0%)`.
+
+Counts use Pi's conservative characters-over-four heuristic and cover model-facing result text only—not tool schemas, provider serialization, or the extra model turn needed to request a cursor page. Exact UTF-8 byte totals are retained for the final report. Enabling metrics executes one additional normal grep process for each comparable new search. Searches using multiple include globs, exclude globs, or `hidden=false` are excluded with a visible warning because normal grep cannot represent those inputs equivalently.
+
+Stop the window, remove only Signal Grep's status, and show the final cumulative report with:
+
+```text
+/signal-grep-metrics off
+```
+
+Use `/signal-grep-metrics status` to inspect the active window without closing it. Metrics stay in memory, are reset on the next enable, and are never persisted or transmitted.
+
 ## Correctness contract
 
 Signal Grep treats search completeness as a public contract:
@@ -180,6 +206,7 @@ See [Architecture](docs/ARCHITECTURE.md) for the ownership and lifecycle model.
 
 - `/signal-grep-health` — show the detected ripgrep version and snapshot usage.
 - `/signal-grep-clear` — clear snapshots and invalidate existing cursors.
+- `/signal-grep-metrics on|off|status` — control or inspect cumulative Status Line token estimates.
 
 Snapshots are also cleared on Pi session shutdown.
 

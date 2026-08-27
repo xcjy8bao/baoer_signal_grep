@@ -21,9 +21,11 @@ service.ts ── chooses auto/summary/matches behavior and composes results
     │
     ▼
 format.ts ─── owns model-facing summary, page, byte, and context formatting
+    │
+    └─► metrics.ts ── optionally compares cumulative result text with normal grep
 ```
 
-`index.ts` is the Pi adapter. It defines the schema, registers the tool and commands, and wires lifecycle cleanup. It contains no search algorithm.
+`index.ts` is the Pi adapter. It defines the schema, registers the tool and commands, and wires lifecycle cleanup. It contains no search algorithm. When the user explicitly enables metrics, the adapter executes Pi's normal grep after each comparable new search and passes both result texts to `metrics.ts`.
 
 ## Responsibilities
 
@@ -62,6 +64,10 @@ Snapshots are session-local and are cleared at shutdown. No state is persisted o
 
 `format.ts` owns only presentation boundaries. Detail pages stop before either the match count or byte budget is exceeded. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page, may reflect edits made after the snapshot, and is omitted explicitly for files over 5 MiB or files that can no longer be read.
 
+### Opt-in comparison metrics
+
+`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. New comparable searches contribute one Signal Grep result and one Pi normal grep baseline; tracked cursor pages contribute only their Signal Grep result. Inputs normal grep cannot represent equivalently are visibly excluded instead of producing a misleading ratio. Metrics never alter model-facing search text, persist state, or transmit data.
+
 ## Core invariants
 
 - Completed retained snapshots paginate without omission or duplication.
@@ -70,6 +76,8 @@ Snapshots are session-local and are cleared at shutdown. No state is persisted o
 - Process errors never become an empty successful result.
 - Limits have one source of truth in `types.ts`.
 - Runtime source uses Node.js 22+ APIs and remains executable under Bun 1.4+.
+- Disabled metrics execute no normal grep baseline and add no status.
+- Metrics never recount a normal baseline for cursor continuation and never hide negative savings or unsupported comparisons.
 
 ## Deliberate non-goals
 
