@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a focused improvement to Signal Grep
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What observable limitation exists today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe behavior and failure semantics, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Public contract impact
+      description: Tool schema, defaults, output, cursor, compatibility, or lifecycle changes.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Design check
+      options:
+        - label: This solves a current use case rather than hypothetical extensibility.
+          required: true
+        - label: This does not require silent fallback or ambiguous completeness.
+          required: true
