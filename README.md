@@ -8,7 +8,7 @@
 
 Context-efficient, correctness-first content search for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Project status:** pre-release. The initial implementation is under review and has not been published to npm yet.
+> **Latest release:** `0.1.0`.
 
 ## Why Signal Grep?
 
@@ -118,7 +118,13 @@ This is a context-shape benchmark, not a search-speed or token-count benchmark. 
 
 ## Installation
 
-Install from GitHub after the initial pull request is merged:
+Install the latest release from npm:
+
+```bash
+pi install npm:pi-plugin-signal-grep
+```
+
+You can also install the current GitHub version:
 
 ```bash
 pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
@@ -129,8 +135,6 @@ Then restart Pi. During local development:
 ```bash
 pi -e ./src/index.ts
 ```
-
-The planned npm package name is `pi-plugin-signal-grep`; no npm release exists yet.
 
 ## Tool
 

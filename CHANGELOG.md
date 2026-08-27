@@ -4,6 +4,8 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-27
+
 ### Changed
 
 - Relicensed the project from MIT to GNU AGPL v3.0 only.
