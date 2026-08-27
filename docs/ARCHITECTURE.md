@@ -60,7 +60,7 @@ Snapshots are session-local and are cleared at shutdown. No state is persisted o
 
 ### Output formatting
 
-`format.ts` owns only presentation boundaries. Detail pages stop before either the match count or byte budget is exceeded. Context is read lazily for files represented on the current page and is omitted explicitly for files over 5 MiB or files that can no longer be read.
+`format.ts` owns only presentation boundaries. Detail pages stop before either the match count or byte budget is exceeded. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page, may reflect edits made after the snapshot, and is omitted explicitly for files over 5 MiB or files that can no longer be read.
 
 ## Core invariants
 

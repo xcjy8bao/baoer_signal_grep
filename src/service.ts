@@ -153,10 +153,9 @@ export class SignalGrepService {
       : undefined;
     const range = `${offset + 1}-${page.nextOffset}`;
     const next = cursor ? `\n\nContinue with cursor="${cursor}".` : "";
-    const partial = snapshot.snapshotComplete ? "" : `\n\n[${completenessNote(snapshot)}]`;
 
     return {
-      text: `${page.body}\n\n[Matches ${range} of ${snapshot.totalMatches}; ${completenessNote(snapshot)}.]${next}${partial}`,
+      text: `${page.body}\n\n[Matches ${range} of ${snapshot.totalMatches}; ${completenessNote(snapshot)}.]${next}`,
       details: {
         ...baseDetails(snapshot, mode),
         returnedMatches: page.returnedMatches,

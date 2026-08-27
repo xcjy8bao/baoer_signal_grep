@@ -63,11 +63,14 @@ async function formatBlock(
 
   const boundedContext = Math.min(Math.max(0, context), MAX_CONTEXT_LINES);
   const start = Math.max(1, match.lineNumber - boundedContext);
-  const end = Math.min(lines.length, match.lineNumber + boundedContext);
+  const end = match.lineNumber + boundedContext;
   const output: string[] = [];
   for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const marker = lineNumber === match.lineNumber ? ":" : "-";
-    output.push(` ${lineNumber}${marker} ${compactLine(lines[lineNumber - 1] ?? "")}`);
+    const isMatch = lineNumber === match.lineNumber;
+    if (!isMatch && lineNumber > lines.length) continue;
+    const marker = isMatch ? ":" : "-";
+    const content = isMatch ? match.lineContent : compactLine(lines[lineNumber - 1] ?? "");
+    output.push(` ${lineNumber}${marker} ${content}`);
   }
   return output.join("\n");
 }
