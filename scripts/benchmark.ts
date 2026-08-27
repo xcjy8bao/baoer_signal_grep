@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createGrepTool } from "@earendil-works/pi-coding-agent";
 import { createRipgrepRunner } from "../src/rg.js";
 import { SignalGrepService } from "../src/service.js";
@@ -7,68 +9,82 @@ function textContent(result: { content: Array<{ type: string; text?: string }> }
   return result.content.find((item) => item.type === "text")?.text ?? "";
 }
 
+function matchingLines(text: string): number {
+  return text.split("\n").filter((line) => line.includes("TODO")).length;
+}
+
 const root = await createTodoFixture();
 try {
-  const builtinResult = await createGrepTool(root).execute("benchmark", {
-    pattern: "TODO",
-  });
-  const builtinText = textContent(builtinResult);
+  const compactNormalText = textContent(
+    await createGrepTool(root).execute("benchmark-compact", { pattern: "TODO" }),
+  );
+  const compactSignal = await new SignalGrepService({
+    runRipgrep: createRipgrepRunner(),
+  }).search({ pattern: "TODO" }, root);
 
-  const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
-  const summary = await service.search({ pattern: "TODO" }, root);
+  const paginationService = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
   const pageCounts: number[] = [];
-  let detailBytes = 0;
-  let page = await service.search({ mode: "matches", pattern: "TODO" }, root);
-
+  let page = await paginationService.search({ mode: "matches", pattern: "TODO", limit: 20 }, root);
   while (true) {
     pageCounts.push(page.details.returnedMatches);
-    detailBytes += Buffer.byteLength(page.text);
     const { cursor } = page.details;
     if (!cursor) break;
     // Cursor pages are sequential by contract and cannot execute in parallel.
     // oxlint-disable-next-line no-await-in-loop
-    page = await service.search({ cursor }, root);
+    page = await paginationService.search({ cursor }, root);
   }
 
-  const builtinBytes = Buffer.byteLength(builtinText);
-  const builtinMatchLines = builtinText.split("\n").filter((line) => line.includes("TODO")).length;
-  const summaryBytes = Buffer.byteLength(summary.text);
-  const returnedMatches = pageCounts.reduce((total, count) => total + count, 0);
+  await writeFile(
+    join(root, "broad.ts"),
+    `${Array.from({ length: 200 }, (_, index) => `// TODO broad ${index} ${"x".repeat(100)}`).join("\n")}\n`,
+  );
+  const broadNormalText = textContent(
+    await createGrepTool(root).execute("benchmark-broad", { pattern: "TODO" }),
+  );
+  const broadSignal = await new SignalGrepService({
+    runRipgrep: createRipgrepRunner(),
+  }).search({ pattern: "TODO" }, root);
 
   if (
-    builtinMatchLines !== 33 ||
-    summary.details.totalMatches !== 33 ||
-    summary.details.totalFiles !== 4 ||
+    matchingLines(compactNormalText) !== 33 ||
+    compactSignal.details.totalMatches !== 33 ||
+    compactSignal.details.returnedMatches !== 33 ||
+    compactSignal.details.cursor !== undefined ||
     pageCounts.length !== 2 ||
     pageCounts[0] !== 20 ||
     pageCounts[1] !== 13 ||
-    returnedMatches !== 33
+    matchingLines(broadNormalText) !== 100 ||
+    broadSignal.details.totalMatches !== 233 ||
+    broadSignal.details.returnedMatches !== 0 ||
+    !broadSignal.details.cursor
   ) {
-    throw new Error("Benchmark fixture violated its expected 33-match comparison contract");
+    throw new Error("Benchmark fixtures violated adaptive search contracts");
   }
 
+  const broadNormalBytes = Buffer.byteLength(broadNormalText);
+  const broadSignalBytes = Buffer.byteLength(broadSignal.text);
   const report = {
-    fixture: {
-      files: 4,
+    compactSearch: {
       matches: 33,
-      noiseFileMatches: 30,
+      normalFirstResponseBytes: Buffer.byteLength(compactNormalText),
+      signalFirstResponseBytes: Buffer.byteLength(compactSignal.text),
+      signalReturnedMatches: compactSignal.details.returnedMatches,
+      extraDetailTurnRequired: false,
     },
-    piBuiltinGrep: {
-      firstResponseBytes: builtinBytes,
-      firstResponseMatchLines: builtinMatchLines,
-    },
-    signalGrepAuto: {
-      firstResponseBytes: summaryBytes,
-      firstResponseDetailLines: 0,
-      firstResponseReductionPercent: Number(
-        (((builtinBytes - summaryBytes) / builtinBytes) * 100).toFixed(1),
-      ),
-      summaryFiles: summary.details.totalFiles,
-    },
-    signalGrepExhaustive: {
-      combinedDetailBytes: detailBytes,
+    explicitPagination: {
       pageCounts,
-      returnedMatches,
+      returnedMatches: pageCounts.reduce((total, count) => total + count, 0),
+    },
+    broadSearch: {
+      actualMatches: broadSignal.details.totalMatches,
+      normalFirstResponseMatchLines: matchingLines(broadNormalText),
+      normalFirstResponseBytes: broadNormalBytes,
+      signalFirstResponseDetailLines: broadSignal.details.returnedMatches,
+      signalFirstResponseBytes: broadSignalBytes,
+      firstResponseReductionPercent: Number(
+        (((broadNormalBytes - broadSignalBytes) / broadNormalBytes) * 100).toFixed(1),
+      ),
+      summaryFiles: broadSignal.details.totalFiles,
     },
   };
 

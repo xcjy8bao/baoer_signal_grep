@@ -65,7 +65,7 @@ TypeScript 7 runs in strict, no-emit mode with erasable syntax only. This gate o
 bun test
 ```
 
-Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including cursor completeness, cancellation, ignore behavior, byte limits, and partial snapshots.
+Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including cursor completeness, cancellation, adaptive result budgets, ignore behavior, byte limits, partial snapshots, persistent override/reload handoff, an independently constructed raw-`rg` differential matrix, and medium-repository exhaustive/parallel runtime stress with cumulative Metrics enabled.
 
 ## Node compatibility smoke test
 
@@ -81,7 +81,7 @@ The smoke test builds a temporary Node-targeted bundle, imports it with the conf
 bun run benchmark
 ```
 
-The benchmark runs Pi's pinned built-in grep and Signal Grep against the same generated 33-match fixture. It fails if match counts or the expected 20 + 13 exhaustive pagination contract changes, reports model-facing byte counts, and removes the fixture. It measures result shape rather than search speed or model tokenization.
+The benchmark checks two observable outcomes: a compact 33-match search must return every result directly without an extra turn, while a broad 233-match search must expose the exact total through a small summary instead of normal grep's 100-match prefix. It also retains an explicit 20 + 13 cursor reconstruction check, reports model-facing byte counts, and removes its fixture. It measures result shape rather than search speed or model tokenization.
 
 ## Package boundary
 

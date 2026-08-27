@@ -11,22 +11,22 @@ describe("normalizeRequest", () => {
       literal: false,
       hidden: true,
       context: 0,
-      pageSize: 20,
+      pageSize: 100,
     });
   });
 
-  test("normalizes lists, @ paths, and numeric bounds", () => {
+  test("normalizes @ paths and numeric bounds without changing search text", () => {
     expect(
       normalizeRequest({
         pattern: " TODO ",
         path: "@src",
-        glob: ["*.ts", " "],
+        glob: ["*.ts", ""],
         exclude: "node_modules/**",
         context: 99,
         limit: 999,
       }),
     ).toMatchObject({
-      pattern: "TODO",
+      pattern: " TODO ",
       path: "src",
       glob: ["*.ts"],
       exclude: ["node_modules/**"],
@@ -35,7 +35,12 @@ describe("normalizeRequest", () => {
     });
   });
 
-  test("rejects an empty pattern", () => {
-    expect(() => normalizeRequest({ pattern: " " })).toThrow(SignalGrepError);
+  test("preserves empty and whitespace-only patterns because ripgrep treats them as valid", () => {
+    expect(normalizeRequest({ pattern: "" }).pattern).toBe("");
+    expect(normalizeRequest({ pattern: " " }).pattern).toBe(" ");
+  });
+
+  test("rejects an omitted pattern", () => {
+    expect(() => normalizeRequest({})).toThrow(SignalGrepError);
   });
 });

@@ -1,5 +1,5 @@
 import { CursorError, SignalGrepError } from "./errors.js";
-import { formatMatchPage, formatSummary } from "./format.js";
+import { formatMatchPage, formatNormalBaseline, formatSummary } from "./format.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
 import type { RipgrepRunner } from "./rg.js";
 import { SnapshotStore } from "./snapshot-store.js";
@@ -20,6 +20,10 @@ export interface SignalGrepServiceOptions {
   runRipgrep: RipgrepRunner;
   snapshots?: SnapshotStore;
   summaryFileLimit?: number;
+}
+
+export interface SignalGrepSearchOptions {
+  includeNormalBaseline?: boolean;
 }
 
 function baseDetails(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepDetails {
@@ -56,6 +60,7 @@ export class SignalGrepService {
     input: SignalGrepInput,
     cwd: string,
     signal?: AbortSignal,
+    options: SignalGrepSearchOptions = {},
   ): Promise<SignalGrepResult> {
     const mode = input.mode ?? "auto";
     if (input.cursor) return this.#continue(input.cursor, mode, signal);
@@ -63,18 +68,37 @@ export class SignalGrepService {
     const request = normalizeRequest(input);
     const scan = await this.#runRipgrep(request, cwd, signal);
     const snapshot = this.#snapshots.create(scan);
+    try {
+      const normalText = options.includeNormalBaseline
+        ? await formatNormalBaseline(snapshot, cwd, signal)
+        : undefined;
+      const attachBaseline = (result: SignalGrepResult): SignalGrepResult =>
+        normalText === undefined ? result : { ...result, normalText };
+      let result: SignalGrepResult;
 
-    if (snapshot.totalMatches === 0) {
-      return {
-        text: "No matches found (complete).",
-        details: baseDetails(snapshot, mode),
-      };
-    }
+      if (snapshot.totalMatches === 0) {
+        result = {
+          text: "No matches found (complete).",
+          details: baseDetails(snapshot, mode),
+        };
+      } else if (mode === "summary") {
+        result = this.#summary(snapshot, mode);
+      } else if (mode === "matches") {
+        result = await this.#page(snapshot, 0, mode, signal);
+      } else {
+        const page = await formatMatchPage(snapshot, 0, signal);
+        result =
+          input.limit !== undefined ||
+          (snapshot.snapshotComplete && page.nextOffset === snapshot.matches.length)
+            ? this.#pageResult(snapshot, 0, mode, page)
+            : this.#summary(snapshot, mode);
+      }
 
-    if (mode === "summary" || (mode === "auto" && snapshot.totalMatches > request.pageSize)) {
-      return this.#summary(snapshot, mode);
+      return this.#finalize(snapshot, attachBaseline(result));
+    } catch (error) {
+      this.#snapshots.delete(snapshot);
+      throw error;
     }
-    return this.#page(snapshot, 0, mode, signal);
   }
 
   clear(): void {
@@ -100,7 +124,13 @@ export class SignalGrepService {
       );
     }
     const { snapshot, offset } = this.#snapshots.resolve(cursor);
-    return this.#page(snapshot, offset, "matches", signal);
+    const result = await this.#page(snapshot, offset, "matches", signal);
+    return this.#finalize(snapshot, result);
+  }
+
+  #finalize(snapshot: SearchSnapshot, result: SignalGrepResult): SignalGrepResult {
+    if (!result.details.cursor) this.#snapshots.delete(snapshot);
+    return result;
   }
 
   #summary(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepResult {
@@ -143,8 +173,17 @@ export class SignalGrepService {
     }
 
     const page = await formatMatchPage(snapshot, offset, signal);
+    return this.#pageResult(snapshot, offset, mode, page);
+  }
+
+  #pageResult(
+    snapshot: SearchSnapshot,
+    offset: number,
+    mode: SearchMode,
+    page: Awaited<ReturnType<typeof formatMatchPage>>,
+  ): SignalGrepResult {
     if (page.returnedMatches === 0) {
-      throw new SignalGrepError("The output byte budget could not fit a single match");
+      throw new SignalGrepError("The output budget could not fit a single match");
     }
 
     const hasRetainedMatches = page.nextOffset < snapshot.matches.length;

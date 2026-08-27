@@ -8,7 +8,7 @@
 
 Context-efficient, correctness-first content search for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Latest release:** `0.2.0`.
+> **Latest release:** `0.3.0`.
 
 ## Why Signal Grep?
 
@@ -63,12 +63,13 @@ In one sentence: **traditional grep puts every photocopy on the model's desk; Si
 
 ## Example
 
-A repository contains 33 `TODO` lines: 30 in `noise.ts` and one each in three relevant files. Instead of sending all 33 lines to the model, the default response is shaped like this:
+A repository contains 233 `TODO` lines, including 200 in one generated-looking file and 30 in another noisy file. Returning normal grep details would hit its 100-match boundary without revealing the real total. Signal Grep instead returns:
 
 ```text
-33 matches across 4 files (complete snapshot).
+233 matches across 5 files (complete snapshot).
 
 README.md        1
+broad.ts       200
 noise.ts        30
 src/app.ts       1
 utils.ts         1
@@ -76,7 +77,7 @@ utils.ts         1
 Details are available from the stable snapshot with cursor="…".
 ```
 
-The agent can now narrow by `path`, or request every detail page. With the default page size, exhaustive retrieval is exactly 20 matches followed by 13—without duplicates or omissions.
+For a compact complete result, Signal Grep returns grouped details directly—even when there are more than the former fixed 20-match threshold—so simple searches do not pay for an unnecessary summary-and-cursor turn.
 
 ## Reproducible before/after test
 
@@ -88,19 +89,19 @@ bun run benchmark
 
 Measured with Pi 0.84.3, Bun 1.4.0, Node.js 22.22.2, and ripgrep 15.2.0:
 
-| Measurement                        |   Pi built-in grep |                      Signal Grep |
-| ---------------------------------- | -----------------: | -------------------------------: |
-| Actual matches discovered          |                 33 |                               33 |
-| Files containing matches           |                  4 |                                4 |
-| Detail lines in the first response |                 33 |                0 (summary first) |
-| First model-facing response        |          898 bytes |                        220 bytes |
-| First-response reduction           |                  — |                        **75.5%** |
-| Exhaustive detail retrieval        | 33 in one response | 20 + 13 from one stable snapshot |
-| Combined exhaustive detail text    |          898 bytes |                        830 bytes |
+| Scenario                               |           Pi built-in grep |                 Signal Grep |
+| -------------------------------------- | -------------------------: | --------------------------: |
+| Compact search: actual matches         |                         33 |                          33 |
+| Compact search: first response         |                  898 bytes |               **715 bytes** |
+| Compact search: extra detail turn      |                         no |                      **no** |
+| Broad search: actual matches           | not observable after limit |                     **233** |
+| Broad search: detail lines shown first |                        100 | **0 (exact summary first)** |
+| Broad search: first response           |                9,728 bytes |               **238 bytes** |
+| Broad search: first-response reduction |                          — |                   **97.6%** |
 
-The result confirms the intended effect: the default broad-search response is substantially smaller while the complete 33-match result remains recoverable. Signal Grep's exhaustive detail is also grouped by file, so paths are not repeated on every matching line.
+The compact case confirms that adaptive budgeting can return every result directly with less repeated path text and no extra turn. The broad case confirms that Signal Grep exposes the exact total and file distribution instead of presenting a 100-match prefix as if it represented the whole search. Explicit `limit=20` pagination still reconstructs the 33-match fixture as 20 + 13 without duplication or omission.
 
-This is a context-shape benchmark, not a search-speed or token-count benchmark. Byte counts cover model-facing tool text only; provider serialization, tool schemas, model tokenization, and the extra tool turn required for exhaustive pagination are intentionally excluded. Run the command on your own platform before using the numbers for capacity planning.
+This is a context-shape benchmark, not a speed or exact tokenizer benchmark. Byte counts cover model-facing tool text only; provider serialization, tool schemas, and model tokenization are intentionally excluded. Run the command on your own platform before using the numbers for capacity planning.
 
 ## Requirements
 
@@ -136,9 +137,25 @@ Then restart Pi. During local development:
 pi -e ./src/index.ts
 ```
 
+## Optional built-in grep override
+
+Signal Grep defaults to additive mode and registers `signal_grep` alongside Pi's built-in `grep`. To route every normal grep call through Signal Grep while exposing exactly one public search tool, run:
+
+```text
+/signal-grep-override on
+```
+
+The command safely persists a user-global setting through a staged file at `~/.pi/agent/signal-grep.json` and reloads Pi resources. Override mode registers Signal Grep as `grep`, accepts the built-in grep parameter shape, preserves built-in case-sensitive behavior when `ignoreCase` is omitted, and keeps the richer glob, exclusion, adaptive summary, and cursor controls. `/signal-grep-health` reports the active grep source. Before persisting an override, Signal Grep refuses the transition if another extension already owns `grep`; Pi also rejects duplicate registrations while loading extensions. A conflict therefore fails clearly without changing config or silently splitting search ownership. Disable it and restore Pi's built-in implementation with:
+
+```text
+/signal-grep-override off
+```
+
+Use `/signal-grep-override status` to inspect the active mode. Override is deliberately opt-in because another extension may also replace `grep`; Pi reports tool collisions at startup.
+
 ## Tool
 
-The extension registers one tool: `signal_grep`.
+The extension registers one tool: `signal_grep` by default, or `grep` in override mode.
 
 | Parameter    | Type                         | Default    | Purpose                                             |
 | ------------ | ---------------------------- | ---------- | --------------------------------------------------- |
@@ -147,27 +164,31 @@ The extension registers one tool: `signal_grep`.
 | `glob`       | string or string[]           | `[]`       | Include globs                                       |
 | `exclude`    | string or string[]           | `[]`       | Exclude globs                                       |
 | `literal`    | boolean                      | `false`    | Use fixed-string matching                           |
-| `ignoreCase` | boolean                      | smart-case | Force insensitive or sensitive matching             |
+| `ignoreCase` | boolean                      | mode-aware | Force insensitive or sensitive matching             |
 | `hidden`     | boolean                      | `true`     | Include hidden files; `.git` is always excluded     |
 | `context`    | number                       | `0`        | Before/after context, clamped to 0–20               |
-| `limit`      | number                       | `20`       | Detail matches per page, clamped to 1–100           |
+| `limit`      | number                       | adaptive   | Maximum matches per page, clamped to 1–100          |
 | `mode`       | `auto`, `summary`, `matches` | `auto`     | Select adaptive, summary, or detail output          |
 | `cursor`     | string                       | —          | Continue a stable retained snapshot                 |
 
+When `ignoreCase` is omitted, additive `signal_grep` uses smart-case; override `grep` preserves Pi's built-in case-sensitive default.
+
 ### Modes
 
-- `auto`: grouped detail for up to `limit` matches; otherwise a file summary.
+- `auto`: return all grouped details when the complete result fits the adaptive budget; honor an explicit `limit` with an immediate detail page; otherwise return a file summary.
 - `summary`: always return file counts first.
-- `matches`: return the first detail page immediately.
+- `matches`: return the first adaptive-budget detail page immediately.
 - `cursor`: continue detail pages from the original snapshot; no search rerun.
 
 ## Optional cumulative token comparison
 
-Token comparison is disabled by default and adds no baseline search while disabled. Start a fresh, session-local comparison window with:
+Token comparison is disabled by default and adds no baseline rendering while disabled. Start a fresh, session-local comparison window with:
 
 ```text
 /signal-grep-metrics on
 ```
+
+Starting Metrics clears existing Signal Grep snapshots so a cursor created before the comparison window cannot succeed without being accounted for. If override mode is not active, this single command persists the override, reloads Pi, and automatically starts Metrics after reload so every successful Pi `grep` call is covered. `/signal-grep-metrics off` closes only the comparison window; the override remains active until `/signal-grep-override off` restores Pi's built-in implementation.
 
 Pi adds a compact Extension Status below its built-in footer statistics and updates it after each comparable search:
 
@@ -175,9 +196,9 @@ Pi adds a compact Extension Status below its built-in footer statistics and upda
 SG 3.2k / normal 11.8k · ↓8.6k (72.9%)
 ```
 
-`SG` is the cumulative estimated token count of Signal Grep result text. `normal` is the cumulative estimate for Pi's normal grep result text on the same new searches. Cursor pages add to `SG` without rerunning or recounting the normal baseline. If exhaustive pagination costs more than normal grep, the indicator shows an honest increase such as `↑1.3k (11.0%)`.
+`SG` is the cumulative estimated token count of Signal Grep result text. `normal` reproduces Pi's normal grep formatting from the exact same stable match snapshot. Cursor pages add to `SG` without rerunning or recounting the normal baseline. If exhaustive pagination costs more than normal output, the indicator shows an honest increase such as `↑1.3k (11.0%)`.
 
-Counts use Pi's conservative characters-over-four heuristic and cover model-facing result text only—not tool schemas, provider serialization, or the extra model turn needed to request a cursor page. Exact UTF-8 byte totals are retained for the final report. Enabling metrics executes one additional normal grep process for each comparable new search. Searches using multiple include globs, exclude globs, or `hidden=false` are excluded with a visible warning because normal grep cannot represent those inputs equivalently.
+Counts use Pi's conservative characters-over-four heuristic and cover model-facing result text only—not tool schemas, provider serialization, or the extra model turn needed to request a cursor page. Exact UTF-8 byte totals are retained for the final report. Metrics do not execute a second search, and every successful Pi `grep` query—including empty or whitespace-sensitive patterns, multiple globs, exclusions, and `hidden=false`—uses the same matched set on both sides. Shell commands such as `bash`-invoked `rg`, and search tools owned by other extensions, are outside this tool boundary and are not counted.
 
 Stop the window, remove only Signal Grep's status, and show the final cumulative report with:
 
@@ -195,7 +216,7 @@ Signal Grep treats search completeness as a public contract:
 2. Cursor pages preserve snapshot order and do not duplicate or omit retained matches.
 3. Retained matching-line text is snapshot-stable. Optional surrounding context is read when a page is formatted and may reflect later file edits.
 4. A snapshot that exceeds 50,000 retained matches is marked `partial` in both text and structured details.
-5. Result pages are bounded by match count and 16 KiB of model-facing text.
+5. Adaptive pages target about 2,000 estimated result-text tokens and remain bounded by 100 matches and a 16 KiB hard limit.
 6. Lines longer than 500 characters are visibly clipped and counted in details.
 7. Context for files larger than 5 MiB, unreadable files, or a single block that exceeds the page byte budget is omitted and reported.
 8. Invalid cursors and subprocess failures are errors, never successful empty searches.
@@ -206,6 +227,7 @@ See [Architecture](docs/ARCHITECTURE.md) for the ownership and lifecycle model.
 
 - `/signal-grep-health` — show the detected ripgrep version and snapshot usage.
 - `/signal-grep-clear` — clear snapshots and invalidate existing cursors.
+- `/signal-grep-override on|off|status` — persist or inspect the optional built-in grep override.
 - `/signal-grep-metrics on|off|status` — control or inspect cumulative Status Line token estimates.
 
 Snapshots are also cleared on Pi session shutdown.

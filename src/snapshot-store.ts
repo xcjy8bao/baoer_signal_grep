@@ -75,6 +75,10 @@ export class SnapshotStore {
     return { snapshot, offset };
   }
 
+  delete(snapshot: SearchSnapshot): boolean {
+    return this.#snapshots.delete(snapshot.id);
+  }
+
   clear(): void {
     this.#snapshots.clear();
   }

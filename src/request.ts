@@ -20,7 +20,7 @@ export interface RawSearchInput {
 
 function list(value: string | string[] | undefined): string[] {
   if (value === undefined) return [];
-  return (Array.isArray(value) ? value : [value]).map((item) => item.trim()).filter(Boolean);
+  return (Array.isArray(value) ? value : [value]).filter((item) => item.length > 0);
 }
 
 function boundedInteger(
@@ -36,10 +36,12 @@ function boundedInteger(
 }
 
 export function normalizeRequest(input: RawSearchInput): SearchRequest {
-  const pattern = input.pattern?.trim();
-  if (!pattern) throw new SignalGrepError("pattern is required when cursor is not provided");
+  const pattern = input.pattern;
+  if (pattern === undefined) {
+    throw new SignalGrepError("pattern is required when cursor is not provided");
+  }
 
-  const path = input.path?.replace(/^@/, "").trim();
+  const path = input.path?.replace(/^@/, "");
   return {
     pattern,
     ...(path ? { path } : {}),
