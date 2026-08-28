@@ -5,6 +5,8 @@ import { SignalGrepRuntime } from "../src/runtime.js";
 import { SignalGrepService } from "../src/service.js";
 import { createTodoFixture, removeFixture } from "./helpers.js";
 
+const wrapStyle = (tag: string) => (text: string) => `<${tag}>${text}</${tag}>`;
+
 describe("SearchMetrics", () => {
   test("is disabled by default and starts a fresh cumulative window when enabled", () => {
     const metrics = new SearchMetrics();
@@ -12,7 +14,7 @@ describe("SearchMetrics", () => {
     expect(metrics.snapshot).toMatchObject({ enabled: false, searches: 0 });
 
     metrics.enable();
-    expect(metrics.formatStatus()).toBe("SG 0 / normal 0 · ↓0 (0.0%)");
+    expect(metrics.formatStatus()).toBe("[ SG 0 ]  [ NORMAL 0 ]  [ ↓ 0 · 0.0% ]");
     metrics.recordComparison("x".repeat(400), "x".repeat(1_200));
     metrics.recordCursorPage("x".repeat(200));
 
@@ -23,7 +25,24 @@ describe("SearchMetrics", () => {
       searches: 1,
       cursorPages: 1,
     });
-    expect(metrics.formatStatus()).toBe("SG 150 / normal 300 · ↓150 (50.0%)");
+    expect(metrics.formatStatus()).toBe("[ SG 150 ]  [ NORMAL 300 ]  [ ↓ 150 · 50.0% ]");
+  });
+
+  test("applies separate styles to signal, baseline, and delta cards", () => {
+    const metrics = new SearchMetrics();
+    metrics.enable();
+    metrics.recordComparison("x".repeat(400), "x".repeat(1_200));
+    expect(
+      metrics.formatStatus({
+        signal: wrapStyle("accent"),
+        normal: wrapStyle("dim"),
+        positive: wrapStyle("success"),
+        negative: wrapStyle("error"),
+        neutral: wrapStyle("muted"),
+      }),
+    ).toBe(
+      "<accent>[ SG 100 ]</accent>  <dim>[ NORMAL 300 ]</dim>  <success>[ ↓ 200 · 66.7% ]</success>",
+    );
   });
 
   test("shows negative savings without hiding them", () => {
@@ -31,7 +50,7 @@ describe("SearchMetrics", () => {
     metrics.enable();
     metrics.recordComparison("x".repeat(800), "x".repeat(400));
 
-    expect(metrics.formatStatus()).toBe("SG 200 / normal 100 · ↑100 (100.0%)");
+    expect(metrics.formatStatus()).toBe("[ SG 200 ]  [ NORMAL 100 ]  [ ↑ 100 · 100.0% ]");
     expect(metrics.formatReport()).toContain("used an additional 100 (100.0%)");
   });
 
@@ -69,6 +88,22 @@ describe("SearchMetrics", () => {
         failure = error;
       }
       expect(failure).toBeInstanceOf(Error);
+      expect(runtime.metricsSnapshot).toMatchObject({ searches: 0, cursorPages: 0 });
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test("does not require a normal baseline for code inspection", async () => {
+    const root = await createTodoFixture();
+    try {
+      const runtime = new SignalGrepRuntime(
+        new SignalGrepService({ runRipgrep: createRipgrepRunner() }),
+      );
+      runtime.enableMetrics();
+      const result = await runtime.search({ mode: "inspect", path: "README.md", line: 1 }, root);
+
+      expect(result.details.mode).toBe("inspect");
       expect(runtime.metricsSnapshot).toMatchObject({ searches: 0, cursorPages: 0 });
     } finally {
       await removeFixture(root);

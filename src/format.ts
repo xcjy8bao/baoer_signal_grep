@@ -13,10 +13,10 @@ import {
   MAX_CONTEXT_LINES,
   MAX_LINE_CHARACTERS,
   MAX_RESULT_BYTES,
+  MAX_SOURCE_FILE_BYTES,
 } from "./types.js";
 import type { MatchRecord, SearchSnapshot } from "./types.js";
 
-const MAX_CONTEXT_FILE_BYTES = 5 * 1024 * 1024;
 const RESULT_METADATA_RESERVE_BYTES = 1024;
 const RESULT_METADATA_RESERVE_CHARACTERS = 512;
 const MAX_PAGE_BODY_BYTES = MAX_RESULT_BYTES - RESULT_METADATA_RESERVE_BYTES;
@@ -27,12 +27,36 @@ export interface FormattedPage {
   body: string;
   returnedMatches: number;
   nextOffset: number;
+  hasNext: boolean;
+  hasMatchRanges: boolean;
+  hasByteRanges: boolean;
+  firstMatchIndex?: number;
+  lastMatchIndex?: number;
   contextOmittedFiles: string[];
+}
+
+export interface MatchPageOptions {
+  include?: (match: MatchRecord, index: number) => boolean;
 }
 
 function compactLine(line: string): string {
   const clean = line.replaceAll("\r", "").trimEnd();
   return clean.length > MAX_LINE_CHARACTERS ? `${clean.slice(0, MAX_LINE_CHARACTERS)}…` : clean;
+}
+
+function matchLocationSuffix(match: MatchRecord): string {
+  if (match.occurrences.length === 0) return "";
+  const ranges = match.occurrences.map(({ range }) => {
+    const start = range.start.character + 1;
+    const end = Math.max(start, range.end.character);
+    const suffix = range.encoding === "utf-8" ? "b" : "";
+    return `${start}-${end}${suffix}`;
+  });
+  return ` [${ranges.join(",")}]`;
+}
+
+function formatMatchLine(match: MatchRecord): string {
+  return ` ${match.lineNumber}: ${match.lineContent}${matchLocationSuffix(match)}`;
 }
 
 async function loadContextLines(
@@ -45,7 +69,7 @@ async function loadContextLines(
   try {
     if (signal?.aborted) throw abortError();
     const metadata = await stat(match.absolutePath);
-    if (metadata.size > MAX_CONTEXT_FILE_BYTES) {
+    if (metadata.size > MAX_SOURCE_FILE_BYTES) {
       cache.set(match.absolutePath, null);
       return null;
     }
@@ -67,27 +91,40 @@ async function formatBlock(
   context: number,
   cache: Map<string, string[] | null>,
   omittedFiles: Set<string>,
+  emittedLines: Map<string, Set<number>>,
+  pageMatches: Map<string, Map<number, MatchRecord>>,
+  allMatchLines: Map<string, Set<number>>,
+  priorContextLines: Map<string, Set<number>>,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (context === 0) return ` ${match.lineNumber}: ${match.lineContent}`;
+  if (context === 0) return formatMatchLine(match);
 
   const lines = await loadContextLines(match, cache, signal);
   if (!lines) {
     omittedFiles.add(match.displayPath);
-    return ` ${match.lineNumber}: ${match.lineContent}`;
+    return formatMatchLine(match);
   }
 
   const boundedContext = Math.min(Math.max(0, context), MAX_CONTEXT_LINES);
   const start = Math.max(1, match.lineNumber - boundedContext);
   const end = match.lineNumber + boundedContext;
   const output: string[] = [];
+  const emitted = emittedLines.get(match.absolutePath) ?? new Set<number>();
+  const matchesByLine = pageMatches.get(match.absolutePath);
   for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const isMatch = lineNumber === match.lineNumber;
-    if (!isMatch && lineNumber > lines.length) continue;
-    const marker = isMatch ? ":" : "-";
-    const content = isMatch ? match.lineContent : compactLine(lines[lineNumber - 1] ?? "");
-    output.push(` ${lineNumber}${marker} ${content}`);
+    const matchingRecord = matchesByLine?.get(lineNumber);
+    if (lineNumber > lines.length && !matchingRecord) continue;
+    if (emitted.has(lineNumber)) continue;
+    if (!matchingRecord && allMatchLines.get(match.absolutePath)?.has(lineNumber)) continue;
+    if (!matchingRecord && priorContextLines.get(match.absolutePath)?.has(lineNumber)) continue;
+    output.push(
+      matchingRecord
+        ? formatMatchLine(matchingRecord)
+        : ` ${lineNumber}- ${compactLine(lines[lineNumber - 1] ?? "")}`,
+    );
+    emitted.add(lineNumber);
   }
+  emittedLines.set(match.absolutePath, emitted);
   return output.join("\n");
 }
 
@@ -95,6 +132,7 @@ export async function formatMatchPage(
   snapshot: SearchSnapshot,
   offset: number,
   signal?: AbortSignal,
+  options: MatchPageOptions = {},
 ): Promise<FormattedPage> {
   const cache = new Map<string, string[] | null>();
   const omittedFiles = new Set<string>();
@@ -104,14 +142,81 @@ export async function formatMatchPage(
   let currentFile: string | undefined;
   let outputBytes = 0;
   let outputCharacters = 0;
+  let firstMatchIndex: number | undefined;
+  let lastMatchIndex: number | undefined;
+  let hasMatchRanges = false;
+  let hasByteRanges = false;
+  const emittedLines = new Map<string, Set<number>>();
+  const candidateIndices: number[] = [];
+  for (let index = offset; index < snapshot.matches.length; index += 1) {
+    const match = snapshot.matches[index];
+    if (match && (!options.include || options.include(match, index))) candidateIndices.push(index);
+    if (candidateIndices.length >= snapshot.request.pageSize) break;
+  }
+  const allMatchLines = new Map<string, Set<number>>();
+  for (const match of snapshot.matches) {
+    const lines = allMatchLines.get(match.absolutePath) ?? new Set<number>();
+    lines.add(match.lineNumber);
+    allMatchLines.set(match.absolutePath, lines);
+  }
+  const priorContextLines = new Map<string, Set<number>>();
+  const boundedContext = Math.min(Math.max(0, snapshot.request.context), MAX_CONTEXT_LINES);
+  for (let index = 0; index < offset; index += 1) {
+    const match = snapshot.matches[index];
+    if (!match || (options.include && !options.include(match, index))) continue;
+    const lines = priorContextLines.get(match.absolutePath) ?? new Set<number>();
+    const matchLines = allMatchLines.get(match.absolutePath);
+    const start = Math.max(1, match.lineNumber - boundedContext);
+    const end = match.lineNumber + boundedContext;
+    for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
+      if (!matchLines?.has(lineNumber)) lines.add(lineNumber);
+    }
+    priorContextLines.set(match.absolutePath, lines);
+  }
+  const pageMatches = new Map<string, Map<number, MatchRecord>>();
+  for (const index of candidateIndices) {
+    const match = snapshot.matches[index];
+    if (!match) continue;
+    const lines = pageMatches.get(match.absolutePath) ?? new Map<number, MatchRecord>();
+    lines.set(match.lineNumber, match);
+    pageMatches.set(match.absolutePath, lines);
+  }
 
   while (nextOffset < snapshot.matches.length && returnedMatches < snapshot.request.pageSize) {
     if (signal?.aborted) throw abortError();
-    const match = snapshot.matches[nextOffset];
+    const matchIndex = nextOffset;
+    const match = snapshot.matches[matchIndex];
     if (!match) break;
+    nextOffset += 1;
+    if (options.include && !options.include(match, matchIndex)) continue;
+    hasMatchRanges ||= match.occurrences.length > 0;
+    hasByteRanges ||= match.occurrences.some(({ range }) => range.encoding === "utf-8");
     // Formatting is sequential because each block consumes the remaining shared byte budget.
-    // oxlint-disable-next-line no-await-in-loop
-    let block = await formatBlock(match, snapshot.request.context, cache, omittedFiles, signal);
+    const emittedBefore = new Map(
+      [...emittedLines].map(([path, lines]) => [path, new Set(lines)] as const),
+    );
+    // oxlint-disable-next-line no-await-in-loop -- the shared output budget is consumed in order.
+    let block = await formatBlock(
+      match,
+      snapshot.request.context,
+      cache,
+      omittedFiles,
+      emittedLines,
+      pageMatches,
+      allMatchLines,
+      priorContextLines,
+      signal,
+    );
+    const restoreEmittedLines = () => {
+      emittedLines.clear();
+      for (const [path, lines] of emittedBefore) emittedLines.set(path, lines);
+    };
+    if (block.length === 0) {
+      returnedMatches += 1;
+      firstMatchIndex ??= matchIndex;
+      lastMatchIndex = matchIndex;
+      continue;
+    }
     const fileHeader = match.displayPath === currentFile ? "" : `${match.displayPath}\n`;
     const separator = output.length === 0 || fileHeader.length === 0 ? "" : "\n";
     let addition = `${separator}${fileHeader}${block}`;
@@ -122,8 +227,13 @@ export async function formatMatchPage(
       outputCharacters + additionCharacters > MAX_PAGE_BODY_CHARACTERS;
 
     if (exceedsBudget()) {
-      if (returnedMatches > 0) break;
-      block = ` ${match.lineNumber}: ${match.lineContent}`;
+      if (returnedMatches > 0) {
+        restoreEmittedLines();
+        nextOffset = matchIndex;
+        break;
+      }
+      restoreEmittedLines();
+      block = formatMatchLine(match);
       addition = `${fileHeader}${block}`;
       additionBytes = Buffer.byteLength(addition);
       additionCharacters = addition.length;
@@ -138,13 +248,23 @@ export async function formatMatchPage(
     outputCharacters += additionCharacters;
     currentFile = match.displayPath;
     returnedMatches += 1;
-    nextOffset += 1;
+    firstMatchIndex ??= matchIndex;
+    lastMatchIndex = matchIndex;
   }
+
+  const hasNext = snapshot.matches
+    .slice(nextOffset)
+    .some((match, index) => !options.include || options.include(match, nextOffset + index));
 
   return {
     body: output.join("\n"),
     returnedMatches,
     nextOffset,
+    hasNext,
+    hasMatchRanges,
+    hasByteRanges,
+    ...(firstMatchIndex === undefined ? {} : { firstMatchIndex }),
+    ...(lastMatchIndex === undefined ? {} : { lastMatchIndex }),
     contextOmittedFiles: [...omittedFiles].toSorted(),
   };
 }

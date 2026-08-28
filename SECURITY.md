@@ -20,6 +20,6 @@ You should receive an acknowledgement within seven days. Remediation timing depe
 
 ## Security model
 
-Signal Grep runs with the same local permissions as Pi. It starts `rg` directly without a shell, reads matching files only when context was requested, stores bounded snapshots in process memory, makes no network requests, and persists no search data.
+Signal Grep runs with the same local permissions as Pi. It starts `rg` and optional Universal Ctags directly without a shell, reads source files only for requested context or inspection, stores bounded snapshots in process memory, confines search and inspection paths to the working directory, makes no network requests, and persists no search data. Universal Ctags is optional and is never downloaded automatically.
 
-The extension does not sandbox Pi or ripgrep. Users remain responsible for the repositories and executables available to their Pi process.
+The extension does not sandbox Pi, ripgrep, or Universal Ctags. Users remain responsible for the repositories and executables available to their Pi process.

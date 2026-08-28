@@ -4,6 +4,21 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-28
+
+### Added
+
+- Exact per-occurrence byte and UTF-16 match ranges derived from ripgrep JSON submatches.
+- `mode=inspect` for bounded source inspection with optional enclosing-symbol details from Universal Ctags.
+- Cursor continuation can select one retained file without rerunning the original search.
+- Source revision checks reject stale cursor-scoped inspections.
+
+### Changed
+
+- Merged overlapping context windows so adjacent matches do not repeat source lines.
+- Replaced unbounded JSON-line buffering with an explicit bounded LF reader that preserves valid Unicode separators.
+- Search and inspection paths are confined to the working directory.
+
 ## [0.3.0] - 2026-08-27
 
 ### Added

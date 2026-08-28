@@ -65,7 +65,7 @@ TypeScript 7 runs in strict, no-emit mode with erasable syntax only. This gate o
 bun test
 ```
 
-Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including cursor completeness, cancellation, adaptive result budgets, ignore behavior, byte limits, partial snapshots, persistent override/reload handoff, an independently constructed raw-`rg` differential matrix, and medium-repository exhaustive/parallel runtime stress with cumulative Metrics enabled.
+Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including exact occurrence ranges, Unicode-safe JSON framing, workspace path confinement, cursor completeness and file selection, cancellation, adaptive result budgets, ignore behavior, byte limits, context deduplication, bounded source inspection, structure-provider absence, stale source rejection, partial snapshots, persistent override/reload handoff, an independently constructed raw-`rg` differential matrix, and medium-repository exhaustive/parallel runtime stress with cumulative Metrics enabled.
 
 ## Node compatibility smoke test
 

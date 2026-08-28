@@ -30,6 +30,22 @@ function formatBytes(count: number): string {
   return `${(count / (1_024 * 1_024)).toFixed(1)} MiB`;
 }
 
+export interface MetricsStatusStyles {
+  signal: (text: string) => string;
+  normal: (text: string) => string;
+  positive: (text: string) => string;
+  negative: (text: string) => string;
+  neutral: (text: string) => string;
+}
+
+const plainMetricsStatusStyles: MetricsStatusStyles = {
+  signal: (text) => text,
+  normal: (text) => text,
+  positive: (text) => text,
+  negative: (text) => text,
+  neutral: (text) => text,
+};
+
 function comparison(snapshot: MetricsSnapshot): {
   difference: number;
   percentage: number;
@@ -81,10 +97,21 @@ export class SearchMetrics {
     return { ...this.#snapshot };
   }
 
-  formatStatus(): string {
+  formatStatus(styles: MetricsStatusStyles = plainMetricsStatusStyles): string {
     const snapshot = this.snapshot;
     const result = comparison(snapshot);
-    return `SG ${formatTokens(snapshot.signalTokens)} / normal ${formatTokens(snapshot.normalTokens)} · ${result.improved ? "↓" : "↑"}${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%)`;
+    const delta = `${result.improved ? "↓" : "↑"} ${formatTokens(Math.abs(result.difference))} · ${result.percentage.toFixed(1)}%`;
+    const deltaStyle =
+      snapshot.normalTokens === 0 || result.difference === 0
+        ? styles.neutral
+        : result.improved
+          ? styles.positive
+          : styles.negative;
+    return [
+      styles.signal(`[ SG ${formatTokens(snapshot.signalTokens)} ]`),
+      styles.normal(`[ NORMAL ${formatTokens(snapshot.normalTokens)} ]`),
+      deltaStyle(`[ ${delta} ]`),
+    ].join("  ");
   }
 
   formatReport(): string {
