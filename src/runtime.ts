@@ -1,4 +1,9 @@
-import { METRICS_STATUS_KEY, type MetricsSnapshot, SearchMetrics } from "./metrics.js";
+import {
+  METRICS_STATUS_KEY,
+  type MetricsSnapshot,
+  type MetricsStatusStyles,
+  SearchMetrics,
+} from "./metrics.js";
 import type { SignalGrepInput, SignalGrepService } from "./service.js";
 import type { SignalGrepResult } from "./types.js";
 
@@ -18,11 +23,12 @@ export class SignalGrepRuntime {
     signal?: AbortSignal,
   ): Promise<SignalGrepResult> {
     const inputCursor = input.cursor;
+    const isInspection = input.mode === "inspect";
     const result = await this.#service.search(input, cwd, signal, {
-      includeNormalBaseline: this.#metrics.enabled && !inputCursor,
+      includeNormalBaseline: this.#metrics.enabled && !inputCursor && !isInspection,
     });
 
-    if (!this.#metrics.enabled) return result;
+    if (!this.#metrics.enabled || isInspection) return result;
     if (inputCursor) {
       this.#metrics.recordCursorPage(result.text);
       return result;
@@ -51,8 +57,8 @@ export class SignalGrepRuntime {
     return this.#metrics.snapshot;
   }
 
-  formatMetricsStatus(): string {
-    return this.#metrics.formatStatus();
+  formatMetricsStatus(styles?: MetricsStatusStyles): string {
+    return this.#metrics.formatStatus(styles);
   }
 
   formatMetricsReport(): string {

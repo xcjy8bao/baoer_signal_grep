@@ -1,14 +1,27 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readSignalGrepConfig, type SignalGrepConfig, writeSignalGrepConfig } from "./config.js";
 import { createRipgrepRunner } from "./rg.js";
+import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
 import { type SignalGrepInput, SignalGrepService } from "./service.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
-  "Context-efficient ripgrep search. Small searches return grouped matches; broad searches return a per-file summary first. Cursor pages come from a stable snapshot and explicitly report partial retention.";
+  "Context-efficient ripgrep search with exact match ranges and bounded code inspection. Small searches return grouped matches; broad searches return a per-file summary first. Use mode=inspect with path and line to inspect a source block. Cursor pages come from a stable snapshot and explicitly report partial retention.";
+
+function formatMetricsStatus(runtime: SignalGrepRuntime, ctx: ExtensionContext): string {
+  const theme = ctx.ui.theme;
+  const highlight = (text: string) => theme.fg("accent", theme.bold(text));
+  return runtime.formatMetricsStatus({
+    signal: highlight,
+    normal: (text) => theme.fg("muted", text),
+    positive: (text) => theme.fg("success", theme.bold(text)),
+    negative: (text) => theme.fg("error", theme.bold(text)),
+    neutral: (text) => theme.fg("muted", text),
+  });
+}
 
 const searchSchema = Type.Object({
   pattern: Type.Optional(
@@ -42,9 +55,13 @@ const searchSchema = Type.Object({
     Type.Number({ description: "Maximum matches per adaptive detail page (max 100)." }),
   ),
   mode: Type.Optional(
-    StringEnum(["auto", "summary", "matches"] as const, {
-      description: "auto summarizes broad searches; matches forces a detail page.",
+    StringEnum(["auto", "summary", "matches", "inspect"] as const, {
+      description:
+        "auto summarizes broad searches; matches returns details; inspect returns a code block.",
     }),
+  ),
+  line: Type.Optional(
+    Type.Number({ description: "1-indexed source line required by mode=inspect." }),
   ),
   cursor: Type.Optional(
     Type.String({ description: "Opaque cursor from a previous stable search snapshot." }),
@@ -72,7 +89,10 @@ export function effectiveSignalGrepInput(
 
 export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrepConfig) {
   const runtime = new SignalGrepRuntime(
-    new SignalGrepService({ runRipgrep: createRipgrepRunner() }),
+    new SignalGrepService({
+      runRipgrep: createRipgrepRunner(),
+      structure: createCtagsStructureProvider(),
+    }),
   );
   const toolName = signalGrepToolName(config);
 
@@ -84,6 +104,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
     promptGuidelines: [
       `Use ${toolName} for content search instead of unbounded rg output.`,
       `When ${toolName} returns a summary, narrow with path or use its cursor only when exhaustive detail is required.`,
+      `Use ${toolName} mode=inspect with path and line when a matching location needs its enclosing code block.`,
       `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
     ],
     parameters: searchSchema,
@@ -95,7 +116,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
         signal,
       );
       if (runtime.metricsEnabled) {
-        ctx.ui.setStatus(METRICS_STATUS_KEY, runtime.formatMetricsStatus());
+        ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx));
       }
 
       return {
@@ -106,7 +127,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
   });
 
   pi.registerCommand("signal-grep-health", {
-    description: "Show ripgrep availability and in-memory snapshot usage",
+    description: "Show ripgrep, structure-provider availability, and in-memory snapshot usage",
     handler: async (_args, ctx) => {
       const result = await pi.exec("rg", ["--version"], { timeout: 5_000 });
       if (result.code !== 0) {
@@ -114,6 +135,11 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
         return;
       }
       const version = result.stdout.split("\n")[0] ?? "ripgrep (unknown version)";
+      const ctags = await pi.exec("ctags", ["--version"], { timeout: 5_000 });
+      const ctagsVersion =
+        ctags.code === 0 && /Universal Ctags/i.test(ctags.stdout)
+          ? (ctags.stdout.split("\n")[0] ?? "Universal Ctags (unknown version)")
+          : "Universal Ctags unavailable";
       const tools = pi.getAllTools();
       const searchTools = tools
         .map((tool) => tool.name)
@@ -122,7 +148,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
       const activeGrepOwner =
         tools.find((tool) => tool.name === "grep")?.sourceInfo.source ?? "missing";
       ctx.ui.notify(
-        `${version}\nTool mode: ${config.overrideBuiltinGrep ? "override built-in grep" : "additive signal_grep"}\nSearch tools: ${searchTools.join(", ")}\nActive grep owner: ${activeGrepOwner}\nSnapshots: ${runtime.snapshotCount}\nRetained matches: ${runtime.storedMatches}`,
+        `${version}\nStructure provider: ${ctagsVersion}\nTool mode: ${config.overrideBuiltinGrep ? "override built-in grep" : "additive signal_grep"}\nSearch tools: ${searchTools.join(", ")}\nActive grep owner: ${activeGrepOwner}\nSnapshots: ${runtime.snapshotCount}\nRetained matches: ${runtime.storedMatches}`,
         "info",
       );
     },
@@ -214,7 +240,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
           return;
         }
         runtime.enableMetrics();
-        ctx.ui.setStatus(METRICS_STATUS_KEY, runtime.formatMetricsStatus());
+        ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx));
         ctx.ui.notify(
           "Signal Grep metrics enabled. Every successful Pi grep call will be compared from one shared snapshot.",
           "info",
@@ -255,7 +281,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
       startMetricsOnNextLoad: false,
     });
     runtime.enableMetrics();
-    ctx.ui.setStatus(METRICS_STATUS_KEY, runtime.formatMetricsStatus());
+    ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx));
     ctx.ui.notify(
       "Signal Grep override and metrics enabled. Every successful Pi grep call will be compared.",
       "info",

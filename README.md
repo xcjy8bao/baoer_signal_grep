@@ -6,9 +6,9 @@
 
 [简体中文](README.zh-CN.md) · English
 
-Context-efficient, correctness-first content search for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
+Context-efficient, correctness-first content search and bounded code inspection for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Latest release:** `0.3.0`.
+> **Latest release:** `0.4.0`.
 
 ## Why Signal Grep?
 
@@ -92,14 +92,14 @@ Measured with Pi 0.84.3, Bun 1.4.0, Node.js 22.22.2, and ripgrep 15.2.0:
 | Scenario                               |           Pi built-in grep |                 Signal Grep |
 | -------------------------------------- | -------------------------: | --------------------------: |
 | Compact search: actual matches         |                         33 |                          33 |
-| Compact search: first response         |                  898 bytes |               **715 bytes** |
+| Compact search: first response         |                  898 bytes |               **960 bytes** |
 | Compact search: extra detail turn      |                         no |                      **no** |
 | Broad search: actual matches           | not observable after limit |                     **233** |
 | Broad search: detail lines shown first |                        100 | **0 (exact summary first)** |
-| Broad search: first response           |                9,728 bytes |               **238 bytes** |
-| Broad search: first-response reduction |                          — |                   **97.6%** |
+| Broad search: first response           |                9,728 bytes |               **321 bytes** |
+| Broad search: first-response reduction |                          — |                   **96.7%** |
 
-The compact case confirms that adaptive budgeting can return every result directly with less repeated path text and no extra turn. The broad case confirms that Signal Grep exposes the exact total and file distribution instead of presenting a 100-match prefix as if it represented the whole search. Explicit `limit=20` pagination still reconstructs the 33-match fixture as 20 + 13 without duplication or omission.
+The compact case confirms that adaptive budgeting returns every result directly with precise occurrence ranges and no extra turn; the range metadata adds a small, explicit response cost. The broad case confirms that Signal Grep exposes the exact total and file distribution instead of presenting a 100-match prefix as if it represented the whole search. Explicit `limit=20` pagination still reconstructs the 33-match fixture as 20 + 13 without duplication or omission.
 
 This is a context-shape benchmark, not a speed or exact tokenizer benchmark. Byte counts cover model-facing tool text only; provider serialization, tool schemas, and model tokenization are intentionally excluded. Run the command on your own platform before using the numbers for capacity planning.
 
@@ -110,6 +110,7 @@ This is a context-shape benchmark, not a speed or exact tokenizer benchmark. Byt
 - Pi 0.84.3 or newer
 - Node.js 22+ or Bun 1.4+
 - [`ripgrep`](https://github.com/BurntSushi/ripgrep) available as `rg` on `PATH`
+- Optional [Universal Ctags](https://docs.ctags.io/) with JSON output on `PATH` for symbol-level inspection
 
 ### Development
 
@@ -157,19 +158,20 @@ Use `/signal-grep-override status` to inspect the active mode. Override is delib
 
 The extension registers one tool: `signal_grep` by default, or `grep` in override mode.
 
-| Parameter    | Type                         | Default    | Purpose                                             |
-| ------------ | ---------------------------- | ---------- | --------------------------------------------------- |
-| `pattern`    | string                       | —          | Regex or literal text; required for a new search    |
-| `path`       | string                       | `.`        | File or directory relative to the working directory |
-| `glob`       | string or string[]           | `[]`       | Include globs                                       |
-| `exclude`    | string or string[]           | `[]`       | Exclude globs                                       |
-| `literal`    | boolean                      | `false`    | Use fixed-string matching                           |
-| `ignoreCase` | boolean                      | mode-aware | Force insensitive or sensitive matching             |
-| `hidden`     | boolean                      | `true`     | Include hidden files; `.git` is always excluded     |
-| `context`    | number                       | `0`        | Before/after context, clamped to 0–20               |
-| `limit`      | number                       | adaptive   | Maximum matches per page, clamped to 1–100          |
-| `mode`       | `auto`, `summary`, `matches` | `auto`     | Select adaptive, summary, or detail output          |
-| `cursor`     | string                       | —          | Continue a stable retained snapshot                 |
+| Parameter    | Type                                    | Default    | Purpose                                                                                       |
+| ------------ | --------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| `pattern`    | string                                  | —          | Regex or literal text; required for a new search                                              |
+| `path`       | string                                  | `.`        | File or directory relative to the working directory; with a cursor, selects one retained file |
+| `glob`       | string or string[]                      | `[]`       | Include globs                                                                                 |
+| `exclude`    | string or string[]                      | `[]`       | Exclude globs                                                                                 |
+| `literal`    | boolean                                 | `false`    | Use fixed-string matching                                                                     |
+| `ignoreCase` | boolean                                 | mode-aware | Force insensitive or sensitive matching                                                       |
+| `hidden`     | boolean                                 | `true`     | Include hidden files; `.git` is always excluded                                               |
+| `context`    | number                                  | `0`        | Before/after context, clamped to 0–20                                                         |
+| `limit`      | number                                  | adaptive   | Maximum matches per page, clamped to 1–100                                                    |
+| `mode`       | `auto`, `summary`, `matches`, `inspect` | `auto`     | Select adaptive, summary, detail, or code-block inspection                                    |
+| `line`       | number                                  | —          | 1-indexed source line required by `mode=inspect`                                              |
+| `cursor`     | string                                  | —          | Continue or select from a stable retained snapshot                                            |
 
 When `ignoreCase` is omitted, additive `signal_grep` uses smart-case; override `grep` preserves Pi's built-in case-sensitive default.
 
@@ -178,7 +180,8 @@ When `ignoreCase` is omitted, additive `signal_grep` uses smart-case; override `
 - `auto`: return all grouped details when the complete result fits the adaptive budget; honor an explicit `limit` with an immediate detail page; otherwise return a file summary.
 - `summary`: always return file counts first.
 - `matches`: return the first adaptive-budget detail page immediately.
-- `cursor`: continue detail pages from the original snapshot; no search rerun.
+- `inspect`: inspect the smallest available enclosing code symbol at `path` and `line`; when a cursor is supplied, reject source changes since the retained match.
+- `cursor`: continue detail pages from the original snapshot; no search rerun. Supply `path` with a cursor to select one retained file.
 
 ## Optional cumulative token comparison
 
@@ -190,10 +193,10 @@ Token comparison is disabled by default and adds no baseline rendering while dis
 
 Starting Metrics clears existing Signal Grep snapshots so a cursor created before the comparison window cannot succeed without being accounted for. If override mode is not active, this single command persists the override, reloads Pi, and automatically starts Metrics after reload so every successful Pi `grep` call is covered. `/signal-grep-metrics off` closes only the comparison window; the override remains active until `/signal-grep-override off` restores Pi's built-in implementation.
 
-Pi adds a compact Extension Status below its built-in footer statistics and updates it after each comparable search:
+Pi adds a compact, color-coded Extension Status below its built-in footer statistics and updates it after each comparable search. The `SG` card uses the theme accent, `NORMAL` uses a light dim color, and the delta card uses success/error colors:
 
 ```text
-SG 3.2k / normal 11.8k · ↓8.6k (72.9%)
+[ SG 3.2k ]  [ NORMAL 11.8k ]  [ ↓ 8.6k · 72.9% ]
 ```
 
 `SG` is the cumulative estimated token count of Signal Grep result text. `normal` reproduces Pi's normal grep formatting from the exact same stable match snapshot. Cursor pages add to `SG` without rerunning or recounting the normal baseline. If exhaustive pagination costs more than normal output, the indicator shows an honest increase such as `↑1.3k (11.0%)`.
@@ -214,21 +217,31 @@ Signal Grep treats search completeness as a public contract:
 
 1. A `complete` snapshot retains every matching line discovered by `rg`.
 2. Cursor pages preserve snapshot order and do not duplicate or omit retained matches.
-3. Retained matching-line text is snapshot-stable. Optional surrounding context is read when a page is formatted and may reflect later file edits.
+3. Retained matching-line text and occurrence ranges are snapshot-stable. Optional surrounding context is read when a page is formatted and may reflect later file edits.
 4. A snapshot that exceeds 50,000 retained matches is marked `partial` in both text and structured details.
 5. Adaptive pages target about 2,000 estimated result-text tokens and remain bounded by 100 matches and a 16 KiB hard limit.
-6. Lines longer than 500 characters are visibly clipped and counted in details.
-7. Context for files larger than 5 MiB, unreadable files, or a single block that exceeds the page byte budget is omitted and reported.
-8. Invalid cursors and subprocess failures are errors, never successful empty searches.
+6. Lines longer than 500 characters are visibly clipped and counted in details; matching columns remain based on the untruncated line.
+7. Context and structure for files larger than 5 MiB, unreadable files, files without a usable structure provider, or a single block that exceeds the page byte budget are omitted and reported.
+8. `mode=inspect` returns an enclosing symbol only when a structure provider can prove its range; otherwise it reports the exact reason and returns a bounded source window.
+9. A cursor-scoped inspection rejects a changed source revision instead of presenting stale code evidence.
+10. Invalid cursors, invalid structure requests, and subprocess failures are errors, never successful empty searches.
 
 See [Architecture](docs/ARCHITECTURE.md) for the ownership and lifecycle model.
 
 ## Commands
 
-- `/signal-grep-health` — show the detected ripgrep version and snapshot usage.
+- `/signal-grep-health` — show detected ripgrep/Universal Ctags availability and snapshot usage.
 - `/signal-grep-clear` — clear snapshots and invalidate existing cursors.
 - `/signal-grep-override on|off|status` — persist or inspect the optional built-in grep override.
 - `/signal-grep-metrics on|off|status` — control or inspect cumulative Status Line token estimates.
+
+## Code evidence and structure
+
+`mode=inspect` accepts a workspace-relative `path` and 1-indexed `line`. It returns a bounded, numbered source range and, when an available structure provider identifies one, the smallest enclosing symbol with its kind and line range. A cursor can be supplied with the same path and line to bind inspection to a retained match; changed files fail explicitly instead of returning stale evidence.
+
+The base locator works for all text languages because it is derived from ripgrep's match range. Symbol inspection is capability-based: the default provider uses Universal Ctags when an executable with JSON output is available. It is optional and is never downloaded automatically. Missing providers, files without an identifiable symbol, parse errors, oversized files, source changes, and unreadable files remain visible in `details.structure.status`.
+
+Search pages merge overlapping context windows and expose matching columns as UTF-16 positions for valid UTF-8 text; `b`-suffixed ranges use raw UTF-8 byte offsets when ripgrep emits non-UTF-8 data. Raw ripgrep or ctags protocol output is never sent to the model; only bounded formatted evidence is returned.
 
 Snapshots are also cleared on Pi session shutdown.
 
@@ -236,7 +249,8 @@ Snapshots are also cleared on Pi session shutdown.
 
 - Search stays local.
 - The extension makes no network requests and has no telemetry.
-- `rg` is spawned directly with an argument array; no shell is involved.
+- `rg` and optional Universal Ctags are spawned directly with argument arrays; no shell is involved.
+- Search and inspection paths are confined to the working directory.
 - `.git` internals are always excluded.
 - Pi extensions run with the user's full permissions. Review third-party extension source before installation.
 

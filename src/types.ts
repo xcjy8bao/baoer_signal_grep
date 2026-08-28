@@ -7,8 +7,64 @@ export const MAX_STORED_MATCHES = 50_000;
 export const MAX_LINE_CHARACTERS = 500;
 export const MAX_RESULT_BYTES = 16 * 1024;
 export const MAX_CONTEXT_LINES = 20;
+export const MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
+export const MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
 
-export type SearchMode = "auto" | "summary" | "matches";
+export type SearchMode = "auto" | "summary" | "matches" | "inspect";
+
+export interface TextPosition {
+  line: number;
+  character: number;
+}
+
+export interface TextRange {
+  start: TextPosition;
+  end: TextPosition;
+  encoding: "utf-8" | "utf-16";
+}
+
+export interface MatchOccurrence {
+  byteStart: number;
+  byteEnd: number;
+  range: TextRange;
+}
+
+export interface SourceRevision {
+  size: number;
+  mtimeMs: number;
+  inode?: number;
+  device?: number;
+}
+
+export type StructureStatus =
+  | "available"
+  | "no-symbol"
+  | "provider-unavailable"
+  | "source-unavailable"
+  | "parse-error"
+  | "file-too-large"
+  | "source-changed";
+
+export interface SymbolRange {
+  startLine: number;
+  endLine: number;
+}
+
+export interface StructureSymbol {
+  name: string;
+  kind: string;
+  scope: string[];
+  range: SymbolRange;
+}
+
+export interface StructureDetails {
+  status: StructureStatus;
+  provider?: string;
+  language?: string;
+  symbol?: StructureSymbol;
+  range?: SymbolRange;
+}
 
 export interface SearchRequest {
   pattern: string;
@@ -28,6 +84,7 @@ export interface MatchRecord {
   lineNumber: number;
   lineContent: string;
   lineTruncated: boolean;
+  occurrences: MatchOccurrence[];
 }
 
 export interface SearchScan {
@@ -35,6 +92,7 @@ export interface SearchScan {
   matches: MatchRecord[];
   totalMatches: number;
   fileCounts: Map<string, number>;
+  sourceRevisions: Map<string, SourceRevision>;
   snapshotComplete: boolean;
   truncatedLines: number;
 }
@@ -59,6 +117,7 @@ export interface SignalGrepDetails {
   summaryFilesOmitted?: number;
   lineContentTruncated?: number;
   contextOmittedFiles?: string[];
+  structure?: StructureDetails;
 }
 
 export interface SignalGrepResult {

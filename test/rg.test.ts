@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { buildRipgrepArguments, createRipgrepRunner } from "../src/rg.js";
 import type { SearchRequest } from "../src/types.js";
 import { createTodoFixture, removeFixture } from "./helpers.js";
@@ -34,6 +35,84 @@ describe("ripgrep runner", () => {
     } finally {
       await removeFixture(root);
     }
+  });
+
+  test("keeps every same-line occurrence with byte and UTF-16 ranges", async () => {
+    const root = await createTodoFixture();
+    try {
+      await writeFile(join(root, "unicode.ts"), "prefix\n前😀 needle needle\n");
+      const result = await createRipgrepRunner()(
+        { ...request, pattern: "needle", literal: true },
+        root,
+      );
+      const match = result.matches.find((candidate) => candidate.displayPath === "unicode.ts");
+      expect(match?.occurrences).toEqual([
+        {
+          byteStart: 8,
+          byteEnd: 14,
+          range: {
+            start: { line: 1, character: 4 },
+            end: { line: 1, character: 10 },
+            encoding: "utf-16",
+          },
+        },
+        {
+          byteStart: 15,
+          byteEnd: 21,
+          range: {
+            start: { line: 1, character: 11 },
+            end: { line: 1, character: 17 },
+            encoding: "utf-16",
+          },
+        },
+      ]);
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test("maps columns against normalized text when CR appears inside a line", async () => {
+    const root = await createTodoFixture();
+    try {
+      await writeFile(join(root, "cr.txt"), "aaa\rNEEDLE\rbbb\n");
+      const result = await createRipgrepRunner()(
+        { ...request, pattern: "NEEDLE", literal: true },
+        root,
+      );
+      const match = result.matches.find((candidate) => candidate.displayPath === "cr.txt");
+      expect(match?.occurrences[0]?.range).toEqual({
+        start: { line: 0, character: 3 },
+        end: { line: 0, character: 9 },
+        encoding: "utf-16",
+      });
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test("keeps raw UTF-8 byte ranges for non-UTF-8 text", async () => {
+    const root = await createTodoFixture();
+    try {
+      await writeFile(join(root, "bytes.txt"), Buffer.from([0xff, ...Buffer.from("needle\n")]));
+      const result = await createRipgrepRunner()(
+        { ...request, pattern: "needle", literal: true },
+        root,
+      );
+      const match = result.matches.find((candidate) => candidate.displayPath === "bytes.txt");
+      expect(match?.occurrences[0]?.range).toEqual({
+        start: { line: 0, character: 1 },
+        end: { line: 0, character: 7 },
+        encoding: "utf-8",
+      });
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test("rejects search paths outside the working directory", () => {
+    expect(() => buildRipgrepArguments({ ...request, path: ".." }, "/repo/project")).toThrow(
+      "Search path must stay within the working directory",
+    );
   });
 
   test("fails immediately for an already aborted search", async () => {

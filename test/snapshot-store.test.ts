@@ -20,9 +20,11 @@ function scan(matchCount = 1): SearchScan {
       lineNumber: 1,
       lineContent: "TODO",
       lineTruncated: false,
+      occurrences: [],
     })),
     totalMatches: matchCount,
     fileCounts: new Map([["file.ts", matchCount]]),
+    sourceRevisions: new Map(),
     snapshotComplete: true,
     truncatedLines: 0,
   };
