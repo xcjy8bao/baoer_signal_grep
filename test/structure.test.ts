@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCtagsStructureProvider } from "../src/structure.js";
 import { readSourceRange } from "../src/source.js";
@@ -12,7 +13,7 @@ afterEach(async () => {
 });
 
 async function fixture(): Promise<{ root: string; file: string }> {
-  const root = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "signal-grep-structure-"));
+  const root = await mkdtemp(join(tmpdir(), "signal-grep-structure-"));
   fixtures.add(root);
   const file = join(root, "client.ts");
   await writeFile(
