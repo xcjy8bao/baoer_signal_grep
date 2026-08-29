@@ -4,6 +4,27 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-29
+
+### Added
+
+- Count-ranked, cursor-paged file summaries expose every file distribution page without rerunning ripgrep.
+- One summary cursor can repeatedly select exact retained files, including bounded `paths` batches, while selection-bound match cursors fail closed if a continuation changes its file set.
+- Every rendered match carries a stable 1-based `{match #N}` marker; cursor-scoped `mode=inspect` accepts `matchIndex` instead of manually repeating `path` and `line`.
+
+### Changed
+
+- Long matching lines use occurrence-centered excerpts so the reported match remains visible while absolute UTF-16 or byte ranges stay unchanged.
+- Oversized enclosing symbols return a byte-bounded source window centered on the requested line and report omitted line counts before and after it.
+- Surrounding context is revision-safe: changed files keep their retained matching lines but omit current-file context with explicit text and structured `contextChangedFiles`.
+
+### Fixed
+
+- Universal Ctags invocation no longer passes an unsupported `--` separator, and health checks now validate the exact JSON/field options used by inspection instead of checking only `ctags --version`.
+- File summaries rank by descending match count before applying the per-page file limit, preventing a dominant late-alphabet file from being hidden.
+- Completing one filtered selection no longer destroys the underlying summary snapshot; the original summary cursor remains reusable until TTL eviction, bounds eviction, explicit clear, or session shutdown.
+- Inspection output now reserves response metadata space so the complete result remains within the documented 16 KiB boundary.
+
 ## [0.5.0] - 2026-08-29
 
 ### Added

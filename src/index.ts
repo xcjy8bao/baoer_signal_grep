@@ -15,6 +15,7 @@ import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
 import { type SignalGrepInput, SignalGrepService } from "./service.js";
+import { MAX_SELECTED_PATHS } from "./types.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
@@ -52,6 +53,14 @@ const searchSchema = Type.Object({
   path: Type.Optional(
     Type.String({ description: "File or directory to search, relative to the working directory." }),
   ),
+  paths: Type.Optional(
+    Type.Array(Type.String(), {
+      minItems: 1,
+      maxItems: MAX_SELECTED_PATHS,
+      description:
+        "Exact retained files to select together from a cursor; unavailable for a new search.",
+    }),
+  ),
   glob: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
       description: "Include glob or globs, for example '*.ts' or 'src/**'.",
@@ -84,6 +93,12 @@ const searchSchema = Type.Object({
   ),
   line: Type.Optional(
     Type.Number({ description: "1-indexed source line required by mode=inspect." }),
+  ),
+  matchIndex: Type.Optional(
+    Type.Number({
+      description:
+        "1-based retained match index for cursor-scoped inspect; replaces path and line.",
+    }),
   ),
   cursor: Type.Optional(
     Type.String({ description: "Opaque cursor from a previous stable search snapshot." }),

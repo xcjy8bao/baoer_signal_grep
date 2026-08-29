@@ -7,6 +7,8 @@ import {
   truncateLine,
 } from "@earendil-works/pi-coding-agent";
 import { abortError } from "./errors.js";
+import { excerptText } from "./excerpt.js";
+import { getSourceRevision, sameSourceRevision } from "./source.js";
 import {
   DEFAULT_RESULT_TOKEN_BUDGET,
   ESTIMATED_CHARACTERS_PER_TOKEN,
@@ -15,7 +17,7 @@ import {
   MAX_RESULT_BYTES,
   MAX_SOURCE_FILE_BYTES,
 } from "./types.js";
-import type { MatchRecord, SearchSnapshot } from "./types.js";
+import type { MatchRecord, SearchSnapshot, SourceRevision } from "./types.js";
 
 const RESULT_METADATA_RESERVE_BYTES = 1024;
 const RESULT_METADATA_RESERVE_CHARACTERS = 512;
@@ -45,6 +47,7 @@ export interface FormattedPage {
   firstMatchIndex?: number;
   lastMatchIndex?: number;
   contextOmittedFiles: string[];
+  contextChangedFiles: string[];
 }
 
 export interface MatchPageOptions {
@@ -52,9 +55,13 @@ export interface MatchPageOptions {
   include?: (match: MatchRecord, index: number) => boolean;
 }
 
+type ContextLoad = { status: "available"; lines: string[] } | { status: "changed" | "unavailable" };
+
+type ContextCache = Map<string, ContextLoad>;
+
 function compactLine(line: string): string {
   const clean = line.replaceAll("\r", "").trimEnd();
-  return clean.length > MAX_LINE_CHARACTERS ? `${clean.slice(0, MAX_LINE_CHARACTERS)}…` : clean;
+  return excerptText(clean).text;
 }
 
 function matchLocationSuffix(match: MatchRecord): string {
@@ -68,55 +75,89 @@ function matchLocationSuffix(match: MatchRecord): string {
   return ` [${ranges.join(",")}]`;
 }
 
-function formatMatchLine(match: MatchRecord): string {
-  return ` ${match.lineNumber}: ${match.lineContent}${matchLocationSuffix(match)}`;
+function formatMatchLine(match: MatchRecord, matchIndex: number): string {
+  return ` ${match.lineNumber}: ${match.lineContent}${matchLocationSuffix(match)} {match #${String(matchIndex)}}`;
+}
+
+function indexedMatchLine(
+  match: MatchRecord,
+  matchIndices: ReadonlyMap<MatchRecord, number>,
+): string {
+  const matchIndex = matchIndices.get(match);
+  if (matchIndex === undefined) throw new Error("Match index is unavailable");
+  return formatMatchLine(match, matchIndex);
 }
 
 async function loadContextLines(
   match: MatchRecord,
-  cache: Map<string, string[] | null>,
+  expectedRevision: SourceRevision | undefined,
+  cache: ContextCache,
   signal?: AbortSignal,
-): Promise<string[] | null> {
-  if (cache.has(match.absolutePath)) return cache.get(match.absolutePath) ?? null;
+): Promise<ContextLoad> {
+  const cached = cache.get(match.absolutePath);
+  if (cached) return cached;
 
   try {
     if (signal?.aborted) throw abortError();
-    const metadata = await stat(match.absolutePath);
-    if (metadata.size > MAX_SOURCE_FILE_BYTES) {
-      cache.set(match.absolutePath, null);
-      return null;
+    if (!expectedRevision || expectedRevision.size > MAX_SOURCE_FILE_BYTES) {
+      const unavailable = { status: "unavailable" as const };
+      cache.set(match.absolutePath, unavailable);
+      return unavailable;
+    }
+    const beforeRevision = await getSourceRevision(match.absolutePath);
+    if (!beforeRevision || !sameSourceRevision(expectedRevision, beforeRevision)) {
+      const changed = { status: "changed" as const };
+      cache.set(match.absolutePath, changed);
+      return changed;
     }
     const content = await readFile(match.absolutePath, { encoding: "utf8", signal });
-    const lines = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
-    cache.set(match.absolutePath, lines);
-    return lines;
+    const afterRevision = await getSourceRevision(match.absolutePath);
+    if (!afterRevision || !sameSourceRevision(expectedRevision, afterRevision)) {
+      const changed = { status: "changed" as const };
+      cache.set(match.absolutePath, changed);
+      return changed;
+    }
+    const available = {
+      status: "available" as const,
+      lines: content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n"),
+    };
+    cache.set(match.absolutePath, available);
+    return available;
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
       throw abortError();
     }
-    cache.set(match.absolutePath, null);
-    return null;
+    const unavailable = { status: "unavailable" as const };
+    cache.set(match.absolutePath, unavailable);
+    return unavailable;
   }
 }
 
 async function formatBlock(
   match: MatchRecord,
+  expectedRevision: SourceRevision | undefined,
+  matchIndices: ReadonlyMap<MatchRecord, number>,
   context: number,
-  cache: Map<string, string[] | null>,
+  cache: ContextCache,
   omittedFiles: Set<string>,
+  changedFiles: Set<string>,
   emittedLines: Map<string, Set<number>>,
   pageMatches: Map<string, Map<number, MatchRecord>>,
   allMatchLines: Map<string, Set<number>>,
   priorContextLines: Map<string, Set<number>>,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (context === 0) return formatMatchLine(match);
+  const matchIndex = matchIndices.get(match);
+  if (matchIndex === undefined) throw new Error("Match index is unavailable");
+  if (context === 0) return formatMatchLine(match, matchIndex);
 
-  const lines = await loadContextLines(match, cache, signal);
-  if (!lines) {
-    omittedFiles.add(match.displayPath);
-    return formatMatchLine(match);
+  const contextLoad = await loadContextLines(match, expectedRevision, cache, signal);
+  if (contextLoad.status !== "available") {
+    const affectedFiles = contextLoad.status === "changed" ? changedFiles : omittedFiles;
+    affectedFiles.add(match.displayPath);
+    return formatMatchLine(match, matchIndex);
   }
+  const { lines } = contextLoad;
 
   const boundedContext = Math.min(Math.max(0, context), MAX_CONTEXT_LINES);
   const start = Math.max(1, match.lineNumber - boundedContext);
@@ -132,7 +173,7 @@ async function formatBlock(
     if (!matchingRecord && priorContextLines.get(match.absolutePath)?.has(lineNumber)) continue;
     output.push(
       matchingRecord
-        ? formatMatchLine(matchingRecord)
+        ? indexedMatchLine(matchingRecord, matchIndices)
         : ` ${lineNumber}- ${compactLine(lines[lineNumber - 1] ?? "")}`,
     );
     emitted.add(lineNumber);
@@ -148,8 +189,10 @@ export async function formatMatchPage(
   options: MatchPageOptions = {},
 ): Promise<FormattedPage> {
   const maxPageBodyCharacters = pageBodyCharacterLimit(options.resultTokenBudget);
-  const cache = new Map<string, string[] | null>();
+  const cache: ContextCache = new Map();
   const omittedFiles = new Set<string>();
+  const changedFiles = new Set<string>();
+  const matchIndices = new Map(snapshot.matches.map((match, index) => [match, index + 1] as const));
   const output: string[] = [];
   let returnedMatches = 0;
   let nextOffset = offset;
@@ -212,9 +255,12 @@ export async function formatMatchPage(
     // oxlint-disable-next-line no-await-in-loop -- the shared output budget is consumed in order.
     let block = await formatBlock(
       match,
+      snapshot.sourceRevisions.get(match.absolutePath),
+      matchIndices,
       snapshot.request.context,
       cache,
       omittedFiles,
+      changedFiles,
       emittedLines,
       pageMatches,
       allMatchLines,
@@ -247,7 +293,7 @@ export async function formatMatchPage(
         break;
       }
       restoreEmittedLines();
-      block = formatMatchLine(match);
+      block = indexedMatchLine(match, matchIndices);
       addition = `${fileHeader}${block}`;
       additionBytes = Buffer.byteLength(addition);
       additionCharacters = addition.length;
@@ -270,17 +316,19 @@ export async function formatMatchPage(
     .slice(nextOffset)
     .some((match, index) => !options.include || options.include(match, nextOffset + index));
 
-  return {
+  const page: FormattedPage = {
     body: output.join("\n"),
     returnedMatches,
     nextOffset,
     hasNext,
     hasMatchRanges,
     hasByteRanges,
-    ...(firstMatchIndex === undefined ? {} : { firstMatchIndex }),
-    ...(lastMatchIndex === undefined ? {} : { lastMatchIndex }),
-    contextOmittedFiles: [...omittedFiles].toSorted(),
+    contextOmittedFiles: [...omittedFiles].toSorted((left, right) => left.localeCompare(right)),
+    contextChangedFiles: [...changedFiles].toSorted((left, right) => left.localeCompare(right)),
   };
+  if (firstMatchIndex !== undefined) page.firstMatchIndex = firstMatchIndex;
+  if (lastMatchIndex !== undefined) page.lastMatchIndex = lastMatchIndex;
+  return page;
 }
 
 interface NormalBlock {
@@ -354,7 +402,8 @@ async function createNormalPathFormatter(snapshot: SearchSnapshot, cwd: string) 
   const searchPath = resolve(cwd, snapshot.request.path ?? ".");
   let searchPathIsDirectory = false;
   try {
-    searchPathIsDirectory = (await stat(searchPath)).isDirectory();
+    const searchPathStats = await stat(searchPath);
+    searchPathIsDirectory = searchPathStats.isDirectory();
   } catch {
     // The scan already succeeded. If the root disappears before formatting, basename behavior is
     // the only deterministic fallback and matches normal grep's file-root formatting.
@@ -423,15 +472,22 @@ export async function formatNormalBaseline(
   return text;
 }
 
-export function formatSummary(snapshot: SearchSnapshot, fileLimit: number) {
-  const files = [...snapshot.fileCounts.entries()].toSorted(([left], [right]) =>
-    left.localeCompare(right),
+export function formatSummary(snapshot: SearchSnapshot, fileLimit: number, offset = 0) {
+  if (!Number.isSafeInteger(fileLimit) || fileLimit <= 0) {
+    throw new Error("Summary file limit must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > snapshot.fileCounts.size) {
+    throw new Error("Summary offset is outside the file summary");
+  }
+  const files = [...snapshot.fileCounts.entries()].toSorted(
+    ([leftPath, leftCount], [rightPath, rightCount]) =>
+      rightCount - leftCount || leftPath.localeCompare(rightPath),
   );
   const rows: string[] = [];
   let bytes = 0;
   let characters = 0;
 
-  for (const [file, count] of files.slice(0, fileLimit)) {
+  for (const [file, count] of files.slice(offset, offset + fileLimit)) {
     const row = `${file}  ${String(count).padStart(6)}`;
     const separatorLength = rows.length === 0 ? 0 : 1;
     const rowBytes = Buffer.byteLength(row) + separatorLength;
@@ -448,9 +504,13 @@ export function formatSummary(snapshot: SearchSnapshot, fileLimit: number) {
     characters += rowCharacters;
   }
 
+  const nextOffset = offset + rows.length;
   return {
     body: rows.join("\n"),
     shown: rows.length,
-    omitted: files.length - rows.length,
+    offset,
+    nextOffset,
+    hasNext: nextOffset < files.length,
+    omitted: files.length - nextOffset,
   };
 }

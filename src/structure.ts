@@ -12,6 +12,12 @@ import {
   type StructureSymbol,
 } from "./types.js";
 
+export const CTAGS_CAPABILITY_ARGUMENTS = [
+  "--output-format=json",
+  "--fields=+ne",
+  "--extras=-p",
+] as const;
+
 export interface StructureInspectionRequest {
   absolutePath: string;
   cwd: string;
@@ -68,7 +74,11 @@ function asOptionalPositiveInteger(value: unknown): number | undefined {
 }
 
 function parseCtagsTag(value: unknown): CtagsTag | undefined {
-  if (!isRecord(value) || Reflect.get(value, "_type") !== "tag") return undefined;
+  if (!isRecord(value)) return undefined;
+  const hasTagType = Object.entries(value).some(
+    ([key, entry]) => key === "_type" && entry === "tag",
+  );
+  if (!hasTagType) return undefined;
   const path = asOptionalString(value.path);
   const name = asOptionalString(value.name);
   const language = asOptionalString(value.language);
@@ -95,15 +105,11 @@ async function runCtagsCommand(
   signal?: AbortSignal,
 ): Promise<CtagsTag[]> {
   if (signal?.aborted) throw abortError();
-  const child = spawn(
-    executable,
-    ["--output-format=json", "--fields=+ne", "--extras=-p", "--", absolutePath],
-    {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    },
-  );
+  const child = spawn(executable, [...CTAGS_CAPABILITY_ARGUMENTS, absolutePath], {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
     if (stderr.length < 16_384) stderr += chunk.toString("utf8");

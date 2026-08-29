@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { CursorError, SignalGrepError } from "./errors.js";
 import { inspectSource } from "./inspect.js";
@@ -14,6 +15,7 @@ import { isPathInsideCwd } from "./source.js";
 import { SnapshotStore } from "./snapshot-store.js";
 import {
   DEFAULT_SUMMARY_FILE_LIMIT,
+  MAX_SELECTED_PATHS,
   type ContextBudget,
   type SearchMode,
   type SearchSnapshot,
@@ -24,6 +26,8 @@ import {
 export interface SignalGrepInput extends RawSearchInput {
   mode?: SearchMode;
   cursor?: string;
+  paths?: string[];
+  matchIndex?: number;
   line?: number;
 }
 
@@ -37,6 +41,46 @@ export interface SignalGrepServiceOptions {
 export interface SignalGrepSearchOptions {
   contextBudget?: ContextBudget;
   includeNormalBaseline?: boolean;
+}
+interface PathSelection {
+  labels: string[];
+  absolutePaths: Set<string>;
+  key: string;
+}
+
+function cursorPathSelection(input: SignalGrepInput, cwd: string): PathSelection | undefined {
+  if (input.path !== undefined && input.paths !== undefined) {
+    throw new SignalGrepError("Use either path or paths with a cursor, not both");
+  }
+  const rawPaths = input.paths ?? (input.path === undefined ? [] : [input.path]);
+  if (input.paths !== undefined && rawPaths.length === 0) {
+    throw new SignalGrepError("paths must contain at least one retained file");
+  }
+  if (rawPaths.length === 0) return undefined;
+  if (rawPaths.length > MAX_SELECTED_PATHS) {
+    throw new SignalGrepError(
+      `paths cannot contain more than ${String(MAX_SELECTED_PATHS)} entries`,
+    );
+  }
+
+  const labels: string[] = [];
+  const absolutePaths = new Set<string>();
+  for (const rawPath of rawPaths) {
+    const label = rawPath.replace(/^@/, "");
+    if (label.length === 0) throw new SignalGrepError("Cursor paths cannot be empty");
+    const absolutePath = resolve(cwd, label);
+    if (!isPathInsideCwd(absolutePath, cwd)) {
+      throw new SignalGrepError("Cursor paths must stay within the working directory");
+    }
+    if (absolutePaths.has(absolutePath)) continue;
+    absolutePaths.add(absolutePath);
+    labels.push(label);
+  }
+  const key = createHash("sha256")
+    .update([...absolutePaths].toSorted((left, right) => left.localeCompare(right)).join("\0"))
+    .digest("hex")
+    .slice(0, 16);
+  return { labels, absolutePaths, key };
 }
 
 function baseDetails(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepDetails {
@@ -104,6 +148,7 @@ function rejectCursorOnlyOptions(input: SignalGrepInput): void {
   if (input.context !== undefined) ignored.push("context");
   if (input.limit !== undefined) ignored.push("limit");
   if (input.line !== undefined) ignored.push("line");
+  if (input.matchIndex !== undefined) ignored.push("matchIndex");
   if (ignored.length > 0) {
     throw new SignalGrepError(
       `The following options cannot be used with cursor: ${ignored.join(", ")}`,
@@ -116,6 +161,7 @@ export class SignalGrepService {
   readonly #snapshots: SnapshotStore;
   readonly #summaryFileLimit: number;
   readonly #structure: CodeStructureProvider | undefined;
+  readonly #reusableSummarySnapshots = new WeakSet<SearchSnapshot>();
 
   constructor(options: SignalGrepServiceOptions) {
     this.#runRipgrep = options.runRipgrep;
@@ -133,12 +179,21 @@ export class SignalGrepService {
     const mode = input.mode ?? "auto";
     const contextBudget = selectContextBudget(input, mode, options.contextBudget);
     if (mode === "inspect") {
+      if (input.paths !== undefined) {
+        throw new SignalGrepError("paths cannot be used with mode=inspect");
+      }
       const inspectOptions = this.#structure
         ? { snapshots: this.#snapshots, structure: this.#structure }
         : { snapshots: this.#snapshots };
       return inspectSource(input, cwd, signal, inspectOptions);
     }
     if (input.cursor) return this.#continue(input, cwd, signal);
+    if (input.paths !== undefined) {
+      throw new SignalGrepError("paths can only select retained files from a cursor");
+    }
+    if (input.matchIndex !== undefined) {
+      throw new SignalGrepError("matchIndex requires mode=inspect with a cursor");
+    }
 
     const request = normalizeRequest(input);
     const scan = await this.#runRipgrep(request, cwd, signal);
@@ -194,44 +249,77 @@ export class SignalGrepService {
     cwd: string,
     signal?: AbortSignal,
   ): Promise<SignalGrepResult> {
-    const mode = input.mode ?? "auto";
-    if (mode === "summary") {
-      throw new SignalGrepError(
-        "A cursor retrieves match pages; mode=summary is not valid with cursor",
-      );
-    }
     const cursor = input.cursor;
     if (!cursor) throw new CursorError("A cursor is required to continue a search");
     rejectCursorOnlyOptions(input);
-    const { snapshot, offset } = this.#snapshots.resolve(cursor);
-    const filterLabel = input.path?.replace(/^@/, "");
-    const filterPath = filterLabel ? resolve(cwd, filterLabel) : undefined;
-    if (filterPath && !isPathInsideCwd(filterPath, cwd)) {
-      throw new SignalGrepError("Cursor path must stay within the working directory");
+    const { snapshot, offset, kind, selectionKey } = this.#snapshots.resolve(cursor);
+    const mode = input.mode ?? "auto";
+    if (mode === "summary") {
+      if (input.path !== undefined || input.paths !== undefined) {
+        throw new SignalGrepError("path and paths are not valid while paging a file summary");
+      }
+      if (kind !== "summary") {
+        throw new CursorError("A summary cursor is required to continue a file summary.");
+      }
+      if (offset >= snapshot.fileCounts.size) {
+        throw new CursorError("Cursor is already at the end of the file summary.");
+      }
+      return this.#summary(snapshot, mode, offset);
     }
-    const result = await this.#page(snapshot, offset, "matches", signal, filterPath, filterLabel);
-    return this.#finalize(snapshot, result);
+
+    const selection = cursorPathSelection(input, cwd);
+    const requestedSelectionKey = selection?.key ?? "all";
+    if (kind === "matches" && selectionKey !== requestedSelectionKey) {
+      throw new CursorError("A match cursor must continue with the same path selection.");
+    }
+    const pageOffset = kind === "summary" ? 0 : offset;
+    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection);
+    return this.#finalize(snapshot, result, kind === "summary" || selection !== undefined);
   }
 
-  #finalize(snapshot: SearchSnapshot, result: SignalGrepResult): SignalGrepResult {
-    if (!result.details.cursor) this.#snapshots.delete(snapshot);
+  #finalize(
+    snapshot: SearchSnapshot,
+    result: SignalGrepResult,
+    retainSnapshot = false,
+  ): SignalGrepResult {
+    if (
+      !result.details.cursor &&
+      !retainSnapshot &&
+      !this.#reusableSummarySnapshots.has(snapshot)
+    ) {
+      this.#snapshots.delete(snapshot);
+    }
     return result;
   }
 
-  #summary(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepResult {
-    const summary = formatSummary(snapshot, this.#summaryFileLimit);
-    const cursor = snapshot.matches.length > 0 ? this.#snapshots.cursor(snapshot, 0) : undefined;
+  #summary(snapshot: SearchSnapshot, mode: SearchMode, offset = 0): SignalGrepResult {
+    this.#reusableSummarySnapshots.add(snapshot);
+    const summary = formatSummary(snapshot, this.#summaryFileLimit, offset);
+    const cursor =
+      snapshot.matches.length > 0
+        ? this.#snapshots.cursor(snapshot, summary.nextOffset, "summary")
+        : undefined;
+    const fileRange =
+      summary.shown > 0
+        ? `Files ${String(summary.offset + 1)}-${String(summary.nextOffset)} of ${String(snapshot.fileCounts.size)}, ordered by match count.`
+        : "No retained file summaries are available.";
     const omitted =
-      summary.omitted > 0 ? `\n… ${summary.omitted} more files omitted from this summary.` : "";
-    const next = cursor
-      ? `\n\nDetails are available from the stable snapshot with cursor="${cursor}". To select one file, continue with the same cursor and path="<relative-file-path>".`
+      summary.omitted > 0 ? `\n… ${String(summary.omitted)} lower-ranked files remain.` : "";
+    const nextSummary =
+      cursor && summary.hasNext
+        ? `\n\nContinue the file summary with cursor="${cursor}" and mode="summary".`
+        : "";
+    const detailsNavigation = cursor
+      ? `\n\nRetrieve match details with the same cursor and no mode. Select retained files with path="<relative-file-path>" or paths=["a.ts","b.ts"].`
       : "";
     const text = [
       `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).`,
+      fileRange,
       "",
       summary.body,
       omitted,
-      next,
+      nextSummary,
+      detailsNavigation,
     ]
       .filter((part) => part.length > 0)
       .join("\n");
@@ -241,6 +329,7 @@ export class SignalGrepService {
       details: {
         ...baseDetails(snapshot, mode),
         ...(cursor ? { cursor } : {}),
+        summaryOffset: summary.offset,
         summaryFilesShown: summary.shown,
         summaryFilesOmitted: summary.omitted,
       },
@@ -252,21 +341,47 @@ export class SignalGrepService {
     offset: number,
     mode: SearchMode,
     signal?: AbortSignal,
-    filterPath?: string,
-    filterLabel?: string,
+    selection?: PathSelection,
   ): Promise<SignalGrepResult> {
     if (offset === snapshot.matches.length) {
       throw new CursorError("Cursor is already at the end of the retained snapshot.");
     }
 
-    const pageOptions = filterPath
-      ? { include: (match: SearchSnapshot["matches"][number]) => match.absolutePath === filterPath }
+    const pageOptions = selection
+      ? {
+          include: (match: SearchSnapshot["matches"][number]) =>
+            selection.absolutePaths.has(match.absolutePath),
+        }
       : {};
     const page = await formatMatchPage(snapshot, offset, signal, pageOptions);
-    if (page.returnedMatches === 0 && filterPath) {
-      throw new CursorError("No retained matches exist for the selected path.");
+    if (page.returnedMatches === 0 && selection) {
+      throw new CursorError("No retained matches exist for the selected paths.");
     }
-    return this.#pageResult(snapshot, offset, mode, page, filterLabel);
+    const missingPaths: string[] = [];
+    if (selection) {
+      const matchedAbsolutePaths = new Set<string>();
+      for (const match of snapshot.matches) {
+        if (selection.absolutePaths.has(match.absolutePath)) {
+          matchedAbsolutePaths.add(match.absolutePath);
+        }
+      }
+      const selectedAbsolutePaths = [...selection.absolutePaths];
+      for (const [index, label] of selection.labels.entries()) {
+        const absolutePath = selectedAbsolutePaths[index];
+        if (absolutePath !== undefined && !matchedAbsolutePaths.has(absolutePath)) {
+          missingPaths.push(label);
+        }
+      }
+    }
+    return this.#pageResult(
+      snapshot,
+      offset,
+      mode,
+      page,
+      selection?.labels,
+      missingPaths,
+      selection?.key ?? "all",
+    );
   }
 
   #pageResult(
@@ -274,32 +389,57 @@ export class SignalGrepService {
     offset: number,
     mode: SearchMode,
     page: Awaited<ReturnType<typeof formatMatchPage>>,
-    filterLabel?: string,
+    selectedPaths?: string[],
+    selectionMissingPaths: string[] = [],
+    selectionKey = "all",
   ): SignalGrepResult {
     if (page.returnedMatches === 0) {
       throw new SignalGrepError("The output budget could not fit a single match");
     }
 
-    const cursor = page.hasNext ? this.#snapshots.cursor(snapshot, page.nextOffset) : undefined;
+    const cursor = page.hasNext
+      ? this.#snapshots.cursor(snapshot, page.nextOffset, "matches", selectionKey)
+      : undefined;
     const firstMatch = page.firstMatchIndex ?? offset;
     const lastMatch = page.lastMatchIndex ?? firstMatch;
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
-    const selection = filterLabel ? `; selected path ${filterLabel}` : "";
+    const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor
-      ? `\n\nContinue with cursor="${cursor}"${filterLabel ? ` and path="${filterLabel}"` : ""}.`
+      ? `\n\nContinue with cursor="${cursor}"${selectedPaths ? " and the same path selection" : ""}.`
       : "";
+    const missingSelectionNote =
+      selectionMissingPaths.length > 0
+        ? `\n\n[${String(selectionMissingPaths.length)} selected path(s) had no retained matches.]`
+        : "";
     const rangeNote = page.hasMatchRanges
       ? `\n\n[Match columns are 1-based UTF-16 positions${page.hasByteRanges ? "; b ranges use raw UTF-8 bytes" : ""}.]`
       : "";
+    const contextNotes: string[] = [];
+    if (page.contextChangedFiles.length > 0) {
+      contextNotes.push(
+        `Context omitted for ${String(page.contextChangedFiles.length)} changed file(s); refresh the search before relying on surrounding lines.`,
+      );
+    }
+    if (page.contextOmittedFiles.length > 0) {
+      contextNotes.push(
+        `Context unavailable for ${String(page.contextOmittedFiles.length)} file(s); retained matching lines are still shown.`,
+      );
+    }
+    const contextNote = contextNotes.length > 0 ? `\n\n[${contextNotes.join(" ")}]` : "";
 
     return {
-      text: `${page.body}${rangeNote}\n\n[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${next}`,
+      text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}\n\n[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${next}`,
       details: {
         ...baseDetails(snapshot, mode),
         returnedMatches: page.returnedMatches,
         ...(cursor ? { cursor } : {}),
+        ...(selectedPaths ? { selectedPaths } : {}),
+        ...(selectionMissingPaths.length > 0 ? { selectionMissingPaths } : {}),
         ...(page.contextOmittedFiles.length > 0
           ? { contextOmittedFiles: page.contextOmittedFiles }
+          : {}),
+        ...(page.contextChangedFiles.length > 0
+          ? { contextChangedFiles: page.contextChangedFiles }
           : {}),
       },
     };

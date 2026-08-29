@@ -15,7 +15,7 @@ async function captureFailure(operation: Promise<unknown>): Promise<unknown> {
 }
 
 describe("search semantics", () => {
-  test("keeps retained match content stable after the source file changes", async () => {
+  test("keeps retained matches but omits context after the source file changes", async () => {
     const root = await createTodoFixture();
     try {
       await writeFile(join(root, "moving.ts"), "before\nTODO stable\nafter\n");
@@ -31,7 +31,9 @@ describe("search semantics", () => {
       const retained = await service.search({ cursor }, root);
 
       expect(retained.text).toContain("2: TODO stable");
-      expect(retained.text).toContain("1- shorter file");
+      expect(retained.text).not.toContain("shorter file");
+      expect(retained.text).toContain("Context omitted for 1 changed file");
+      expect(retained.details.contextChangedFiles).toEqual(["moving.ts"]);
     } finally {
       await removeFixture(root);
     }

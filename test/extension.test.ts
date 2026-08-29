@@ -93,12 +93,14 @@ function createMockPi(): {
   promptGuidelines: string[][];
   notifications: MockNotify[];
   commands: Map<string, CommandHandler>;
+  execCalls: Array<{ command: string; args: string[] }>;
   sessionStartHandlers: SessionStartHandler[];
 } {
   const toolNames: string[] = [];
   const promptGuidelines: string[][] = [];
   const notifications: MockNotify[] = [];
   const commands = new Map<string, CommandHandler>();
+  const execCalls: Array<{ command: string; args: string[] }> = [];
   const sessionStartHandlers: SessionStartHandler[] = [];
   // Test double: only the API surface this extension actually uses. The single
   // assertion here replaces seven scattered per-call-site assertions.
@@ -115,7 +117,20 @@ function createMockPi(): {
       if (event === "session_start") sessionStartHandlers.push(handler);
     },
     getAllTools: () => [],
-    exec: async () => ({ code: 0, stdout: "ripgrep 15.2.0\n", stderr: "", killed: false }),
+    exec: async (command: string, args: string[]) => {
+      execCalls.push({ command, args });
+      return {
+        code: 0,
+        stdout:
+          command !== "ctags"
+            ? "ripgrep 15.2.0\n"
+            : args[0] === "--version"
+              ? "Universal Ctags 6.2.1\n"
+              : '{"_type":"tag","name":"signalGrepProbe","path":"probe.go","line":2,"end":4}\n',
+        stderr: "",
+        killed: false,
+      };
+    },
   } as unknown as ExtensionAPI;
   return {
     pi,
@@ -123,6 +138,7 @@ function createMockPi(): {
     promptGuidelines,
     notifications,
     commands,
+    execCalls,
     sessionStartHandlers,
   };
 }
@@ -367,6 +383,16 @@ describe("Signal Grep extension registration", () => {
     await harness.commands.get("signal-grep-metrics")?.("status", ctx);
     await harness.commands.get("signal-grep-health")?.("", ctx);
 
+    expect(harness.execCalls).toContainEqual({ command: "ctags", args: ["--version"] });
+    const capabilityCall = harness.execCalls.find(
+      ({ command, args }) => command === "ctags" && args[0] === "--output-format=json",
+    );
+    expect(capabilityCall?.args.slice(0, -1)).toEqual([
+      "--output-format=json",
+      "--fields=+ne",
+      "--extras=-p",
+    ]);
+    expect(capabilityCall?.args.at(-1)).toEndWith("probe.go");
     expect(harness.notifications.map((entry) => entry.message)).toEqual([
       "Signal Grep 快照已清空",
       "Signal Grep 覆盖已停用。",

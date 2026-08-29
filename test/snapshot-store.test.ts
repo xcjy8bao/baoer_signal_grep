@@ -37,6 +37,9 @@ describe("SnapshotStore", () => {
     const resolved = store.resolve(store.cursor(snapshot, 2));
     expect(resolved.snapshot.id).toBe(snapshot.id);
     expect(resolved.offset).toBe(2);
+    expect(resolved.kind).toBe("matches");
+    const summary = store.resolve(store.cursor(snapshot, 1, "summary"));
+    expect(summary).toMatchObject({ offset: 1, kind: "summary" });
   });
 
   test("expires cursors by last access", () => {

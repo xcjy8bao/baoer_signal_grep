@@ -93,6 +93,9 @@ describe("medium-repository runtime stress", () => {
     expect(ids).toHaveLength(980);
     expect(new Set(ids).size).toBe(980);
     expect(runtime.metricsSnapshot.cursorPages).toBe(pages.length);
+    expect(runtime.snapshotCount).toBe(1);
+    expect(runtime.storedMatches).toBe(980);
+    runtime.clear();
     expect(runtime.snapshotCount).toBe(0);
     expect(runtime.storedMatches).toBe(0);
     expect(runtime.metricsSnapshot.signalTokens).toBeGreaterThan(0);

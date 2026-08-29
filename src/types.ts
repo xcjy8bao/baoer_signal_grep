@@ -12,6 +12,7 @@ export const CONTEXT_BUDGET_POLICY = {
 } as const;
 export const ESTIMATED_CHARACTERS_PER_TOKEN = 4;
 export const DEFAULT_SUMMARY_FILE_LIMIT = 30;
+export const MAX_SELECTED_PATHS = 20;
 export const MAX_STORED_MATCHES = 50_000;
 export const MAX_LINE_CHARACTERS = 500;
 export const MAX_RESULT_BYTES = 16 * 1024;
@@ -131,12 +132,16 @@ export interface SignalGrepDetails {
   snapshotComplete: boolean;
   cursor?: string;
   summaryFilesShown?: number;
+  summaryOffset?: number;
+  selectedPaths?: string[];
+  selectionMissingPaths?: string[];
   summaryFilesOmitted?: number;
   lineContentTruncated?: number;
   budgetTier?: ContextBudgetTier;
   contextRemainderPercent?: number;
   resultTokenBudget?: number;
   contextOmittedFiles?: string[];
+  contextChangedFiles?: string[];
   structure?: StructureDetails;
 }
 

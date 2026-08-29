@@ -21,6 +21,7 @@ export interface InspectInput {
   path?: string;
   line?: number;
   cursor?: string;
+  matchIndex?: number;
 }
 
 export interface InspectOptions {
@@ -87,14 +88,38 @@ export async function inspectSource(
   signal: AbortSignal | undefined,
   options: InspectOptions,
 ): Promise<SignalGrepResult> {
-  const rawPath = input.path?.replace(/^@/, "");
+  let rawPath = input.path?.replace(/^@/, "");
+  let line = input.line;
+  let retainedAbsolutePath: string | undefined;
+  if (input.matchIndex !== undefined) {
+    if (!input.cursor) {
+      throw new SignalGrepError("matchIndex requires a cursor when mode=inspect");
+    }
+    if (input.path !== undefined || input.line !== undefined) {
+      throw new SignalGrepError("matchIndex replaces path and line when mode=inspect");
+    }
+    if (!Number.isSafeInteger(input.matchIndex) || input.matchIndex < 1) {
+      throw new SignalGrepError("matchIndex must be a positive integer when mode=inspect");
+    }
+    const { snapshot } = options.snapshots.resolve(input.cursor);
+    const retainedMatch = snapshot.matches[input.matchIndex - 1];
+    if (!retainedMatch) {
+      const retention = snapshot.snapshotComplete
+        ? "outside this snapshot"
+        : "not retained in this partial snapshot";
+      throw new CursorError(`matchIndex is ${retention}.`);
+    }
+    rawPath = retainedMatch.displayPath;
+    line = retainedMatch.lineNumber;
+    retainedAbsolutePath = retainedMatch.absolutePath;
+  }
+
   if (!rawPath) throw new SignalGrepError("path is required when mode=inspect");
-  if (!Number.isSafeInteger(input.line) || input.line === undefined || input.line < 1) {
+  if (!Number.isSafeInteger(line) || line === undefined || line < 1) {
     throw new SignalGrepError("line must be a positive integer when mode=inspect");
   }
 
-  const line = input.line;
-  const absolutePath = resolve(cwd, rawPath);
+  const absolutePath = retainedAbsolutePath ?? resolve(cwd, rawPath);
   if (!isPathInsideCwd(absolutePath, cwd)) {
     throw new SignalGrepError("Inspect path must stay within the working directory");
   }
@@ -170,7 +195,7 @@ export async function inspectSource(
     : `No enclosing symbol found for line ${String(line)}`;
   const statusText = `[structure: ${structure.details.status}${structure.details.provider ? ` via ${structure.details.provider}` : ""}]`;
   const truncationText = source.truncated
-    ? "\n[source range truncated; request a narrower range]"
+    ? `\n[source range centered on target; omitted ${String(source.omittedBefore)} lines before and ${String(source.omittedAfter)} lines after]`
     : "";
 
   return {
