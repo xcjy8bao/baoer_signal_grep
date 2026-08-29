@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -41,6 +41,13 @@ describe("detectGrepOwnerConflict", () => {
     const agentDir = await createAgentDir(["@example/grep-owner"]);
     const packages = ["@example/grep-owner"];
     expect(await detectGrepOwnerConflict(agentDir, packages)).toBe("@example/grep-owner");
+  }, 5_000);
+
+  test("propagates scoped package directory read failures", async () => {
+    const agentDir = await createAgentDir();
+    await writeFile(join(agentDir, "npm", "node_modules", "@broken"), "not a directory");
+
+    expect(detectGrepOwnerConflict(agentDir, ["@broken/grep-owner"])).rejects.toThrow();
   }, 5_000);
 
   test("does not match packages outside the owner table", async () => {

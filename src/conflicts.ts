@@ -39,8 +39,13 @@ export async function detectGrepOwnerConflict(
   for (const entry of topLevelEntries) installed.add(entry);
   const scopedGroups = await Promise.all(
     scopedEntries.map(async (scope) => {
-      const names = await readdir(join(nodeModules, scope)).catch(() => []);
-      return names.map((name) => `${scope}/${name}`);
+      try {
+        const names = await readdir(join(nodeModules, scope));
+        return names.map((name) => `${scope}/${name}`);
+      } catch (error) {
+        if (hasErrorCode(error, ["ENOENT"])) return [];
+        throw error;
+      }
     }),
   );
   for (const group of scopedGroups) {
