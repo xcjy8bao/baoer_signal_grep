@@ -1,3 +1,4 @@
+import type { SignalGrepLocale } from "./config.js";
 import {
   METRICS_STATUS_KEY,
   type MetricsSnapshot,
@@ -60,12 +61,12 @@ export class SignalGrepRuntime {
     return this.#metrics.snapshot;
   }
 
-  formatMetricsStatus(styles?: MetricsStatusStyles): string {
-    return this.#metrics.formatStatus(styles);
+  formatMetricsStatus(styles?: MetricsStatusStyles, locale: SignalGrepLocale = "en"): string {
+    return this.#metrics.formatStatus(styles, locale);
   }
 
-  formatMetricsReport(): string {
-    return this.#metrics.formatReport();
+  formatMetricsReport(locale: SignalGrepLocale = "en"): string {
+    return this.#metrics.formatReport(locale);
   }
 
   clear(): void {

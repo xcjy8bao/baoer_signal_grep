@@ -166,6 +166,20 @@ The command safely persists a user-global setting through a staged file at `~/.p
 When `pi-hashline-edit-pro` is installed, Signal Grep adds one system prompt guideline telling the model to obtain served anchors through hashline's `grep` or `read` before editing a location found by `signal_grep`. The hint is not repeated in each search response, does not alter Metrics accounting, and does not claim that Signal Grep can write hashline's private served-state.
 Use `/signal-grep-override status` to inspect the active mode. Override is deliberately opt-in because another extension may also replace `grep`; Pi reports tool collisions at startup.
 
+## Interface language
+
+Human-facing command descriptions, notifications, health output, and Metrics status/report text default to English. To use Simplified Chinese, set `locale` in `~/.pi/agent/signal-grep.json` and restart Pi:
+
+```json
+{
+  "overrideBuiltinGrep": false,
+  "startMetricsOnNextLoad": false,
+  "locale": "zh-CN"
+}
+```
+
+Supported values are `"en"` and `"zh-CN"`. Existing config files without `locale` continue to use English. Signal Grep commands preserve the complete config object when they update override or Metrics handoff state. Search evidence, tool parameters, cursor details, and model-facing prompt guidelines remain language-neutral or English so localization cannot change search semantics or Metrics accounting.
+
 ## Tool
 
 The extension registers one tool: `signal_grep` by default, or `grep` in override mode.

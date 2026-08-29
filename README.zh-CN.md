@@ -166,6 +166,20 @@ Signal Grep 默认使用附加模式，在 Pi 内置 `grep` 旁注册 `signal_gr
 安装 `pi-hashline-edit-pro` 时，Signal Grep 会额外加入一条系统提示，要求模型在编辑 `signal_grep` 找到的位置前，先通过 hashline 的 `grep` 或 `read` 获取 served anchors。该提示不会在每次搜索响应中重复，不会影响 Metrics 计量，也不会声称 Signal Grep 能写入 hashline 的私有 served-state。
 使用 `/signal-grep-override status` 查看当前模式。覆盖功能必须主动开启，因为其他扩展也可能替换 `grep`；发生工具冲突时 Pi 会在启动阶段明确警告。
 
+## 界面语言
+
+面向用户的命令说明、通知、健康检查输出和 Metrics 状态/报告默认使用英文。如需简体中文，请在 `~/.pi/agent/signal-grep.json` 中设置 `locale`，然后重启 Pi：
+
+```json
+{
+  "overrideBuiltinGrep": false,
+  "startMetricsOnNextLoad": false,
+  "locale": "zh-CN"
+}
+```
+
+支持的值为 `"en"` 和 `"zh-CN"`。未包含 `locale` 的现有配置仍使用英文。Signal Grep 命令更新覆盖模式或 Metrics 重载交接状态时会保留完整配置。搜索证据、工具参数、cursor 详情和面向模型的提示保持语言中立或英文，因此本地化不会改变搜索语义或 Metrics 计量。
+
 ## 工具接口
 
 插件默认只注册 `signal_grep`；覆盖模式下只注册 `grep`。

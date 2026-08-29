@@ -5,7 +5,7 @@ Signal Grep is intentionally a composition of single-purpose components. It opti
 ## Data flow
 
 ```text
-config.ts ─── selects additive `signal_grep` or opt-in built-in `grep` override
+config.ts ─── selects tool mode and the human-facing interface locale
     │
     ▼
 conflicts.ts ─ detects installed packages that own the public "grep" tool name
@@ -35,13 +35,13 @@ format.ts ─── owns model-facing summary, page, byte, and deduplicated cont
     └─► metrics.ts ── optionally compares cumulative result text with normal grep
 ```
 
-`index.ts` is the Pi adapter. It defines the schema, registers exactly one Signal Grep tool, registers commands, and wires lifecycle cleanup. `runtime.ts` owns the service/metrics/cursor coordination used by the tool. It contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. `messages.ts` owns the templates for human-facing command and notification text; model-facing tool response text is intentionally not routed through it.
+`index.ts` is the Pi adapter entry point. It defines the schema, registers exactly one Signal Grep tool, and composes the runtime with `extension-controls.ts`. The controls module registers human-facing commands and lifecycle cleanup; it also owns conflict checks performed during command transitions so override and Metrics enablement cannot drift into duplicate policies. `runtime.ts` owns the service/metrics/cursor coordination used by the tool and contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. `messages.ts` is the single catalog for human-facing command and notification text in English and Simplified Chinese. Its typed keys enforce catalog completeness, and message formatting rejects missing parameters or translated placeholder drift. Model-facing tool response text is intentionally not routed through it.
 
 ## Responsibilities
 
 ### Persistent tool mode
 
-`config.ts` owns the user-global `signal-grep.json` contract and staged writes. Missing config means additive mode. A one-shot `startMetricsOnNextLoad` handoff lets `/signal-grep-metrics on` persist the override, reload, clear the handoff, and start session-local Metrics without requiring a second command. Invalid JSON or a mistyped value fails clearly instead of silently changing which public tool owns `grep`. Override commands inspect the active grep source and refuse to persist when another extension already owns it.
+`config.ts` owns the complete user-global `signal-grep.json` contract and staged writes. Missing config means additive mode with the English interface; a legacy config without `locale` also defaults to English. The only accepted locales are `en` and `zh-CN`. A one-shot `startMetricsOnNextLoad` handoff lets `/signal-grep-metrics on` persist the override, reload, clear the handoff, and start session-local Metrics without requiring a second command. Commands update config from the complete validated object, so changing override or handoff state cannot discard locale or another field. Invalid JSON, a mistyped value, an unsupported locale, or an inconsistent handoff fails clearly instead of silently changing behavior. Override commands inspect the active grep source and refuse to persist when another extension already owns it.
 
 Because Pi's extension loader rejects duplicate `grep` registrations at load time and fails the whole extension set, config intent alone cannot decide the effective tool name. `conflicts.ts` keeps the data table of packages known to register their own public `grep` tool and detects them in the agent package directory on every load. When the override is configured but such a package is installed, the override degrades to additive `signal_grep` for that session with a visible notice, the config value is never rewritten, and removing the conflicting package restores the override on the next load. Metrics enablement requires an actually active override and is refused while degraded. If conflict detection itself fails, the extension degrades to additive mode and names the detection failure instead of treating it as "no conflict".
 
@@ -100,7 +100,7 @@ Snapshots are session-local and are cleared at shutdown. Results without a curso
 
 ### Opt-in comparison metrics
 
-`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. Every new search contributes one Signal Grep result and one normal-format rendering of the exact same snapshot; tracked cursor pages contribute only their Signal Grep result. Metrics never run a second search, alter model-facing search text, persist state, or transmit data.
+`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. Every new search contributes one Signal Grep result and one normal-format rendering of the exact same snapshot; tracked cursor pages contribute only their Signal Grep result. Locale changes only the human-facing labels and prose after accounting is complete. Metrics never run a second search, alter model-facing search text, persist state, or transmit data.
 
 ## Core invariants
 
@@ -116,6 +116,7 @@ Snapshots are session-local and are cleared at shutdown. Results without a curso
 - Disabled metrics render no normal-format baseline and add no status.
 - Metrics never recount a normal baseline for cursor continuation and never hide negative savings.
 - Additive and override modes each register exactly one Signal Grep-owned public tool.
+- Config updates preserve the complete validated object; locale and Metrics handoff state are never dual-written.
 - Compact complete searches return directly; adaptive policy never changes the underlying match set.
 - Context-aware budgeting never downshifts explicit limits, `matches`, inspection, or cursor continuation.
 - A known context adjustment is attributed in structured details; tight and critical adjustments are also explicit in model-facing text.

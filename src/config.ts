@@ -5,14 +5,18 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const CONFIG_FILE = "signal-grep.json";
 
+export type SignalGrepLocale = "en" | "zh-CN";
+
 export interface SignalGrepConfig {
   overrideBuiltinGrep: boolean;
-  startMetricsOnNextLoad?: boolean;
+  startMetricsOnNextLoad: boolean;
+  locale: SignalGrepLocale;
 }
 
-export const DEFAULT_SIGNAL_GREP_CONFIG: Readonly<Required<SignalGrepConfig>> = {
+export const DEFAULT_SIGNAL_GREP_CONFIG: Readonly<SignalGrepConfig> = {
   overrideBuiltinGrep: false,
   startMetricsOnNextLoad: false,
+  locale: "en",
 };
 
 function hasErrorCode(error: unknown, codes: string[]): boolean {
@@ -23,24 +27,39 @@ function isMissingFile(error: unknown): boolean {
   return hasErrorCode(error, ["ENOENT"]);
 }
 
+interface RawSignalGrepConfig {
+  overrideBuiltinGrep?: unknown;
+  startMetricsOnNextLoad?: unknown;
+  locale?: unknown;
+}
+
+function isRawSignalGrepConfig(value: unknown): value is RawSignalGrepConfig {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function parseConfig(value: unknown, path: string): SignalGrepConfig {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isRawSignalGrepConfig(value)) {
     throw new Error(`Invalid Signal Grep config at ${path}: expected a JSON object`);
   }
-  const overrideBuiltinGrep = Reflect.get(value, "overrideBuiltinGrep");
+  const { overrideBuiltinGrep } = value;
   if (overrideBuiltinGrep !== undefined && typeof overrideBuiltinGrep !== "boolean") {
     throw new Error(`Invalid Signal Grep config at ${path}: overrideBuiltinGrep must be boolean`);
   }
-  const startMetricsOnNextLoad = Reflect.get(value, "startMetricsOnNextLoad");
+  const { startMetricsOnNextLoad } = value;
   if (startMetricsOnNextLoad !== undefined && typeof startMetricsOnNextLoad !== "boolean") {
     throw new Error(
       `Invalid Signal Grep config at ${path}: startMetricsOnNextLoad must be boolean`,
     );
   }
+  const { locale } = value;
+  if (locale !== undefined && locale !== "en" && locale !== "zh-CN") {
+    throw new Error(`Invalid Signal Grep config at ${path}: locale must be "en" or "zh-CN"`);
+  }
   const parsed = {
     overrideBuiltinGrep: overrideBuiltinGrep ?? DEFAULT_SIGNAL_GREP_CONFIG.overrideBuiltinGrep,
     startMetricsOnNextLoad:
       startMetricsOnNextLoad ?? DEFAULT_SIGNAL_GREP_CONFIG.startMetricsOnNextLoad,
+    locale: locale ?? DEFAULT_SIGNAL_GREP_CONFIG.locale,
   };
   if (parsed.startMetricsOnNextLoad && !parsed.overrideBuiltinGrep) {
     throw new Error(

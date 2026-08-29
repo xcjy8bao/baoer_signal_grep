@@ -54,6 +54,20 @@ describe("SearchMetrics", () => {
     expect(metrics.formatReport()).toContain("used an additional 100 (100.0%)");
   });
 
+  test("formats status and reports in Simplified Chinese without changing metric values", () => {
+    const metrics = new SearchMetrics();
+    metrics.enable();
+    metrics.recordComparison("x".repeat(400), "x".repeat(1_200));
+    metrics.recordCursorPage("x".repeat(200));
+
+    expect(metrics.formatStatus(undefined, "zh-CN")).toBe(
+      "[ SG 150 ]  [ 常规 300 ]  [ ↓ 150 · 50.0% ]",
+    );
+    expect(metrics.formatReport("zh-CN")).toBe(
+      "Signal Grep Metrics：SG 150 个估算 Token（600 B）/ 常规 300（1.2 KiB）· 1 次搜索和 1 个 cursor 页面共节省 150（50.0%）。",
+    );
+  });
+
   test("uses the same conservative characters-over-four estimate as Pi", () => {
     expect(estimateTextTokens("")).toBe(0);
     expect(estimateTextTokens("12345")).toBe(2);
