@@ -4,6 +4,11 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+### Fixed
+
+- Load-time conflict detection: when the built-in `grep` override is configured but a package that owns the public `grep` tool name is installed (for example `pi-hashline-edit-pro`), Signal Grep now degrades to additive `signal_grep` for that session with a visible notice instead of failing the whole extension set at startup. The config value is never rewritten, and removing the conflicting package restores the override on the next load.
+- `/signal-grep-metrics on` and the `startMetricsOnNextLoad` handoff no longer persist an override that cannot take effect: they refuse with a clear notice while a conflicting package is installed.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added

@@ -8,6 +8,9 @@ Signal Grep is intentionally a composition of single-purpose components. It opti
 config.ts ─── selects additive `signal_grep` or opt-in built-in `grep` override
     │
     ▼
+conflicts.ts ─ detects installed packages that own the public "grep" tool name
+    │
+    ▼
 Pi tool input
     │
     ▼
@@ -32,13 +35,15 @@ format.ts ─── owns model-facing summary, page, byte, and deduplicated cont
     └─► metrics.ts ── optionally compares cumulative result text with normal grep
 ```
 
-`index.ts` is the Pi adapter. It defines the schema, registers exactly one Signal Grep tool, registers commands, and wires lifecycle cleanup. `runtime.ts` owns the service/metrics/cursor coordination used by the tool. It contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. Pi and OMP use the same adapter contract; structure providers remain host-independent.
+`index.ts` is the Pi adapter. It defines the schema, registers exactly one Signal Grep tool, registers commands, and wires lifecycle cleanup. `runtime.ts` owns the service/metrics/cursor coordination used by the tool. It contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. `messages.ts` owns the templates for human-facing command and notification text; model-facing tool response text is intentionally not routed through it.
 
 ## Responsibilities
 
 ### Persistent tool mode
 
-`config.ts` owns the user-global `signal-grep.json` contract and staged writes. Missing config means additive mode. A one-shot `startMetricsOnNextLoad` handoff lets `/signal-grep-metrics on` persist the override, reload, clear the handoff, and start session-local Metrics without requiring a second command. Invalid JSON or a mistyped value fails clearly instead of silently changing which public tool owns `grep`. Override commands inspect the active grep source and refuse to persist when another extension already owns it. Pi's extension loader also rejects duplicate `grep` registrations, so conflicts fail closed rather than creating ambiguous ownership.
+`config.ts` owns the user-global `signal-grep.json` contract and staged writes. Missing config means additive mode. A one-shot `startMetricsOnNextLoad` handoff lets `/signal-grep-metrics on` persist the override, reload, clear the handoff, and start session-local Metrics without requiring a second command. Invalid JSON or a mistyped value fails clearly instead of silently changing which public tool owns `grep`. Override commands inspect the active grep source and refuse to persist when another extension already owns it.
+
+Because Pi's extension loader rejects duplicate `grep` registrations at load time and fails the whole extension set, config intent alone cannot decide the effective tool name. `conflicts.ts` keeps the data table of packages known to register their own public `grep` tool and detects them in the agent package directory on every load. When the override is configured but such a package is installed, the override degrades to additive `signal_grep` for that session with a visible notice, the config value is never rewritten, and removing the conflicting package restores the override on the next load. Metrics enablement requires an actually active override and is refused while degraded. If conflict detection itself fails, the extension degrades to additive mode and names the detection failure instead of treating it as "no conflict".
 
 ### Request normalization
 

@@ -1,7 +1,10 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { detectGrepOwnerConflict } from "./conflicts.js";
 import { readSignalGrepConfig, type SignalGrepConfig, writeSignalGrepConfig } from "./config.js";
+import { message } from "./messages.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
@@ -10,6 +13,13 @@ import { type SignalGrepInput, SignalGrepService } from "./service.js";
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
   "Context-efficient ripgrep search with exact match ranges and bounded code inspection. Small searches return grouped matches; broad searches return a per-file summary first. Use mode=inspect with path and line to inspect a source block. Cursor pages come from a stable snapshot and explicitly report partial retention.";
+
+export interface SignalGrepExtensionOptions {
+  /** Overrides the Pi agent directory used for package conflict detection and config writes (test seam). */
+  agentDir?: string;
+  /** Overrides conflict detection entirely (test seam). */
+  detectConflict?: () => Promise<string | undefined>;
+}
 
 function formatMetricsStatus(runtime: SignalGrepRuntime, ctx: ExtensionContext): string {
   const theme = ctx.ui.theme;
@@ -82,19 +92,54 @@ export function grepOverrideConflictSource(
 export function effectiveSignalGrepInput(
   input: SignalGrepInput,
   config: SignalGrepConfig,
+  overrideActive: boolean = config.overrideBuiltinGrep,
 ): SignalGrepInput {
-  if (!config.overrideBuiltinGrep || input.cursor || input.ignoreCase !== undefined) return input;
+  if (!overrideActive || input.cursor || input.ignoreCase !== undefined) return input;
   return { ...input, ignoreCase: false };
 }
 
-export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrepConfig) {
+/**
+ * Resolve whether Signal Grep override mode can actually own "grep" in this
+ * session. Config intent alone is not enough: when a package from the known
+ * conflict table is installed, Pi's loader would reject the duplicate "grep"
+ * registration and refuse to start the whole extension set, so the override
+ * degrades to additive "signal_grep" with a visible notice instead. The config
+ * value is never rewritten: removing the conflicting package restores the
+ * override on the next load.
+ */
+export async function resolveOverrideActive(
+  config: SignalGrepConfig,
+  options: SignalGrepExtensionOptions = {},
+): Promise<{ overrideActive: boolean; conflict: string | undefined }> {
+  if (!config.overrideBuiltinGrep) return { overrideActive: false, conflict: undefined };
+  const fallbackDetect = (): Promise<string | undefined> =>
+    detectGrepOwnerConflict(options.agentDir ?? getAgentDir());
+  const detect = options.detectConflict ?? fallbackDetect;
+  try {
+    const conflict = await detect();
+    return { overrideActive: conflict === undefined, conflict };
+  } catch {
+    // Fail safe: additive mode always loads cleanly, and the notice names the
+    // detection failure instead of pretending no conflict exists.
+    return { overrideActive: false, conflict: "unknown (conflict detection failed)" };
+  }
+}
+
+export async function registerSignalGrepExtension(
+  pi: ExtensionAPI,
+  config: SignalGrepConfig,
+  options: SignalGrepExtensionOptions = {},
+): Promise<void> {
   const runtime = new SignalGrepRuntime(
     new SignalGrepService({
       runRipgrep: createRipgrepRunner(),
       structure: createCtagsStructureProvider(),
     }),
   );
-  const toolName = signalGrepToolName(config);
+  const agentDir = options.agentDir ?? getAgentDir();
+  const { overrideActive, conflict } = await resolveOverrideActive(config, options);
+  const degradedOverride = config.overrideBuiltinGrep && !overrideActive;
+  const toolName = overrideActive ? "grep" : "signal_grep";
 
   pi.registerTool({
     name: toolName,
@@ -111,7 +156,7 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const result = await runtime.search(
-        effectiveSignalGrepInput(params, config),
+        effectiveSignalGrepInput(params, config, overrideActive),
         ctx.cwd,
         signal,
       );
@@ -147,8 +192,13 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
         .toSorted();
       const activeGrepOwner =
         tools.find((tool) => tool.name === "grep")?.sourceInfo.source ?? "missing";
+      const effectiveMode = overrideActive
+        ? "override built-in grep"
+        : degradedOverride
+          ? message("healthDegradedMode", { source: conflict ?? "unknown" })
+          : "additive signal_grep";
       ctx.ui.notify(
-        `${version}\nStructure provider: ${ctagsVersion}\nTool mode: ${config.overrideBuiltinGrep ? "override built-in grep" : "additive signal_grep"}\nSearch tools: ${searchTools.join(", ")}\nActive grep owner: ${activeGrepOwner}\nSnapshots: ${runtime.snapshotCount}\nRetained matches: ${runtime.storedMatches}`,
+        `${version}\nStructure provider: ${ctagsVersion}\nTool mode (effective): ${effectiveMode}\nSearch tools: ${searchTools.join(", ")}\nActive grep owner: ${activeGrepOwner}\nSnapshots: ${runtime.snapshotCount}\nRetained matches: ${runtime.storedMatches}`,
         "info",
       );
     },
@@ -188,6 +238,11 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
       }
 
       if (overrideBuiltinGrep) {
+        const packageConflict = await detectGrepOwnerConflict(agentDir);
+        if (packageConflict) {
+          ctx.ui.notify(message("overrideEnableRefused", { source: packageConflict }), "error");
+          return;
+        }
         const conflictSource = grepOverrideConflictSource(pi.getAllTools());
         if (conflictSource) {
           ctx.ui.notify(
@@ -198,10 +253,13 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
         }
       }
 
-      await writeSignalGrepConfig({
-        overrideBuiltinGrep,
-        startMetricsOnNextLoad: false,
-      });
+      await writeSignalGrepConfig(
+        {
+          overrideBuiltinGrep,
+          startMetricsOnNextLoad: false,
+        },
+        agentDir,
+      );
       ctx.ui.notify(
         `Signal Grep override ${overrideBuiltinGrep ? "enabled" : "disabled"}; reloading tools.`,
         "info",
@@ -219,7 +277,22 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
           ctx.ui.notify("Signal Grep metrics are already enabled", "info");
           return;
         }
+        if (degradedOverride) {
+          ctx.ui.notify(
+            message("metricsRequiresOverride", { source: conflict ?? "unknown" }),
+            "warning",
+          );
+          return;
+        }
         if (!config.overrideBuiltinGrep) {
+          const packageConflict = await detectGrepOwnerConflict(agentDir);
+          if (packageConflict) {
+            ctx.ui.notify(
+              message("metricsRequiresOverride", { source: packageConflict }),
+              "warning",
+            );
+            return;
+          }
           const conflictSource = grepOverrideConflictSource(pi.getAllTools());
           if (conflictSource) {
             ctx.ui.notify(
@@ -228,10 +301,13 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
             );
             return;
           }
-          await writeSignalGrepConfig({
-            overrideBuiltinGrep: true,
-            startMetricsOnNextLoad: true,
-          });
+          await writeSignalGrepConfig(
+            {
+              overrideBuiltinGrep: true,
+              startMetricsOnNextLoad: true,
+            },
+            agentDir,
+          );
           ctx.ui.notify(
             "Enabling the grep override and reloading before Signal Grep metrics start.",
             "info",
@@ -275,11 +351,24 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    if (degradedOverride) {
+      ctx.ui.notify(message("overrideDegraded", { source: conflict ?? "unknown" }), "warning");
+    }
     if (!config.startMetricsOnNextLoad) return;
-    await writeSignalGrepConfig({
-      overrideBuiltinGrep: true,
-      startMetricsOnNextLoad: false,
-    });
+    await writeSignalGrepConfig(
+      {
+        overrideBuiltinGrep: true,
+        startMetricsOnNextLoad: false,
+      },
+      agentDir,
+    );
+    if (degradedOverride) {
+      ctx.ui.notify(
+        message("metricsRequiresOverride", { source: conflict ?? "unknown" }),
+        "warning",
+      );
+      return;
+    }
     runtime.enableMetrics();
     ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx));
     ctx.ui.notify(
@@ -296,5 +385,5 @@ export function registerSignalGrepExtension(pi: ExtensionAPI, config: SignalGrep
 }
 
 export default async function signalGrepExtension(pi: ExtensionAPI) {
-  registerSignalGrepExtension(pi, await readSignalGrepConfig());
+  await registerSignalGrepExtension(pi, await readSignalGrepConfig());
 }
