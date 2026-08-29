@@ -69,22 +69,26 @@ It never formats model output or owns cursor state. `capped-lines.ts` deliberate
 
 Snapshots are session-local and are cleared at shutdown. Results without a cursor are released immediately, and a paginated snapshot is released after its final page, so inaccessible compact results cannot evict active cursors. No state is persisted or dual-written.
 
+### Context budget policy
+
+`context-budget.ts` converts Pi's pre-call context usage into one immutable `ContextBudget`. Thresholds and result-text targets live only in `types.ts`: `full` above 40% remainder targets 2,000 estimated tokens, `tight` from 12% through 40% targets 1,000, and `critical` below 12% targets 500. Missing, null, or invalid host usage produces no decision, preserving the default policy without claiming an adjustment. The service applies a decision only to an implicit `auto` detail-fit trial; explicit limits, `matches`, inspection, and cursor continuation remain on the default page budget.
+
 ### Policy composition
 
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
 1. no matches → explicit complete empty result;
 2. `summary` → file distribution plus detail cursor;
-3. `auto` complete result fits the adaptive budget → return every grouped detail directly;
+3. implicit `auto` complete result fits its resolved context budget → return every grouped detail directly;
 4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
 5. other `auto` results that exceed the adaptive budget or retention is partial → return a summary first;
-6. `matches` or cursor → return one adaptive-budget detail page, optionally filtered to one retained file;
+6. `matches` or cursor → return one default-budget detail page, optionally filtered to one retained file;
 7. `inspect` → return a bounded source range and the smallest proven enclosing symbol when a provider can supply it;
 8. retention bound exceeded → explicit partial result.
 
 ### Output formatting
 
-`format.ts` owns only presentation boundaries. Detail pages target about 2,000 estimated result-text tokens and stop before the match-count, character, or hard byte budget is exceeded. Matching columns are rendered from the untruncated snapshot line. Overlapping context windows are merged so a source line is emitted once per page, while every matching line remains represented. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page and is omitted explicitly for files over 5 MiB or files that can no longer be read. The normal-format metrics baseline is also rendered here from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
+`format.ts` owns only presentation boundaries. It accepts an internal result-text target for the initial implicit `auto` trial and defaults every other detail page to about 2,000 estimated tokens. It stops before the match-count, character, or 16 KiB hard byte budget is exceeded. These are conservative character estimates rather than exact tokenizer guarantees because source text and paths may contain CJK. Matching columns are rendered from the untruncated snapshot line. Overlapping context windows are merged so a source line is emitted once per page, while every matching line remains represented. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page and is omitted explicitly for files over 5 MiB or files that can no longer be read. The normal-format metrics baseline is also rendered here from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
 
 ### Source ranges and structure inspection
 
@@ -111,6 +115,8 @@ Snapshots are session-local and are cleared at shutdown. Results without a curso
 - Metrics never recount a normal baseline for cursor continuation and never hide negative savings.
 - Additive and override modes each register exactly one Signal Grep-owned public tool.
 - Compact complete searches return directly; adaptive policy never changes the underlying match set.
+- Context-aware budgeting never downshifts explicit limits, `matches`, inspection, or cursor continuation.
+- A known context adjustment is attributed in structured details; tight and critical adjustments are also explicit in model-facing text.
 
 ## Deliberate non-goals
 

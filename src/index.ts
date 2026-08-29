@@ -4,6 +4,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { detectGrepOwnerConflict } from "./conflicts.js";
 import { readSignalGrepConfig, type SignalGrepConfig, writeSignalGrepConfig } from "./config.js";
+import { resolveContextBudget } from "./context-budget.js";
 import { message } from "./messages.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
@@ -159,6 +160,7 @@ export async function registerSignalGrepExtension(
         effectiveSignalGrepInput(params, config, overrideActive),
         ctx.cwd,
         signal,
+        resolveContextBudget(ctx.getContextUsage()),
       );
       if (runtime.metricsEnabled) {
         ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx));

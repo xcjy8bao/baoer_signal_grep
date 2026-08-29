@@ -20,8 +20,20 @@ import type { MatchRecord, SearchSnapshot } from "./types.js";
 const RESULT_METADATA_RESERVE_BYTES = 1024;
 const RESULT_METADATA_RESERVE_CHARACTERS = 512;
 const MAX_PAGE_BODY_BYTES = MAX_RESULT_BYTES - RESULT_METADATA_RESERVE_BYTES;
-const MAX_PAGE_BODY_CHARACTERS =
+const DEFAULT_MAX_PAGE_BODY_CHARACTERS =
   DEFAULT_RESULT_TOKEN_BUDGET * ESTIMATED_CHARACTERS_PER_TOKEN - RESULT_METADATA_RESERVE_CHARACTERS;
+
+function pageBodyCharacterLimit(resultTokenBudget = DEFAULT_RESULT_TOKEN_BUDGET): number {
+  if (!Number.isSafeInteger(resultTokenBudget) || resultTokenBudget <= 0) {
+    throw new Error("Result token budget must be a positive safe integer");
+  }
+  const limit =
+    resultTokenBudget * ESTIMATED_CHARACTERS_PER_TOKEN - RESULT_METADATA_RESERVE_CHARACTERS;
+  if (limit <= 0) {
+    throw new Error("Result token budget cannot fit reserved response metadata");
+  }
+  return limit;
+}
 
 export interface FormattedPage {
   body: string;
@@ -36,6 +48,7 @@ export interface FormattedPage {
 }
 
 export interface MatchPageOptions {
+  resultTokenBudget?: number;
   include?: (match: MatchRecord, index: number) => boolean;
 }
 
@@ -134,6 +147,7 @@ export async function formatMatchPage(
   signal?: AbortSignal,
   options: MatchPageOptions = {},
 ): Promise<FormattedPage> {
+  const maxPageBodyCharacters = pageBodyCharacterLimit(options.resultTokenBudget);
   const cache = new Map<string, string[] | null>();
   const omittedFiles = new Set<string>();
   const output: string[] = [];
@@ -224,7 +238,7 @@ export async function formatMatchPage(
     let additionCharacters = addition.length;
     const exceedsBudget = () =>
       outputBytes + additionBytes > MAX_PAGE_BODY_BYTES ||
-      outputCharacters + additionCharacters > MAX_PAGE_BODY_CHARACTERS;
+      outputCharacters + additionCharacters > maxPageBodyCharacters;
 
     if (exceedsBudget()) {
       if (returnedMatches > 0) {
@@ -239,7 +253,7 @@ export async function formatMatchPage(
       additionCharacters = addition.length;
       omittedFiles.add(match.displayPath);
     }
-    if (additionBytes > MAX_PAGE_BODY_BYTES || additionCharacters > MAX_PAGE_BODY_CHARACTERS) {
+    if (additionBytes > MAX_PAGE_BODY_BYTES || additionCharacters > maxPageBodyCharacters) {
       throw new Error("A single match exceeds the reserved result budget");
     }
 
@@ -425,7 +439,7 @@ export function formatSummary(snapshot: SearchSnapshot, fileLimit: number) {
     if (
       rows.length > 0 &&
       (bytes + rowBytes > MAX_PAGE_BODY_BYTES ||
-        characters + rowCharacters > MAX_PAGE_BODY_CHARACTERS)
+        characters + rowCharacters > DEFAULT_MAX_PAGE_BODY_CHARACTERS)
     ) {
       break;
     }

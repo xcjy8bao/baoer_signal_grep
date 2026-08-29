@@ -1,6 +1,15 @@
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 100;
 export const DEFAULT_RESULT_TOKEN_BUDGET = 2_000;
+export const CONTEXT_BUDGET_POLICY = {
+  fullAboveRemainderPercent: 40,
+  criticalBelowRemainderPercent: 12,
+  resultTokenBudgets: {
+    full: DEFAULT_RESULT_TOKEN_BUDGET,
+    tight: 1_000,
+    critical: 500,
+  },
+} as const;
 export const ESTIMATED_CHARACTERS_PER_TOKEN = 4;
 export const DEFAULT_SUMMARY_FILE_LIMIT = 30;
 export const MAX_STORED_MATCHES = 50_000;
@@ -12,6 +21,14 @@ export const MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
 
 export type SearchMode = "auto" | "summary" | "matches" | "inspect";
+
+export type ContextBudgetTier = keyof typeof CONTEXT_BUDGET_POLICY.resultTokenBudgets;
+
+export interface ContextBudget {
+  tier: ContextBudgetTier;
+  contextRemainderPercent: number;
+  resultTokenBudget: number;
+}
 
 export interface TextPosition {
   line: number;
@@ -116,6 +133,9 @@ export interface SignalGrepDetails {
   summaryFilesShown?: number;
   summaryFilesOmitted?: number;
   lineContentTruncated?: number;
+  budgetTier?: ContextBudgetTier;
+  contextRemainderPercent?: number;
+  resultTokenBudget?: number;
   contextOmittedFiles?: string[];
   structure?: StructureDetails;
 }

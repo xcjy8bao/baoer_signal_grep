@@ -4,6 +4,11 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+### Added
+
+- Context-aware implicit `auto` detail budgets use Pi's reported context remainder: full (2,000 estimated tokens), tight (1,000), or critical (500). Compact complete results still return directly, while explicit limits, `matches`, inspection, and cursor pages retain the default budget.
+- Search details expose `budgetTier`, `contextRemainderPercent`, and `resultTokenBudget` when a context decision is available; tight and critical responses also attribute the adjustment in model-facing text.
+
 ### Fixed
 
 - Load-time conflict detection: when the built-in `grep` override is configured but a package that owns the public `grep` tool name is installed (for example `pi-hashline-edit-pro`), Signal Grep now degrades to additive `signal_grep` for that session with a visible notice instead of failing the whole extension set at startup. The config value is never rewritten, and removing the conflicting package restores the override on the next load.
