@@ -96,6 +96,9 @@ describe("Universal Ctags structure provider", () => {
   test("inspects a real source file when Universal Ctags is installed", async () => {
     const executable = Bun.which("ctags");
     if (!executable) return;
+    const version = Bun.spawnSync([executable, "--version"]);
+    const versionText = new TextDecoder().decode(version.stdout);
+    if (version.exitCode !== 0 || !/Universal Ctags/i.test(versionText)) return;
     const root = await mkdtemp(join(tmpdir(), "signal-grep-real-ctags-"));
     fixtures.add(root);
     const file = join(root, "main.go");
