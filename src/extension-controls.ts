@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -11,6 +14,7 @@ import {
 import { type SignalGrepConfig, writeSignalGrepConfig } from "./config.js";
 import { message } from "./messages.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
+import { CTAGS_CAPABILITY_ARGUMENTS } from "./structure.js";
 
 export interface SignalGrepControlsOptions {
   pi: ExtensionAPI;
@@ -73,6 +77,47 @@ async function currentGrepConflict(
   const activeOwner = grepOverrideConflictSource(options.pi.getAllTools());
   return activeOwner ? { kind: "active-tool", source: activeOwner } : undefined;
 }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasProvenCtagsRange(stdout: string): boolean {
+  for (const line of stdout.split("\n")) {
+    if (line.length === 0) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    if (!isRecord(value)) continue;
+    const record = value;
+    const isTag = Object.entries(record).some(([key, entry]) => key === "_type" && entry === "tag");
+    if (isTag && typeof record.line === "number" && typeof record.end === "number") return true;
+  }
+  return false;
+}
+
+async function ctagsHealthVersion(pi: ExtensionAPI): Promise<string | undefined> {
+  const version = await pi.exec("ctags", ["--version"], { timeout: 5_000 });
+  if (version.code !== 0 || !/Universal Ctags/i.test(version.stdout)) return undefined;
+
+  let probeDirectory: string | undefined;
+  try {
+    probeDirectory = await mkdtemp(join(tmpdir(), "signal-grep-ctags-"));
+    const probePath = join(probeDirectory, "probe.go");
+    await writeFile(probePath, "package probe\nfunc signalGrepProbe() int {\n  return 1\n}\n");
+    const capability = await pi.exec("ctags", [...CTAGS_CAPABILITY_ARGUMENTS, probePath], {
+      timeout: 5_000,
+    });
+    if (capability.code !== 0 || !hasProvenCtagsRange(capability.stdout)) return undefined;
+    return version.stdout.split("\n")[0];
+  } catch {
+    return undefined;
+  } finally {
+    if (probeDirectory) await rm(probeDirectory, { force: true, recursive: true });
+  }
+}
 
 function registerHealthCommand(options: SignalGrepControlsOptions): void {
   const { config, pi, runtime } = options;
@@ -90,11 +135,8 @@ function registerHealthCommand(options: SignalGrepControlsOptions): void {
       }
       const version =
         result.stdout.split("\n")[0] ?? message(locale, "healthUnknownRipgrepVersion");
-      const ctags = await pi.exec("ctags", ["--version"], { timeout: 5_000 });
       const ctagsVersion =
-        ctags.code === 0 && /Universal Ctags/i.test(ctags.stdout)
-          ? (ctags.stdout.split("\n")[0] ?? message(locale, "healthUnknownCtagsVersion"))
-          : message(locale, "healthCtagsUnavailable");
+        (await ctagsHealthVersion(pi)) ?? message(locale, "healthCtagsUnavailable");
       const tools = pi.getAllTools();
       const searchTools = tools
         .map((tool) => tool.name)

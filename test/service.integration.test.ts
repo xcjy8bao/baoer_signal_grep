@@ -337,6 +337,8 @@ describe("SignalGrepService with ripgrep", () => {
     const retry = await service.search({ cursor }, root);
     expect(retry.details.returnedMatches).toBe(33);
     expect(retry.details.cursor).toBeUndefined();
+    expect(service.snapshotCount).toBe(1);
+    service.clear();
     expect(service.snapshotCount).toBe(0);
   });
 
@@ -354,5 +356,260 @@ describe("SignalGrepService with ripgrep", () => {
       snapshotComplete: false,
     });
     expect(result.text).toContain("PARTIAL snapshot: retained 3 of 33 matches");
+  });
+
+  test("keeps a distant long-line match visible with absolute occurrence columns", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "long-line.ts"), `${"x".repeat(900)}NEEDLE${"y".repeat(100)}\n`);
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+
+    const result = await service.search(
+      { pattern: "NEEDLE", path: "long-line.ts", mode: "matches" },
+      root,
+    );
+
+    expect(result.text).toContain("NEEDLE");
+    expect(result.text).toContain("[901-906]");
+    expect(result.details.lineContentTruncated).toBe(1);
+    expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  test("orders file summaries by match count and pages them without rescanning", async () => {
+    const root = await fixture();
+    await Promise.all(
+      Array.from({ length: 25 }, (_, index) =>
+        writeFile(join(root, `rank-${String(index).padStart(2, "0")}.ts`), "needle\n"),
+      ),
+    );
+    await writeFile(
+      join(root, "z-heavy.ts"),
+      `${Array.from({ length: 40 }, () => "needle").join("\n")}\n`,
+    );
+    let scans = 0;
+    const service = new SignalGrepService({
+      runRipgrep: async (request, cwd, signal) => {
+        scans += 1;
+        return createRipgrepRunner()(request, cwd, signal);
+      },
+      summaryFileLimit: 10,
+    });
+
+    const first = await service.search({ pattern: "needle", mode: "summary" }, root);
+    const cursor = first.details.cursor;
+    if (!cursor) throw new Error("Expected summary cursor");
+    const second = await service.search({ cursor, mode: "summary" }, root);
+    const secondCursor = second.details.cursor;
+    if (!secondCursor) throw new Error("Expected second summary cursor");
+    const third = await service.search({ cursor: secondCursor, mode: "summary" }, root);
+    const finalSummaryCursor = third.details.cursor;
+    if (!finalSummaryCursor) throw new Error("Expected reusable final summary cursor");
+    const details = await service.search({ cursor }, root);
+
+    expect(first.text.indexOf("z-heavy.ts")).toBeLessThan(first.text.indexOf("rank-00.ts"));
+    expect(first.text).toContain("Files 1-10 of 26, ordered by match count");
+    expect(second.text).toContain("Files 11-20 of 26, ordered by match count");
+    expect(second.details.summaryOffset).toBe(10);
+    const summarizedFiles = [first, second, third].flatMap((result) =>
+      result.text
+        .split("\n")
+        .filter((line) => /^(?:rank-\d{2}|z-heavy)\.ts\s+\d+$/.test(line))
+        .map((line) => line.split(/\s+/)[0] ?? ""),
+    );
+    expect(summarizedFiles).toHaveLength(26);
+    expect(new Set(summarizedFiles).size).toBe(26);
+    expect(third.text).toContain("Files 21-26 of 26, ordered by match count");
+    expect(third.details.summaryFilesOmitted).toBe(0);
+    expect(service.search({ cursor: finalSummaryCursor, mode: "summary" }, root)).rejects.toThrow(
+      "already at the end of the file summary",
+    );
+    expect(details.text).toContain("{match #1}");
+    expect(scans).toBe(1);
+  });
+
+  test("reuses one summary cursor for repeated and batched file selections", async () => {
+    const root = await fixture();
+    let scans = 0;
+    const service = new SignalGrepService({
+      runRipgrep: async (request, cwd, signal) => {
+        scans += 1;
+        return createRipgrepRunner()(request, cwd, signal);
+      },
+    });
+    const summary = await service.search({ pattern: "TODO", mode: "summary" }, root);
+    const cursor = summary.details.cursor;
+    if (!cursor) throw new Error("Expected summary cursor");
+
+    const readme = await service.search({ cursor, path: "README.md" }, root);
+    const utils = await service.search({ cursor, path: "utils.ts" }, root);
+    const batch = await service.search(
+      { cursor, paths: ["README.md", "utils.ts", "missing.ts"] },
+      root,
+    );
+
+    expect(readme.text).toContain("README.md");
+    expect(utils.text).toContain("utils.ts");
+    expect(batch.text).toContain("README.md");
+    expect(batch.text).toContain("utils.ts");
+    expect(batch.details.selectedPaths).toEqual(["README.md", "utils.ts", "missing.ts"]);
+    expect(batch.details.selectionMissingPaths).toEqual(["missing.ts"]);
+    expect(batch.text).toContain("1 selected path(s) had no retained matches");
+    expect(service.snapshotCount).toBe(1);
+    expect(scans).toBe(1);
+  });
+
+  test("keeps the original summary cursor after exhausting unfiltered detail pages", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "many.ts"),
+      `${Array.from({ length: 130 }, (_, index) => `needle ${String(index)}`).join("\n")}\n`,
+    );
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const summary = await service.search({ pattern: "needle", mode: "summary" }, root);
+    const summaryCursor = summary.details.cursor;
+    if (!summaryCursor) throw new Error("Expected summary cursor");
+
+    const firstPage = await service.search({ cursor: summaryCursor }, root);
+    const matchCursor = firstPage.details.cursor;
+    if (!matchCursor) throw new Error("Expected match cursor");
+    const finalPage = await service.search({ cursor: matchCursor }, root);
+    expect(finalPage.details.cursor).toBeUndefined();
+
+    const reused = await service.search({ cursor: summaryCursor, path: "many.ts" }, root);
+    expect(reused.text).toContain("{match #1}");
+    expect(service.snapshotCount).toBe(1);
+  });
+
+  test("inspects a retained match by its visible stable index", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "indexed.ts"), "needle first\nneedle second\n");
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const summary = await service.search(
+      { pattern: "needle", path: "indexed.ts", mode: "summary" },
+      root,
+    );
+    const cursor = summary.details.cursor;
+    if (!cursor) throw new Error("Expected summary cursor");
+    const page = await service.search({ cursor }, root);
+    const inspected = await service.search({ mode: "inspect", cursor, matchIndex: 2 }, root);
+
+    expect(page.text).toContain("{match #1}");
+    expect(page.text).toContain("{match #2}");
+    expect(inspected.text).toContain("indexed.ts:2");
+    expect(inspected.text).toContain("2: needle second");
+
+    await writeFile(join(root, "indexed.ts"), "changed\nneedle second changed\n");
+    const stale = await service.search({ mode: "inspect", cursor, matchIndex: 2 }, root);
+    expect(stale.details.structure).toMatchObject({ status: "source-changed" });
+  });
+
+  test("rejects ambiguous or unbounded retained-navigation requests", async () => {
+    const root = await fixture();
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const summary = await service.search({ pattern: "TODO", mode: "summary" }, root);
+    const cursor = summary.details.cursor;
+    if (!cursor) throw new Error("Expected summary cursor");
+
+    expect(service.search({ pattern: "TODO", paths: ["utils.ts"] }, root)).rejects.toThrow(
+      "paths can only select retained files from a cursor",
+    );
+    expect(
+      service.search({ cursor, path: "utils.ts", paths: ["README.md"] }, root),
+    ).rejects.toThrow("Use either path or paths");
+    expect(service.search({ cursor, paths: [] }, root)).rejects.toThrow(
+      "paths must contain at least one retained file",
+    );
+    expect(
+      service.search(
+        { cursor, paths: Array.from({ length: 21 }, (_, index) => `file-${String(index)}.ts`) },
+        root,
+      ),
+    ).rejects.toThrow("paths cannot contain more than 20 entries");
+    expect(service.search({ cursor, paths: ["missing.ts"] }, root)).rejects.toThrow(
+      "No retained matches exist for the selected paths",
+    );
+    expect(
+      service.search({ mode: "inspect", cursor, matchIndex: 1, path: "utils.ts" }, root),
+    ).rejects.toThrow("matchIndex replaces path and line");
+    expect(service.search({ mode: "inspect", cursor, matchIndex: 0 }, root)).rejects.toThrow(
+      "matchIndex must be a positive integer",
+    );
+    expect(service.search({ mode: "inspect", matchIndex: 1 }, root)).rejects.toThrow(
+      "matchIndex requires a cursor",
+    );
+  });
+
+  test("fails closed when a filtered match cursor changes its path selection", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "many-a.ts"),
+      `${Array.from({ length: 150 }, (_, index) => `needle a ${String(index)}`).join("\n")}\n`,
+    );
+    await writeFile(
+      join(root, "many-b.ts"),
+      `${Array.from({ length: 150 }, (_, index) => `needle b ${String(index)}`).join("\n")}\n`,
+    );
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const summary = await service.search({ pattern: "needle", mode: "summary" }, root);
+    const summaryCursor = summary.details.cursor;
+    if (!summaryCursor) throw new Error("Expected summary cursor");
+    const selected = await service.search({ cursor: summaryCursor, path: "many-a.ts" }, root);
+    const matchCursor = selected.details.cursor;
+    if (!matchCursor) throw new Error("Expected filtered match cursor");
+
+    expect(service.search({ cursor: matchCursor, path: "many-b.ts" }, root)).rejects.toThrow(
+      "must continue with the same path selection",
+    );
+    const continued = await service.search({ cursor: matchCursor, path: "many-a.ts" }, root);
+    expect(continued.text).toContain("many-a.ts");
+    expect(continued.text).not.toContain("many-b.ts");
+  });
+
+  test("distinguishes an unretained match index in a partial snapshot", async () => {
+    const root = await fixture();
+    const service = new SignalGrepService({
+      runRipgrep: createRipgrepRunner({ maxStoredMatches: 1 }),
+    });
+    const summary = await service.search({ pattern: "TODO", mode: "summary" }, root);
+    const cursor = summary.details.cursor;
+    if (!cursor) throw new Error("Expected partial summary cursor");
+
+    expect(service.search({ mode: "inspect", cursor, matchIndex: 2 }, root)).rejects.toThrow(
+      "not retained in this partial snapshot",
+    );
+  });
+
+  test("keeps the requested line visible inside an oversized enclosing symbol", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "huge-symbol.ts"),
+      `${Array.from({ length: 1_000 }, (_, index) => `const line${String(index + 1)} = "${"x".repeat(100)}";`).join("\n")}\n`,
+    );
+    const service = new SignalGrepService({
+      runRipgrep: createRipgrepRunner(),
+      structure: {
+        inspect: async () => ({
+          details: {
+            status: "available",
+            provider: "test-provider",
+            symbol: {
+              name: "huge",
+              kind: "function",
+              scope: [],
+              range: { startLine: 1, endLine: 1_000 },
+            },
+            range: { startLine: 1, endLine: 1_000 },
+          },
+        }),
+      },
+    });
+
+    const result = await service.search(
+      { mode: "inspect", path: "huge-symbol.ts", line: 950 },
+      root,
+    );
+
+    expect(result.text).toContain("950: const line950");
+    expect(result.text).toContain("source range centered on target");
+    expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16 * 1024);
   });
 });

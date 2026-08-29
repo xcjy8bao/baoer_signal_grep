@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.4 adds precise match ranges, targeted snapshot selection, bounded source inspection, and an optional structure provider without turning the core into a background index or language server.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.1 adds ranked paged summaries, reusable single/multi-file snapshot selection, stable match-index inspection, occurrence-centered excerpts, revision-safe context, and capability-validated structure inspection without turning the core into a background index or language server.
 
 ## Data flow
 
@@ -67,9 +67,9 @@ It never formats model output or owns cursor state. `capped-lines.ts` deliberate
 
 ### Snapshot ownership
 
-`SnapshotStore` owns cursor identity, expiry, memory bounds, and eviction. Cursors reference a snapshot and offset; they never encode a command to rerun. This makes pagination stable even if files change after the initial search. A cursor continuation can select one retained file without rerunning the scan. Retained files also carry revision metadata so `mode=inspect` can reject stale evidence before reading a structure block.
+`SnapshotStore` owns snapshot identity, cursor encoding, expiry, memory bounds, and eviction. A cursor contains only a snapshot id, page offset, cursor kind (`summary` or `matches`), and an optional canonical path-selection signature; it never encodes a command to rerun. Summary cursors page the count-ranked file distribution and can independently start details at match offset zero. Match cursors continue only their bound file selection, preventing a later request from silently changing the sequence. The original summary cursor remains reusable for repeated single- or multi-file selections. Retained files also carry revision metadata so context and `mode=inspect` can reject stale current-source evidence.
 
-Snapshots are session-local and are cleared at shutdown. Results without a cursor are released immediately, and a paginated snapshot is released after its final page, so inaccessible compact results cannot evict active cursors. No state is persisted or dual-written.
+Snapshots are session-local and are cleared at shutdown. Cursorless results are released immediately. Snapshots with only forward match cursors are released after the final page; snapshots that expose a reusable summary cursor remain available until TTL eviction, memory/count eviction, explicit clear, or shutdown. No state is persisted or dual-written.
 
 ### Context budget policy
 
@@ -80,23 +80,24 @@ Snapshots are session-local and are cleared at shutdown. Results without a curso
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
 1. no matches → explicit complete empty result;
-2. `summary` → file distribution plus detail cursor;
+2. `summary` → one match-count-ranked file-distribution page plus separate summary/detail continuations as needed;
 3. implicit `auto` complete result fits its resolved context budget → return every grouped detail directly;
 4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
 5. other `auto` results that exceed the adaptive budget or retention is partial → return a summary first;
-6. `matches` or cursor → return one default-budget detail page, optionally filtered to one retained file;
-7. `inspect` → return a bounded source range and the smallest proven enclosing symbol when a provider can supply it;
-8. retention bound exceeded → explicit partial result.
+6. `matches` or a summary cursor → return one default-budget detail page, optionally filtered to one canonical set of retained files;
+7. a match cursor → continue only its bound selection;
+8. cursor-scoped `inspect` → resolve a stable match index, verify revision, and return a centered bounded source range with the smallest proven enclosing symbol;
+9. retention bound exceeded → explicit partial result.
 
 ### Output formatting
 
-`format.ts` owns only presentation boundaries. It accepts an internal result-text target for the initial implicit `auto` trial and defaults every other detail page to about 2,000 estimated tokens. It stops before the match-count, character, or 16 KiB hard byte budget is exceeded. These are conservative character estimates rather than exact tokenizer guarantees because source text and paths may contain CJK. Matching columns are rendered from the untruncated snapshot line. Overlapping context windows are merged so a source line is emitted once per page, while every matching line remains represented. Retained matching-line text always comes from the snapshot. Optional surrounding context is read lazily for files represented on the current page and is omitted explicitly for files over 5 MiB or files that can no longer be read. The normal-format metrics baseline is also rendered here from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
+`format.ts` owns presentation boundaries. File summaries are sorted by descending count with path-order ties, then paged by the public file limit. Detail formatting accepts an internal result-text target for the initial implicit `auto` trial and defaults every other page to about 2,000 estimated tokens. It stops before the match-count, character, or 16 KiB hard byte budget is exceeded. Every match carries its stable snapshot index. Lines over 500 characters use an occurrence-centered excerpt while rendering columns from the untruncated snapshot line. Overlapping context windows are merged, and current-file context is included only when its source revision still equals the retained revision; changed context is omitted and attributed. Retained matching-line text always comes from the snapshot. The normal-format metrics baseline is rendered separately from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
 
 ### Source ranges and structure inspection
 
-`source.ts` owns bounded current-file reads, revision metadata, workspace containment, and numbered source ranges. It is intentionally separate from `structure.ts`: reading source is valid for every text language, while symbol structure requires a capability provider.
+`source.ts` owns bounded current-file reads, revision metadata, workspace containment, and numbered source ranges. Its centered range builder reserves the model-facing header and omission-marker budget before selecting lines, so an oversized symbol still keeps the requested line in view without exceeding the 16 KiB response contract. It is intentionally separate from `structure.ts`: reading source is valid for every text language, while symbol structure requires a capability provider.
 
-`structure.ts` defines the `CodeStructureProvider` boundary and currently implements an optional Universal Ctags provider. It selects the smallest tag with a proven enclosing range. It does not infer ranges from braces, silently rank symbols, or make a missing external executable fatal to ordinary search. Provider failures are returned as explicit statuses such as `provider-unavailable`, `source-unavailable`, `parse-error`, `file-too-large`, or `source-changed`.
+`structure.ts` defines the `CodeStructureProvider` boundary and implements optional Universal Ctags support. The provider validates the exact JSON, line/end field, and extras options used by inspection; `--version` alone is insufficient evidence. It invokes Ctags with a workspace-relative file argument and no unsupported `--` separator, then selects the smallest tag with a proven enclosing range. It never infers ranges from braces or turns provider absence into an ordinary-search failure. Provider statuses such as `provider-unavailable`, `source-unavailable`, `parse-error`, `file-too-large`, `source-changed`, and `no-symbol` remain explicit.
 
 ### Opt-in comparison metrics
 
@@ -104,11 +105,14 @@ Snapshots are session-local and are cleared at shutdown. Results without a curso
 
 ## Core invariants
 
-- Completed retained snapshots paginate without omission or duplication.
+- Completed retained match snapshots paginate without omission or duplication.
+- Completed file-summary pages cover every retained file in deterministic count-ranked order.
 - Partial retention is observable in text and structured details.
-- A cursor never silently reruns a search.
+- A cursor never silently reruns a search or changes a bound file selection.
+- An original summary cursor remains reusable independently of filtered detail continuations.
 - A cursor-scoped inspection never silently reads a changed source revision.
-- Every retained occurrence has a precise range; matching-line pagination semantics remain unchanged.
+- Current-file context is never mixed with retained matching text from another revision.
+- Every retained occurrence has a precise range and stable match index; long excerpts keep the occurrence visible.
 - Process and protocol errors never become an empty successful result.
 - Structure provider absence or parse failure is explicit and does not corrupt ordinary search.
 - Limits have one source of truth in `types.ts`.

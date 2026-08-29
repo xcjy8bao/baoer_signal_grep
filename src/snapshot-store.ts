@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { CursorError } from "./errors.js";
 import type { SearchScan, SearchSnapshot } from "./types.js";
 
+export type CursorKind = "matches" | "summary";
+
 export interface SnapshotStoreOptions {
   ttlMs?: number;
   maxSnapshots?: number;
@@ -12,6 +14,8 @@ export interface SnapshotStoreOptions {
 export interface ResolvedCursor {
   snapshot: SearchSnapshot;
   offset: number;
+  kind: CursorKind;
+  selectionKey: string;
 }
 
 export class SnapshotStore {
@@ -42,37 +46,45 @@ export class SnapshotStore {
     return snapshot;
   }
 
-  cursor(snapshot: SearchSnapshot, offset: number): string {
+  cursor(
+    snapshot: SearchSnapshot,
+    offset: number,
+    kind: CursorKind = "matches",
+    selectionKey = "all",
+  ): string {
     if (!Number.isSafeInteger(offset) || offset < 0) {
       throw new CursorError("Cannot create a cursor with an invalid offset");
     }
-    return `${snapshot.id}.${offset.toString(36)}`;
+    if (!/^(?:all|[0-9a-f]{16})$/.test(selectionKey)) {
+      throw new CursorError("Cannot create a cursor with an invalid selection key");
+    }
+    return `${snapshot.id}.${kind}.${offset.toString(36)}.${selectionKey}`;
   }
 
   resolve(cursor: string): ResolvedCursor {
     this.sweep();
-    const separator = cursor.lastIndexOf(".");
-    if (separator <= 0 || separator === cursor.length - 1) {
+    const parts = cursor.match(/^(.+)\.(matches|summary)\.([0-9a-z]+)\.(all|[0-9a-f]{16})$/);
+    if (!parts) {
       throw new CursorError("Invalid cursor. Start a new search to obtain a fresh cursor.");
     }
-
-    const id = cursor.slice(0, separator);
-    const rawOffset = cursor.slice(separator + 1);
-    if (!/^[0-9a-z]+$/.test(rawOffset)) {
+    const [, id, rawKind, rawOffset, selectionKey] = parts;
+    if (!id || !rawKind || !rawOffset || !selectionKey) {
       throw new CursorError("Invalid cursor. Start a new search to obtain a fresh cursor.");
     }
+    const kind: CursorKind = rawKind === "summary" ? "summary" : "matches";
 
     const offset = Number.parseInt(rawOffset, 36);
     const snapshot = this.#snapshots.get(id);
     if (!snapshot) {
       throw new CursorError("Cursor expired or was evicted. Run the search again.");
     }
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > snapshot.matches.length) {
+    const maximumOffset = kind === "summary" ? snapshot.fileCounts.size : snapshot.matches.length;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > maximumOffset) {
       throw new CursorError("Cursor offset is outside the retained search snapshot.");
     }
 
     snapshot.lastAccessedAt = this.#now();
-    return { snapshot, offset };
+    return { snapshot, offset, kind, selectionKey };
   }
 
   delete(snapshot: SearchSnapshot): boolean {

@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
+import { excerptText } from "./excerpt.js";
 import { consumeCappedLines } from "./capped-lines.js";
 import { assertExistingPathInsideCwd, getSourceRevision } from "./source.js";
 import {
-  MAX_LINE_CHARACTERS,
   MAX_PROTOCOL_LINE_BYTES,
   MAX_SOURCE_REVISION_CONCURRENCY,
   MAX_STORED_MATCHES,
@@ -261,10 +261,20 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         const path = displayPath(rawPath.text, cwd);
         const submatches = event.data.submatches ?? [];
         const occurrences = createOccurrences(event.data.line_number, rawContent, submatches);
-        const lineTruncated = normalizedContent.length > MAX_LINE_CHARACTERS;
-        const lineContent = lineTruncated
-          ? `${normalizedContent.slice(0, MAX_LINE_CHARACTERS)}…`
-          : normalizedContent;
+        const primaryOccurrence = occurrences[0];
+        let focusStart = 0;
+        let focusEnd = 0;
+        if (primaryOccurrence) {
+          if (primaryOccurrence.range.encoding === "utf-16") {
+            focusStart = primaryOccurrence.range.start.character;
+            focusEnd = primaryOccurrence.range.end.character;
+          } else {
+            focusStart = primaryOccurrence.byteStart;
+            focusEnd = primaryOccurrence.byteEnd;
+          }
+        }
+        const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
+        const { text: lineContent, truncated: lineTruncated } = excerpt;
 
         totalMatches += 1;
         fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
