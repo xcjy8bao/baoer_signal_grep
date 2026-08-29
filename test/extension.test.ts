@@ -14,7 +14,16 @@ import {
   signalGrepToolName,
   signalGrepPromptGuidelines,
 } from "../src/index.js";
-import { readSignalGrepConfig, writeSignalGrepConfig } from "../src/config.js";
+import {
+  DEFAULT_SIGNAL_GREP_CONFIG,
+  readSignalGrepConfig,
+  type SignalGrepConfig,
+  writeSignalGrepConfig,
+} from "../src/config.js";
+
+function testConfig(overrides: Partial<SignalGrepConfig>): SignalGrepConfig {
+  return { ...DEFAULT_SIGNAL_GREP_CONFIG, ...overrides };
+}
 
 describe("Signal Grep tool mode", () => {
   test("keeps additive signal_grep as the safe default", () => {
@@ -155,11 +164,13 @@ afterEach(async () => {
 describe("Signal Grep extension registration", () => {
   test("degrades override to additive signal_grep when a conflict package is installed", async () => {
     const agentDir = await createAgentDir(true);
-    await writeSignalGrepConfig({ overrideBuiltinGrep: true }, agentDir);
+    await writeSignalGrepConfig(testConfig({ overrideBuiltinGrep: true }), agentDir);
     const configBefore = await readFile(join(agentDir, "signal-grep.json"), "utf8");
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: true }), {
+      agentDir,
+    });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
     expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(true);
@@ -182,7 +193,9 @@ describe("Signal Grep extension registration", () => {
     const agentDir = await createAgentDir(true);
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: false }), {
+      agentDir,
+    });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
     expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(true);
@@ -191,15 +204,11 @@ describe("Signal Grep extension registration", () => {
   test("keeps additive registration usable when optional handoff detection fails", async () => {
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(
-      harness.pi,
-      { overrideBuiltinGrep: false },
-      {
-        detectConflict: async () => {
-          throw new Error("fs unavailable");
-        },
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: false }), {
+      detectConflict: async () => {
+        throw new Error("fs unavailable");
       },
-    );
+    });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
     expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(
@@ -211,7 +220,9 @@ describe("Signal Grep extension registration", () => {
     const agentDir = await createAgentDir(false);
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: true }), {
+      agentDir,
+    });
 
     expect(harness.toolNames).toEqual(["grep"]);
     expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(
@@ -230,16 +241,12 @@ describe("Signal Grep extension registration", () => {
     const agentDir = await createAgentDir(false);
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(
-      harness.pi,
-      { overrideBuiltinGrep: true },
-      {
-        agentDir,
-        detectConflict: async () => {
-          throw new Error("fs unavailable");
-        },
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: true }), {
+      agentDir,
+      detectConflict: async () => {
+        throw new Error("fs unavailable");
       },
-    );
+    });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
     const ctx = createContext(harness.notifications);
@@ -258,14 +265,14 @@ describe("Signal Grep extension registration", () => {
     const agentDir = await createAgentDir(true);
     const configPath = join(agentDir, "signal-grep.json");
     await writeSignalGrepConfig(
-      { overrideBuiltinGrep: true, startMetricsOnNextLoad: true },
+      testConfig({ overrideBuiltinGrep: true, startMetricsOnNextLoad: true }),
       agentDir,
     );
     const harness = createMockPi();
 
     await registerSignalGrepExtension(
       harness.pi,
-      { overrideBuiltinGrep: true, startMetricsOnNextLoad: true },
+      testConfig({ overrideBuiltinGrep: true, startMetricsOnNextLoad: true }),
       { agentDir },
     );
     const ctx = createContext(harness.notifications);
@@ -286,11 +293,13 @@ describe("Signal Grep extension registration", () => {
   test("refuses to enable metrics through the command when a conflict package is installed", async () => {
     const agentDir = await createAgentDir(true);
     const configPath = join(agentDir, "signal-grep.json");
-    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, agentDir);
+    await writeSignalGrepConfig(testConfig({ overrideBuiltinGrep: false }), agentDir);
     const configBefore = await readFile(configPath, "utf8");
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: false }), {
+      agentDir,
+    });
     const metricsCommand = harness.commands.get("signal-grep-metrics");
     expect(metricsCommand).toBeDefined();
     const ctx = createContext(harness.notifications);
@@ -307,7 +316,11 @@ describe("Signal Grep extension registration", () => {
     let reloaded = false;
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    await registerSignalGrepExtension(
+      harness.pi,
+      testConfig({ overrideBuiltinGrep: false, locale: "zh-CN" }),
+      { agentDir },
+    );
     const metricsCommand = harness.commands.get("signal-grep-metrics");
     const ctx = createContext(harness.notifications, async () => {
       reloaded = true;
@@ -317,17 +330,20 @@ describe("Signal Grep extension registration", () => {
     const config = await readSignalGrepConfig(agentDir);
     expect(config.overrideBuiltinGrep).toBe(true);
     expect(config.startMetricsOnNextLoad).toBe(true);
+    expect(config.locale).toBe("zh-CN");
     expect(reloaded).toBe(true);
   }, 10_000);
 
   test("refuses to enable the override through the command when a conflict package is installed", async () => {
     const agentDir = await createAgentDir(true);
     const configPath = join(agentDir, "signal-grep.json");
-    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, agentDir);
+    await writeSignalGrepConfig(testConfig({ overrideBuiltinGrep: false }), agentDir);
     const configBefore = await readFile(configPath, "utf8");
     const harness = createMockPi();
 
-    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    await registerSignalGrepExtension(harness.pi, testConfig({ overrideBuiltinGrep: false }), {
+      agentDir,
+    });
     const overrideCommand = harness.commands.get("signal-grep-override");
     expect(overrideCommand).toBeDefined();
     const ctx = createContext(harness.notifications);
@@ -339,5 +355,23 @@ describe("Signal Grep extension registration", () => {
       ),
     ).toBe(true);
     expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  }, 10_000);
+  test("localizes command notifications in Simplified Chinese", async () => {
+    const agentDir = await createAgentDir(false);
+    const harness = createMockPi();
+    await registerSignalGrepExtension(harness.pi, testConfig({ locale: "zh-CN" }), { agentDir });
+    const ctx = createContext(harness.notifications);
+
+    await harness.commands.get("signal-grep-clear")?.("", ctx);
+    await harness.commands.get("signal-grep-override")?.("status", ctx);
+    await harness.commands.get("signal-grep-metrics")?.("status", ctx);
+    await harness.commands.get("signal-grep-health")?.("", ctx);
+
+    expect(harness.notifications.map((entry) => entry.message)).toEqual([
+      "Signal Grep 快照已清空",
+      "Signal Grep 覆盖已停用。",
+      "Signal Grep Metrics 已停用。如有需要，请使用 /signal-grep-metrics on 启用 grep 覆盖并开始新的对比区间。",
+      expect.stringContaining("工具模式（实际）：附加 signal_grep"),
+    ]);
   }, 10_000);
 });

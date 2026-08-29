@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,39 +26,87 @@ describe("Signal Grep config", () => {
     expect(await readSignalGrepConfig(await agentDir())).toEqual({
       overrideBuiltinGrep: false,
       startMetricsOnNextLoad: false,
+      locale: "en",
     });
   });
 
   test("persists, replaces, and reads override mode through a staged file", async () => {
     const dir = await agentDir();
-    await writeSignalGrepConfig({ overrideBuiltinGrep: true }, dir);
+    await writeSignalGrepConfig(
+      { overrideBuiltinGrep: true, startMetricsOnNextLoad: false, locale: "en" },
+      dir,
+    );
     expect(await readSignalGrepConfig(dir)).toEqual({
       overrideBuiltinGrep: true,
       startMetricsOnNextLoad: false,
+      locale: "en",
     });
 
-    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, dir);
+    await writeSignalGrepConfig(
+      { overrideBuiltinGrep: false, startMetricsOnNextLoad: false, locale: "en" },
+      dir,
+    );
     expect(await readSignalGrepConfig(dir)).toEqual({
       overrideBuiltinGrep: false,
       startMetricsOnNextLoad: false,
+      locale: "en",
     });
     expect(JSON.parse(await readFile(signalGrepConfigPath(dir), "utf8"))).toEqual({
       overrideBuiltinGrep: false,
+      startMetricsOnNextLoad: false,
+      locale: "en",
     });
   });
 
   test("persists the one-shot metrics handoff across reload", async () => {
     const dir = await agentDir();
-    await writeSignalGrepConfig({ overrideBuiltinGrep: true, startMetricsOnNextLoad: true }, dir);
+    await writeSignalGrepConfig(
+      { overrideBuiltinGrep: true, startMetricsOnNextLoad: true, locale: "zh-CN" },
+      dir,
+    );
     expect(await readSignalGrepConfig(dir)).toEqual({
       overrideBuiltinGrep: true,
       startMetricsOnNextLoad: true,
+      locale: "zh-CN",
     });
+  });
+
+  test("defaults locale for legacy config files that predate localization", async () => {
+    const dir = await agentDir();
+    await mkdir(dir, { recursive: true });
+    await writeFile(signalGrepConfigPath(dir), '{"overrideBuiltinGrep":true}', "utf8");
+    expect(await readSignalGrepConfig(dir)).toEqual({
+      overrideBuiltinGrep: true,
+      startMetricsOnNextLoad: false,
+      locale: "en",
+    });
+  });
+
+  test("rejects unsupported locales instead of silently choosing a language", async () => {
+    const dir = await agentDir();
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      signalGrepConfigPath(dir),
+      '{"overrideBuiltinGrep":false,"locale":"fr"}',
+      "utf8",
+    );
+    let failure: unknown;
+    try {
+      await readSignalGrepConfig(dir);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure instanceof Error ? failure.message : "").toContain(
+      'locale must be "en" or "zh-CN"',
+    );
   });
 
   test("rejects malformed or mistyped config instead of silently changing tool mode", async () => {
     const dir = await agentDir();
-    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, dir);
+    await writeSignalGrepConfig(
+      { overrideBuiltinGrep: false, startMetricsOnNextLoad: false, locale: "en" },
+      dir,
+    );
     await writeFile(signalGrepConfigPath(dir), "{", "utf8");
     let malformed: unknown;
     try {

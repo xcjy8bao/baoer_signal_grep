@@ -1,3 +1,4 @@
+import type { SignalGrepLocale } from "./config.js";
 import { ESTIMATED_CHARACTERS_PER_TOKEN } from "./types.js";
 
 export const METRICS_STATUS_KEY = "signal-grep-metrics";
@@ -97,26 +98,36 @@ export class SearchMetrics {
     return { ...this.#snapshot };
   }
 
-  formatStatus(styles: MetricsStatusStyles = plainMetricsStatusStyles): string {
+  formatStatus(
+    styles: MetricsStatusStyles = plainMetricsStatusStyles,
+    locale: SignalGrepLocale = "en",
+  ): string {
     const snapshot = this.snapshot;
     const result = comparison(snapshot);
     const delta = `${result.improved ? "↓" : "↑"} ${formatTokens(Math.abs(result.difference))} · ${result.percentage.toFixed(1)}%`;
-    const deltaStyle =
-      snapshot.normalTokens === 0 || result.difference === 0
-        ? styles.neutral
-        : result.improved
-          ? styles.positive
-          : styles.negative;
+    let deltaStyle: MetricsStatusStyles["neutral"];
+    if (snapshot.normalTokens === 0 || result.difference === 0) {
+      deltaStyle = styles.neutral;
+    } else if (result.improved) {
+      deltaStyle = styles.positive;
+    } else {
+      deltaStyle = styles.negative;
+    }
+    const normalLabel = locale === "zh-CN" ? "常规" : "NORMAL";
     return [
       styles.signal(`[ SG ${formatTokens(snapshot.signalTokens)} ]`),
-      styles.normal(`[ NORMAL ${formatTokens(snapshot.normalTokens)} ]`),
+      styles.normal(`[ ${normalLabel} ${formatTokens(snapshot.normalTokens)} ]`),
       deltaStyle(`[ ${delta} ]`),
     ].join("  ");
   }
 
-  formatReport(): string {
+  formatReport(locale: SignalGrepLocale = "en"): string {
     const snapshot = this.snapshot;
     const result = comparison(snapshot);
+    if (locale === "zh-CN") {
+      const outcome = result.improved ? "节省" : "额外使用";
+      return `Signal Grep Metrics：SG ${formatTokens(snapshot.signalTokens)} 个估算 Token（${formatBytes(snapshot.signalBytes)}）/ 常规 ${formatTokens(snapshot.normalTokens)}（${formatBytes(snapshot.normalBytes)}）· ${snapshot.searches} 次搜索和 ${snapshot.cursorPages} 个 cursor 页面共${outcome} ${formatTokens(Math.abs(result.difference))}（${result.percentage.toFixed(1)}%）。`;
+    }
     const outcome = result.improved ? "saved" : "used an additional";
     return `Signal Grep metrics: SG ${formatTokens(snapshot.signalTokens)} estimated tokens (${formatBytes(snapshot.signalBytes)}) / normal ${formatTokens(snapshot.normalTokens)} (${formatBytes(snapshot.normalBytes)}) · ${outcome} ${formatTokens(Math.abs(result.difference))} (${result.percentage.toFixed(1)}%) across ${snapshot.searches} searches and ${snapshot.cursorPages} cursor pages.`;
   }

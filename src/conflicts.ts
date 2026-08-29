@@ -10,6 +10,15 @@ import { join } from "node:path";
 export const HASHLINE_PACKAGE = "pi-hashline-edit-pro";
 export const GREP_OWNER_PACKAGES: readonly string[] = [HASHLINE_PACKAGE];
 
+export const CONFLICT_DETECTION_FAILED = "unknown (conflict detection failed)";
+
+export function grepOverrideConflictSource(
+  tools: ReadonlyArray<{ name: string; sourceInfo: { source: string } }>,
+): string | undefined {
+  const source = tools.find((tool) => tool.name === "grep")?.sourceInfo.source;
+  return source && source !== "builtin" ? source : undefined;
+}
+
 function hasErrorCode(error: unknown, codes: string[]): boolean {
   return error instanceof Error && "code" in error && codes.includes(String(error.code));
 }
