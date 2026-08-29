@@ -1,9 +1,19 @@
-import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import {
   effectiveSignalGrepInput,
   grepOverrideConflictSource,
+  registerSignalGrepExtension,
   signalGrepToolName,
 } from "../src/index.js";
+import { readSignalGrepConfig, writeSignalGrepConfig } from "../src/config.js";
 
 describe("Signal Grep tool mode", () => {
   test("keeps additive signal_grep as the safe default", () => {
@@ -40,4 +50,240 @@ describe("Signal Grep tool mode", () => {
       cursor: "cursor",
     });
   });
+
+  test("degraded override keeps additive case defaults", () => {
+    const config = { overrideBuiltinGrep: true };
+    expect(effectiveSignalGrepInput({ pattern: "todo" }, config, false)).toEqual({
+      pattern: "todo",
+    });
+  });
+});
+
+interface MockNotify {
+  message: string;
+  type?: string | undefined;
+}
+
+type CommandHandler = (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+type SessionStartHandler = (event: unknown, ctx: ExtensionContext) => unknown;
+
+function createMockPi(): {
+  pi: ExtensionAPI;
+  toolNames: string[];
+  notifications: MockNotify[];
+  commands: Map<string, CommandHandler>;
+  sessionStartHandlers: SessionStartHandler[];
+} {
+  const toolNames: string[] = [];
+  const notifications: MockNotify[] = [];
+  const commands = new Map<string, CommandHandler>();
+  const sessionStartHandlers: SessionStartHandler[] = [];
+  // Test double: only the API surface this extension actually uses. The single
+  // assertion here replaces seven scattered per-call-site assertions.
+  // oxlint-disable-next-line no-unsafe-type-assertion -- test double covers only the consumed host surface
+  const pi = {
+    registerTool: (tool: { name: string }) => {
+      toolNames.push(tool.name);
+    },
+    registerCommand: (name: string, options: { handler: CommandHandler }) => {
+      commands.set(name, options.handler);
+    },
+    on: (event: string, handler: SessionStartHandler) => {
+      if (event === "session_start") sessionStartHandlers.push(handler);
+    },
+    getAllTools: () => [],
+    exec: async () => ({ code: 0, stdout: "ripgrep 15.2.0\n", stderr: "", killed: false }),
+  } as unknown as ExtensionAPI;
+  return { pi, toolNames, notifications, commands, sessionStartHandlers };
+}
+
+function createContext(
+  notifications: MockNotify[],
+  onReload?: () => Promise<void>,
+): ExtensionCommandContext {
+  // oxlint-disable-next-line no-unsafe-type-assertion -- test double covers only the consumed context surface
+  return {
+    ui: {
+      notify: (text: string, kind?: string) => {
+        notifications.push({ message: text, type: kind });
+      },
+      setStatus: () => {},
+    },
+    reload: onReload ?? (async () => {}),
+  } as unknown as ExtensionCommandContext;
+}
+
+const tempDirs: string[] = [];
+
+async function createAgentDir(withConflict: boolean): Promise<string> {
+  const agentDir = await mkdtemp(join(tmpdir(), "signal-grep-ext-"));
+  tempDirs.push(agentDir);
+  const nodeModules = join(agentDir, "npm", "node_modules");
+  await mkdir(nodeModules, { recursive: true });
+  if (withConflict) {
+    await mkdir(join(nodeModules, "pi-hashline-edit-pro"), { recursive: true });
+  }
+  return agentDir;
+}
+
+afterEach(async () => {
+  const dirs = tempDirs.splice(0, tempDirs.length);
+  await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("Signal Grep extension registration", () => {
+  test("degrades override to additive signal_grep when a conflict package is installed", async () => {
+    const agentDir = await createAgentDir(true);
+    await writeSignalGrepConfig({ overrideBuiltinGrep: true }, agentDir);
+    const configBefore = await readFile(join(agentDir, "signal-grep.json"), "utf8");
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
+
+    expect(harness.toolNames).toEqual(["signal_grep"]);
+    const ctx = createContext(harness.notifications);
+    await Promise.all(
+      harness.sessionStartHandlers.map((handler) =>
+        handler({ type: "session_start", reason: "startup" }, ctx),
+      ),
+    );
+    const degraded = harness.notifications.filter((entry) =>
+      entry.message.includes("pi-hashline-edit-pro"),
+    );
+    expect(degraded.length).toBeGreaterThan(0);
+    expect(degraded[0]?.type).toBe("warning");
+    const configAfter = await readFile(join(agentDir, "signal-grep.json"), "utf8");
+    expect(configAfter).toBe(configBefore);
+  }, 10_000);
+
+  test("keeps the grep override active when no conflict package is installed", async () => {
+    const agentDir = await createAgentDir(false);
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
+
+    expect(harness.toolNames).toEqual(["grep"]);
+    const ctx = createContext(harness.notifications);
+    await Promise.all(
+      harness.sessionStartHandlers.map((handler) =>
+        handler({ type: "session_start", reason: "startup" }, ctx),
+      ),
+    );
+    expect(harness.notifications.some((entry) => entry.type === "warning")).toBe(false);
+  }, 10_000);
+
+  test("degrades safely to additive mode when conflict detection fails", async () => {
+    const agentDir = await createAgentDir(false);
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(
+      harness.pi,
+      { overrideBuiltinGrep: true },
+      {
+        agentDir,
+        detectConflict: async () => {
+          throw new Error("fs unavailable");
+        },
+      },
+    );
+
+    expect(harness.toolNames).toEqual(["signal_grep"]);
+    const ctx = createContext(harness.notifications);
+    await Promise.all(
+      harness.sessionStartHandlers.map((handler) =>
+        handler({ type: "session_start", reason: "startup" }, ctx),
+      ),
+    );
+    const degraded = harness.notifications.filter((entry) =>
+      entry.message.includes("conflict detection failed"),
+    );
+    expect(degraded.length).toBeGreaterThan(0);
+  }, 10_000);
+
+  test("clears the metrics handoff without enabling metrics when degraded", async () => {
+    const agentDir = await createAgentDir(true);
+    const configPath = join(agentDir, "signal-grep.json");
+    await writeSignalGrepConfig(
+      { overrideBuiltinGrep: true, startMetricsOnNextLoad: true },
+      agentDir,
+    );
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(
+      harness.pi,
+      { overrideBuiltinGrep: true, startMetricsOnNextLoad: true },
+      { agentDir },
+    );
+    const ctx = createContext(harness.notifications);
+    await Promise.all(
+      harness.sessionStartHandlers.map((handler) =>
+        handler({ type: "session_start", reason: "startup" }, ctx),
+      ),
+    );
+
+    const config = await readSignalGrepConfig(agentDir);
+    expect(config.startMetricsOnNextLoad).toBe(false);
+    expect(
+      harness.notifications.some((entry) => entry.message.includes("Metrics were not enabled")),
+    ).toBe(true);
+    expect(configPath.length).toBeGreaterThan(0);
+  }, 10_000);
+
+  test("refuses to enable metrics through the command when a conflict package is installed", async () => {
+    const agentDir = await createAgentDir(true);
+    const configPath = join(agentDir, "signal-grep.json");
+    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, agentDir);
+    const configBefore = await readFile(configPath, "utf8");
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    const metricsCommand = harness.commands.get("signal-grep-metrics");
+    expect(metricsCommand).toBeDefined();
+    const ctx = createContext(harness.notifications);
+    await metricsCommand?.("on", ctx);
+
+    expect(
+      harness.notifications.some((entry) => entry.message.includes("Metrics were not enabled")),
+    ).toBe(true);
+    expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  }, 10_000);
+
+  test("metrics command keeps its existing handoff behavior without conflicts", async () => {
+    const agentDir = await createAgentDir(false);
+    let reloaded = false;
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    const metricsCommand = harness.commands.get("signal-grep-metrics");
+    const ctx = createContext(harness.notifications, async () => {
+      reloaded = true;
+    });
+    await metricsCommand?.("on", ctx);
+
+    const config = await readSignalGrepConfig(agentDir);
+    expect(config.overrideBuiltinGrep).toBe(true);
+    expect(config.startMetricsOnNextLoad).toBe(true);
+    expect(reloaded).toBe(true);
+  }, 10_000);
+
+  test("refuses to enable the override through the command when a conflict package is installed", async () => {
+    const agentDir = await createAgentDir(true);
+    const configPath = join(agentDir, "signal-grep.json");
+    await writeSignalGrepConfig({ overrideBuiltinGrep: false }, agentDir);
+    const configBefore = await readFile(configPath, "utf8");
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+    const overrideCommand = harness.commands.get("signal-grep-override");
+    expect(overrideCommand).toBeDefined();
+    const ctx = createContext(harness.notifications);
+    await overrideCommand?.("on", ctx);
+
+    expect(
+      harness.notifications.some((entry) =>
+        entry.message.includes('owns the public "grep" tool name'),
+      ),
+    ).toBe(true);
+    expect(await readFile(configPath, "utf8")).toBe(configBefore);
+  }, 10_000);
 });
