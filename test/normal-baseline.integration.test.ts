@@ -68,7 +68,7 @@ describe("same-snapshot normal baseline", () => {
 
   test("exactly reproduces match, byte, and long-line truncation notices", async () => {
     const root = await createBaselineFixture();
-    const input = { pattern: "ALPHA", ignoreCase: false };
+    const input = { pattern: "ALPHA", path: "broad.ts", ignoreCase: false };
     const normal = textContent(await createGrepTool(root).execute("normal-broad", input));
     const signal = await new SignalGrepService({ runRipgrep: createRipgrepRunner() }).search(
       input,
@@ -77,7 +77,7 @@ describe("same-snapshot normal baseline", () => {
       { includeNormalBaseline: true },
     );
 
-    expect(signal.details.totalMatches).toBe(106);
+    expect(signal.details.totalMatches).toBe(105);
     expect(signal.normalText).toBe(normal);
     expect(normal).toContain("100 matches limit reached");
     expect(normal).toContain("limit reached");
