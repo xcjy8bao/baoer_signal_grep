@@ -1,7 +1,12 @@
 import { resolve } from "node:path";
 import { CursorError, SignalGrepError } from "./errors.js";
 import { inspectSource } from "./inspect.js";
-import { formatMatchPage, formatNormalBaseline, formatSummary } from "./format.js";
+import {
+  formatMatchPage,
+  formatNormalBaseline,
+  formatSummary,
+  type MatchPageOptions,
+} from "./format.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
@@ -9,6 +14,7 @@ import { isPathInsideCwd } from "./source.js";
 import { SnapshotStore } from "./snapshot-store.js";
 import {
   DEFAULT_SUMMARY_FILE_LIMIT,
+  type ContextBudget,
   type SearchMode,
   type SearchSnapshot,
   type SignalGrepDetails,
@@ -29,6 +35,7 @@ export interface SignalGrepServiceOptions {
 }
 
 export interface SignalGrepSearchOptions {
+  contextBudget?: ContextBudget;
   includeNormalBaseline?: boolean;
 }
 
@@ -49,6 +56,41 @@ function baseDetails(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepDeta
 function completenessNote(snapshot: SearchSnapshot): string {
   if (snapshot.snapshotComplete) return "complete snapshot";
   return `PARTIAL snapshot: retained ${snapshot.matches.length} of ${snapshot.totalMatches} matches; narrow the search to retrieve all matches`;
+}
+function selectContextBudget(
+  input: SignalGrepInput,
+  mode: SearchMode,
+  candidate: ContextBudget | undefined,
+): ContextBudget | undefined {
+  if (mode !== "auto" || input.limit !== undefined || input.cursor) return undefined;
+  return candidate;
+}
+
+function matchPageOptions(budget: ContextBudget | undefined): MatchPageOptions {
+  if (!budget) return {};
+  return { resultTokenBudget: budget.resultTokenBudget };
+}
+
+function attachContextBudget(
+  result: SignalGrepResult,
+  budget: ContextBudget | undefined,
+  totalMatches: number,
+): SignalGrepResult {
+  if (!budget || totalMatches === 0) return result;
+  let text = result.text;
+  if (budget.tier !== "full") {
+    text = `${result.text}\n\n[Budget: ${budget.tier}; context remainder ${budget.contextRemainderPercent}%; auto detail target ${budget.resultTokenBudget} estimated tokens.]`;
+  }
+  return {
+    ...result,
+    text,
+    details: {
+      ...result.details,
+      budgetTier: budget.tier,
+      contextRemainderPercent: budget.contextRemainderPercent,
+      resultTokenBudget: budget.resultTokenBudget,
+    },
+  };
 }
 
 function rejectCursorOnlyOptions(input: SignalGrepInput): void {
@@ -89,6 +131,7 @@ export class SignalGrepService {
     options: SignalGrepSearchOptions = {},
   ): Promise<SignalGrepResult> {
     const mode = input.mode ?? "auto";
+    const contextBudget = selectContextBudget(input, mode, options.contextBudget);
     if (mode === "inspect") {
       const inspectOptions = this.#structure
         ? { snapshots: this.#snapshots, structure: this.#structure }
@@ -118,7 +161,7 @@ export class SignalGrepService {
       } else if (mode === "matches") {
         result = await this.#page(snapshot, 0, mode, signal);
       } else {
-        const page = await formatMatchPage(snapshot, 0, signal);
+        const page = await formatMatchPage(snapshot, 0, signal, matchPageOptions(contextBudget));
         result =
           input.limit !== undefined ||
           (snapshot.snapshotComplete && page.nextOffset === snapshot.matches.length)
@@ -126,7 +169,8 @@ export class SignalGrepService {
             : this.#summary(snapshot, mode);
       }
 
-      return this.#finalize(snapshot, attachBaseline(result));
+      const budgetedResult = attachContextBudget(result, contextBudget, snapshot.totalMatches);
+      return this.#finalize(snapshot, attachBaseline(budgetedResult));
     } catch (error) {
       this.#snapshots.delete(snapshot);
       throw error;
