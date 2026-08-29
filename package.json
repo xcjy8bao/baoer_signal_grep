@@ -1,6 +1,6 @@
 {
   "name": "pi-plugin-signal-grep",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Context-efficient, correctness-first ripgrep search and bounded code inspection for the Pi coding agent",
   "keywords": [
     "ai-agent",

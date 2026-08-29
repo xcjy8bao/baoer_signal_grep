@@ -4,6 +4,8 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-29
+
 ### Added
 
 - Context-aware implicit `auto` detail budgets use Pi's reported context remainder: full (2,000 estimated tokens), tight (1,000), or critical (500). Compact complete results still return directly, while explicit limits, `matches`, inspection, and cursor pages retain the default budget.
