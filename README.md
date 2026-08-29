@@ -19,6 +19,7 @@ Signal Grep applies an adaptive response policy:
 - **Small search:** return grouped matches in one call.
 - **Broad search:** return an exact per-file match summary first.
 - **Exhaustive follow-up:** page through one stable in-memory snapshot.
+- **Context pressure:** tighten only implicit `auto` detail trials while preserving explicit and cursor requests.
 - **Bound reached:** report `partial` explicitly and ask the agent to narrow the query.
 
 No fuzzy fallback, silent truncation, background index, database, telemetry, or network request is involved.
@@ -79,6 +80,8 @@ Details are available from the stable snapshot with cursor="…".
 
 For a compact complete result, Signal Grep returns grouped details directly—even when there are more than the former fixed 20-match threshold—so simple searches do not pay for an unnecessary summary-and-cursor turn.
 
+For implicit `auto` searches without `limit`, the initial detail trial follows the context remainder reported by Pi: `full` above 40% targets 2,000 estimated result-text tokens, `tight` from 12% through 40% targets 1,000, and `critical` below 12% targets 500. A compact complete result still returns directly in every tier. Unknown context usage preserves the existing 2,000-token target without claiming an adjustment. `matches`, explicit `limit`, inspection, and cursor continuation are never downshifted.
+
 ## Reproducible before/after test
 
 The repository includes a benchmark script that creates the fixture above, executes Pi's real built-in grep implementation and Signal Grep against the same files, and removes the fixture afterward:
@@ -98,6 +101,14 @@ Measured with Pi 0.84.3, Bun 1.4.0, Node.js 22.22.2, and ripgrep 15.2.0:
 | Broad search: detail lines shown first |                        100 | **0 (exact summary first)** |
 | Broad search: first response           |                9,728 bytes |               **321 bytes** |
 | Broad search: first-response reduction |                          — |                   **96.7%** |
+
+The same 18-match medium fixture also verifies the context tiers:
+
+| Tier       | Context remainder | Estimated-token target | Details returned first | First response |
+| ---------- | ----------------: | ---------------------: | ---------------------: | -------------: |
+| `full`     |               80% |                  2,000 |                     18 |    4,580 bytes |
+| `tight`    |               30% |                  1,000 |            0 (summary) |      333 bytes |
+| `critical` |                8% |                    500 |            0 (summary) |      334 bytes |
 
 The compact case confirms that adaptive budgeting returns every result directly with precise occurrence ranges and no extra turn; the range metadata adds a small, explicit response cost. The broad case confirms that Signal Grep exposes the exact total and file distribution instead of presenting a 100-match prefix as if it represented the whole search. Explicit `limit=20` pagination still reconstructs the 33-match fixture as 20 + 13 without duplication or omission.
 
@@ -177,11 +188,13 @@ When `ignoreCase` is omitted, additive `signal_grep` uses smart-case; override `
 
 ### Modes
 
-- `auto`: return all grouped details when the complete result fits the adaptive budget; honor an explicit `limit` with an immediate detail page; otherwise return a file summary.
+- `auto`: for an implicit search, use the current context tier for the initial detail-fit trial and return all grouped details when they fit; honor an explicit `limit` with an immediate default-budget detail page; otherwise return a file summary.
 - `summary`: always return file counts first.
 - `matches`: return the first adaptive-budget detail page immediately.
 - `inspect`: inspect the smallest available enclosing code symbol at `path` and `line`; when a cursor is supplied, reject source changes since the retained match.
 - `cursor`: continue detail pages from the original snapshot; no search rerun. Supply `path` with a cursor to select one retained file.
+
+When Pi reports usable context data for an eligible `auto` search, structured details include `budgetTier`, `contextRemainderPercent`, and `resultTokenBudget`. Tight and critical responses also include the same attribution in model-facing text. These targets use the same conservative character estimate as existing metrics; source text and paths may contain CJK, so they are not exact tokenizer guarantees.
 
 ## Optional cumulative token comparison
 
@@ -219,7 +232,7 @@ Signal Grep treats search completeness as a public contract:
 2. Cursor pages preserve snapshot order and do not duplicate or omit retained matches.
 3. Retained matching-line text and occurrence ranges are snapshot-stable. Optional surrounding context is read when a page is formatted and may reflect later file edits.
 4. A snapshot that exceeds 50,000 retained matches is marked `partial` in both text and structured details.
-5. Adaptive pages target about 2,000 estimated result-text tokens and remain bounded by 100 matches and a 16 KiB hard limit.
+5. Implicit `auto` detail trials target about 2,000, 1,000, or 500 estimated result-text tokens according to the reported context remainder; explicit and continuation pages retain the 2,000-token target. Every page remains bounded by 100 matches and a 16 KiB hard limit.
 6. Lines longer than 500 characters are visibly clipped and counted in details; matching columns remain based on the untruncated line.
 7. Context and structure for files larger than 5 MiB, unreadable files, files without a usable structure provider, or a single block that exceeds the page byte budget are omitted and reported.
 8. `mode=inspect` returns an enclosing symbol only when a structure provider can prove its range; otherwise it reports the exact reason and returns a bounded source window.

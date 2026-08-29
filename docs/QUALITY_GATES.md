@@ -81,7 +81,7 @@ The smoke test builds a temporary Node-targeted bundle, imports it with the conf
 bun run benchmark
 ```
 
-The benchmark checks two observable outcomes: a compact 33-match search must return every result directly without an extra turn, while a broad 233-match search must expose the exact total through a small summary instead of normal grep's 100-match prefix. It also retains an explicit 20 + 13 cursor reconstruction check, reports model-facing byte counts, and removes its fixture. It measures result shape rather than search speed or model tokenization.
+The benchmark checks three observable contracts: a compact 33-match search returns every result directly without an extra turn; a broad 233-match search exposes the exact total through a small summary instead of normal grep's 100-match prefix; and one 18-match medium fixture returns details in the full context tier but summaries in tight and critical tiers. It also retains an explicit 20 + 13 cursor reconstruction check, reports model-facing byte counts and resolved estimated-token targets, and removes its fixture. It measures result shape rather than search speed or model tokenization.
 
 ## Package boundary
 
