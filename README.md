@@ -163,6 +163,7 @@ The command safely persists a user-global setting through a staged file at `~/.p
 /signal-grep-override off
 ```
 
+When `pi-hashline-edit-pro` is installed, Signal Grep adds one system prompt guideline telling the model to obtain served anchors through hashline's `grep` or `read` before editing a location found by `signal_grep`. The hint is not repeated in each search response, does not alter Metrics accounting, and does not claim that Signal Grep can write hashline's private served-state.
 Use `/signal-grep-override status` to inspect the active mode. Override is deliberately opt-in because another extension may also replace `grep`; Pi reports tool collisions at startup.
 
 ## Tool

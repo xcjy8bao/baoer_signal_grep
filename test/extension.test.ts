@@ -12,6 +12,7 @@ import {
   grepOverrideConflictSource,
   registerSignalGrepExtension,
   signalGrepToolName,
+  signalGrepPromptGuidelines,
 } from "../src/index.js";
 import { readSignalGrepConfig, writeSignalGrepConfig } from "../src/config.js";
 
@@ -57,6 +58,16 @@ describe("Signal Grep tool mode", () => {
       pattern: "todo",
     });
   });
+
+  test("adds one hashline handoff guideline only when its grep-owner package is present", () => {
+    const base = signalGrepPromptGuidelines("signal_grep");
+    const withHashline = signalGrepPromptGuidelines("signal_grep", "pi-hashline-edit-pro");
+
+    expect(base.some((guideline) => guideline.includes("served anchors"))).toBe(false);
+    expect(withHashline).toHaveLength(base.length + 1);
+    expect(withHashline.at(-1)).toContain("served anchors");
+    expect(withHashline.at(-1)).toContain("not imported into its edit state");
+  });
 });
 
 interface MockNotify {
@@ -70,11 +81,13 @@ type SessionStartHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 function createMockPi(): {
   pi: ExtensionAPI;
   toolNames: string[];
+  promptGuidelines: string[][];
   notifications: MockNotify[];
   commands: Map<string, CommandHandler>;
   sessionStartHandlers: SessionStartHandler[];
 } {
   const toolNames: string[] = [];
+  const promptGuidelines: string[][] = [];
   const notifications: MockNotify[] = [];
   const commands = new Map<string, CommandHandler>();
   const sessionStartHandlers: SessionStartHandler[] = [];
@@ -82,8 +95,9 @@ function createMockPi(): {
   // assertion here replaces seven scattered per-call-site assertions.
   // oxlint-disable-next-line no-unsafe-type-assertion -- test double covers only the consumed host surface
   const pi = {
-    registerTool: (tool: { name: string }) => {
+    registerTool: (tool: { name: string; promptGuidelines?: string[] }) => {
       toolNames.push(tool.name);
+      promptGuidelines.push(tool.promptGuidelines ?? []);
     },
     registerCommand: (name: string, options: { handler: CommandHandler }) => {
       commands.set(name, options.handler);
@@ -94,7 +108,14 @@ function createMockPi(): {
     getAllTools: () => [],
     exec: async () => ({ code: 0, stdout: "ripgrep 15.2.0\n", stderr: "", killed: false }),
   } as unknown as ExtensionAPI;
-  return { pi, toolNames, notifications, commands, sessionStartHandlers };
+  return {
+    pi,
+    toolNames,
+    promptGuidelines,
+    notifications,
+    commands,
+    sessionStartHandlers,
+  };
 }
 
 function createContext(
@@ -141,6 +162,7 @@ describe("Signal Grep extension registration", () => {
     await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
+    expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(true);
     const ctx = createContext(harness.notifications);
     await Promise.all(
       harness.sessionStartHandlers.map((handler) =>
@@ -156,6 +178,35 @@ describe("Signal Grep extension registration", () => {
     expect(configAfter).toBe(configBefore);
   }, 10_000);
 
+  test("adds hashline handoff guidance in configured additive mode", async () => {
+    const agentDir = await createAgentDir(true);
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: false }, { agentDir });
+
+    expect(harness.toolNames).toEqual(["signal_grep"]);
+    expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(true);
+  }, 10_000);
+
+  test("keeps additive registration usable when optional handoff detection fails", async () => {
+    const harness = createMockPi();
+
+    await registerSignalGrepExtension(
+      harness.pi,
+      { overrideBuiltinGrep: false },
+      {
+        detectConflict: async () => {
+          throw new Error("fs unavailable");
+        },
+      },
+    );
+
+    expect(harness.toolNames).toEqual(["signal_grep"]);
+    expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(
+      false,
+    );
+  }, 10_000);
+
   test("keeps the grep override active when no conflict package is installed", async () => {
     const agentDir = await createAgentDir(false);
     const harness = createMockPi();
@@ -163,6 +214,9 @@ describe("Signal Grep extension registration", () => {
     await registerSignalGrepExtension(harness.pi, { overrideBuiltinGrep: true }, { agentDir });
 
     expect(harness.toolNames).toEqual(["grep"]);
+    expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(
+      false,
+    );
     const ctx = createContext(harness.notifications);
     await Promise.all(
       harness.sessionStartHandlers.map((handler) =>

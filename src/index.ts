@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { detectGrepOwnerConflict } from "./conflicts.js";
+import { detectGrepOwnerConflict, HASHLINE_PACKAGE } from "./conflicts.js";
 import { readSignalGrepConfig, type SignalGrepConfig, writeSignalGrepConfig } from "./config.js";
 import { resolveContextBudget } from "./context-budget.js";
 import { message } from "./messages.js";
@@ -32,6 +32,24 @@ function formatMetricsStatus(runtime: SignalGrepRuntime, ctx: ExtensionContext):
     negative: (text) => theme.fg("error", theme.bold(text)),
     neutral: (text) => theme.fg("muted", text),
   });
+}
+
+export function signalGrepPromptGuidelines(
+  toolName: "grep" | "signal_grep",
+  grepOwnerPackage?: string,
+): string[] {
+  const guidelines = [
+    `Use ${toolName} for content search instead of unbounded rg output.`,
+    `When ${toolName} returns a summary, narrow with path or use its cursor only when exhaustive detail is required.`,
+    `Use ${toolName} mode=inspect with path and line when a matching location needs its enclosing code block.`,
+    `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
+  ];
+  if (grepOwnerPackage === HASHLINE_PACKAGE) {
+    guidelines.push(
+      `Before editing a location found by ${toolName}, use ${HASHLINE_PACKAGE}'s grep or read tool to obtain served anchors; ${toolName} evidence is not imported into its edit state.`,
+    );
+  }
+  return guidelines;
 }
 
 const searchSchema = Type.Object({
@@ -107,18 +125,19 @@ export function effectiveSignalGrepInput(
  * degrades to additive "signal_grep" with a visible notice instead. The config
  * value is never rewritten: removing the conflicting package restores the
  * override on the next load.
+ * Detection also runs in additive mode so prompt guidance can describe an
+ * installed grep-owner handoff without changing the effective tool mode.
  */
 export async function resolveOverrideActive(
   config: SignalGrepConfig,
   options: SignalGrepExtensionOptions = {},
 ): Promise<{ overrideActive: boolean; conflict: string | undefined }> {
-  if (!config.overrideBuiltinGrep) return { overrideActive: false, conflict: undefined };
   const fallbackDetect = (): Promise<string | undefined> =>
     detectGrepOwnerConflict(options.agentDir ?? getAgentDir());
   const detect = options.detectConflict ?? fallbackDetect;
   try {
     const conflict = await detect();
-    return { overrideActive: conflict === undefined, conflict };
+    return { overrideActive: config.overrideBuiltinGrep && conflict === undefined, conflict };
   } catch {
     // Fail safe: additive mode always loads cleanly, and the notice names the
     // detection failure instead of pretending no conflict exists.
@@ -147,12 +166,7 @@ export async function registerSignalGrepExtension(
     label: SIGNAL_GREP_LABEL,
     description: SIGNAL_GREP_DESCRIPTION,
     promptSnippet: "Search file contents without flooding context",
-    promptGuidelines: [
-      `Use ${toolName} for content search instead of unbounded rg output.`,
-      `When ${toolName} returns a summary, narrow with path or use its cursor only when exhaustive detail is required.`,
-      `Use ${toolName} mode=inspect with path and line when a matching location needs its enclosing code block.`,
-      `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
-    ],
+    promptGuidelines: signalGrepPromptGuidelines(toolName, conflict),
     parameters: searchSchema,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

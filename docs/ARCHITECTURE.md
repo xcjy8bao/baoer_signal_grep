@@ -45,6 +45,8 @@ format.ts ─── owns model-facing summary, page, byte, and deduplicated cont
 
 Because Pi's extension loader rejects duplicate `grep` registrations at load time and fails the whole extension set, config intent alone cannot decide the effective tool name. `conflicts.ts` keeps the data table of packages known to register their own public `grep` tool and detects them in the agent package directory on every load. When the override is configured but such a package is installed, the override degrades to additive `signal_grep` for that session with a visible notice, the config value is never rewritten, and removing the conflicting package restores the override on the next load. Metrics enablement requires an actually active override and is refused while degraded. If conflict detection itself fails, the extension degrades to additive mode and names the detection failure instead of treating it as "no conflict".
 
+The same package detection runs in additive mode to compose prompt guidance. When the known owner is `pi-hashline-edit-pro`, `index.ts` adds one model-facing guideline to retrieve served anchors through hashline before editing Signal Grep evidence. This is advisory composition only: Signal Grep neither mutates hashline's private state nor repeats the hint in result text. Detection failure leaves additive search behavior intact and does not fabricate an interoperability claim.
+
 ### Request normalization
 
 `request.ts` is the only authority for defaults and numeric bounds. Internal components receive a normalized `SearchRequest` and do not repeat input validation.
