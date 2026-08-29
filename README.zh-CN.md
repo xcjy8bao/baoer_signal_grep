@@ -163,6 +163,7 @@ Signal Grep 默认使用附加模式，在 Pi 内置 `grep` 旁注册 `signal_gr
 /signal-grep-override off
 ```
 
+安装 `pi-hashline-edit-pro` 时，Signal Grep 会额外加入一条系统提示，要求模型在编辑 `signal_grep` 找到的位置前，先通过 hashline 的 `grep` 或 `read` 获取 served anchors。该提示不会在每次搜索响应中重复，不会影响 Metrics 计量，也不会声称 Signal Grep 能写入 hashline 的私有 served-state。
 使用 `/signal-grep-override status` 查看当前模式。覆盖功能必须主动开启，因为其他扩展也可能替换 `grep`；发生工具冲突时 Pi 会在启动阶段明确警告。
 
 ## 工具接口

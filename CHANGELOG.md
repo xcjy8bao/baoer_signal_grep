@@ -8,6 +8,7 @@ All notable changes will be documented in this file. The project follows [Semant
 
 - Context-aware implicit `auto` detail budgets use Pi's reported context remainder: full (2,000 estimated tokens), tight (1,000), or critical (500). Compact complete results still return directly, while explicit limits, `matches`, inspection, and cursor pages retain the default budget.
 - Search details expose `budgetTier`, `contextRemainderPercent`, and `resultTokenBudget` when a context decision is available; tight and critical responses also attribute the adjustment in model-facing text.
+- Installations with `pi-hashline-edit-pro` receive one conditional prompt guideline to obtain hashline-served anchors before editing Signal Grep evidence, without repeating the hint in every result or pretending to share private plugin state.
 
 ### Fixed
 

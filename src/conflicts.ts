@@ -7,7 +7,8 @@ import { join } from "node:path";
  * loader rejects duplicate tool registrations and the whole extension set fails
  * to load. Extend this table as the ecosystem grows; do not add ad hoc checks.
  */
-export const GREP_OWNER_PACKAGES: readonly string[] = ["pi-hashline-edit-pro"];
+export const HASHLINE_PACKAGE = "pi-hashline-edit-pro";
+export const GREP_OWNER_PACKAGES: readonly string[] = [HASHLINE_PACKAGE];
 
 function hasErrorCode(error: unknown, codes: string[]): boolean {
   return error instanceof Error && "code" in error && codes.includes(String(error.code));
