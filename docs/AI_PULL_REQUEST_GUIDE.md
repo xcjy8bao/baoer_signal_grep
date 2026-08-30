@@ -1,10 +1,10 @@
 # AI Pull Request Guide
 
-This document is the authoritative pull-request protocol for AI contributors and humans supervising AI-generated changes. `AGENTS.md` contains the concise always-loaded rules; this guide defines the evidence expected in review.
+This document is the authoritative pull-request protocol for AI contributors and humans supervising AI-generated changes. It defines the evidence expected in review together with the project's architecture and quality gates.
 
 ## 1. Before editing
 
-1. Read `AGENTS.md`, this guide, the architecture document, and `QUALITY_GATES.md`.
+1. Read this guide, the architecture document, and `QUALITY_GATES.md`.
 2. Confirm the issue or requested outcome in observable terms.
 3. Identify the public contract, failure semantics, and lifecycle boundaries touched.
 4. Inspect current implementation and tests before proposing a new abstraction.

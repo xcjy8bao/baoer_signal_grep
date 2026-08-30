@@ -91,8 +91,6 @@ bun run benchmark
 
 首次响应变短不等于整个任务成本降低：后续检查、cursor 调用、模型推理和正确性都需要计算。该基准测量结果形状与文本字节，不测搜索速度、精确模型 Token、任务成功率或费用节省。紧凑搜索可能因证据元数据而输出更多文本。
 
-独立的 [0.5.6 任务评测](docs/EVALUATION_0.5.6.md) 定义并记录更完整的对比。付费模型运行属于发布评测，不进入常规 CI。不能从本地基准推导整体更快或任务 Token 更省。
-
 ## 环境要求
 
 ### 运行时
@@ -299,7 +297,6 @@ bun run pack:check
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AI Pull Request Guide](docs/AI_PULL_REQUEST_GUIDE.md)
 - [质量门禁](docs/QUALITY_GATES.md)
-- [AGENTS.md](AGENTS.md)
 
 ## 许可证
 

@@ -25,9 +25,10 @@
     "url": "git+https://github.com/xcjy8bao/pi-plugin-signal-grep.git"
   },
   "files": [
-    "src",
-    "docs",
-    "AGENTS.md",
+    "src/**/*.ts",
+    "docs/AI_PULL_REQUEST_GUIDE.md",
+    "docs/ARCHITECTURE.md",
+    "docs/QUALITY_GATES.md",
     "README.md",
     "README.zh-CN.md",
     "CONTRIBUTING.md",

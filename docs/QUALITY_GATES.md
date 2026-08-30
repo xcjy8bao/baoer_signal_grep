@@ -95,12 +95,6 @@ The benchmark checks that a compact 33-match search returns all results directly
 
 The baseline is Pi's real built-in grep, including its output-limit notices. This benchmark measures result shape, not search speed, model tokenization, task success, or overall token/cost savings. Metrics excludes single/batch inspection, read output, and model reasoning; it is not a substitute for a complete task comparison.
 
-## Separate release task evaluation
-
-The [0.5.6 task evaluation](EVALUATION_0.5.6.md) owns the broader task corpus, comparison procedure, evidence, and any declared release thresholds. Keep task correctness, full evidence-acquisition calls, and total task token/cost measurements separate from first-response byte counts. Report incomplete runs and unavailable measurements explicitly; a local search-shape result cannot satisfy a task-level saving claim.
-
-Paid multi-run model evaluation is deliberate release work and does not run inside the ordinary `bun run check` gate or every CI job. Do not claim percentage savings or an overall speedup before the corresponding evaluation evidence exists.
-
 ## Package boundary
 
 ```bash

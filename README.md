@@ -91,8 +91,6 @@ It creates temporary files, runs Pi's real built-in grep and Signal Grep, report
 
 A shorter first response does not establish lower task cost: later inspections, cursor calls, model reasoning, and correctness all matter. The benchmark measures result shape and text bytes, not search speed, exact model tokens, task success, or money saved. Compact searches can produce more text because Signal Grep includes evidence metadata.
 
-The separate [0.5.6 task evaluation](docs/EVALUATION_0.5.6.md) defines and reports the broader comparison. Paid model runs are a release-evaluation activity, not part of ordinary CI. No overall speedup or task-token saving is implied by the local benchmark.
-
 ## Requirements
 
 ### Runtime
@@ -299,7 +297,6 @@ All changes—including AI-authored changes—must use pull requests. Read:
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [AI Pull Request Guide](docs/AI_PULL_REQUEST_GUIDE.md)
 - [Quality Gates](docs/QUALITY_GATES.md)
-- [AGENTS.md](AGENTS.md)
 
 ## License
 

@@ -10,7 +10,6 @@ All notable changes will be documented in this file. The project follows [Semant
 
 - Broad summaries now show bounded real first-retained-match samples across displayed files, with stable match numbers and explicit sample-omission counts. Samples are not relevance ranking.
 - `mode="inspect"` accepts either cursor-bound `matchIndices` or cursorless `targets`, each containing 1–5 entries. The complete batch shares 16 KiB, reports every target's outcome, deduplicates same-revision source lines, and provides explicit single-target retry requests for budget-limited evidence.
-- A separate task-evaluation specification distinguishes end-to-end outcomes from the local context-shape benchmark and opt-in search-text Metrics.
 
 ### Fixed
 
