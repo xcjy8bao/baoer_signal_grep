@@ -5,6 +5,7 @@ import type { SignalGrepInput } from "../service.js";
 import type { StructureStatus } from "../types.js";
 import type {
   InspectPresentation,
+  InspectBatchPresentation,
   MatchesPresentation,
   SignalGrepPresentation,
   SummaryPresentation,
@@ -52,6 +53,10 @@ interface TuiCopy {
   structure: string;
   structureStatuses: Record<StructureStatus, string>;
   summary: string;
+  samples: string;
+  locations: string;
+  deferred: string;
+  failed: string;
 }
 
 const COPY = {
@@ -101,6 +106,10 @@ const COPY = {
       "source-unavailable": "source unavailable",
     },
     summary: "SUMMARY",
+    samples: "match samples",
+    locations: "locations",
+    deferred: "deferred",
+    failed: "failed",
   },
   "zh-CN": {
     budget: "预算",
@@ -148,6 +157,10 @@ const COPY = {
       "source-unavailable": "源码不可用",
     },
     summary: "摘要",
+    samples: "命中样本",
+    locations: "个位置",
+    deferred: "待续查",
+    failed: "失败",
   },
 } satisfies Record<SignalGrepLocale, TuiCopy>;
 
@@ -274,6 +287,12 @@ function renderSummary(
   if (hiddenRows + omitted > 0) {
     lines.push(theme.fg("dim", `… ${String(hiddenRows + omitted)} ${copy.moreFiles}`));
   }
+  if (width >= 44 && presentation.previews.length > 0) {
+    lines.push("", theme.fg("dim", copy.samples));
+    lines.push(
+      ...presentation.previews.slice(0, 2).map((line) => theme.fg("toolOutput", safeLabel(line))),
+    );
+  }
   const budget = budgetLine(presentation, copy, theme);
   if (budget) lines.push("", budget);
   const pageStatus = presentation.details.cursor ? copy.cursorReady : copy.finalPage;
@@ -363,6 +382,8 @@ function renderMatches(
 function inspectHeading(presentation: InspectPresentation, copy: TuiCopy): string {
   if (presentation.status === "source-changed") return copy.sourceChanged;
   if (presentation.status === "file-too-large") return copy.sourceTooLarge;
+  if (presentation.status === "source-unavailable")
+    return copy.structureStatuses[presentation.status];
   return copy.inspect;
 }
 
@@ -373,7 +394,9 @@ function renderInspect(
   width: number,
 ): string[] {
   const blocked =
-    presentation.status === "source-changed" || presentation.status === "file-too-large";
+    presentation.status === "source-changed" ||
+    presentation.status === "file-too-large" ||
+    presentation.status === "source-unavailable";
   const heading = inspectHeading(presentation, copy);
   const lines = [title(heading, theme), theme.fg("accent", presentation.target)];
 
@@ -423,6 +446,13 @@ function signalGrepTitle(theme: Theme): string {
 }
 
 function inspectCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView {
+  if (input.matchIndices || input.targets) {
+    const count = input.matchIndices?.length ?? input.targets?.length ?? 0;
+    return {
+      primary: `${signalGrepTitle(theme)}  ${theme.fg("accent", copy.inspect)} ${String(count)} ${copy.locations}`,
+      secondary: [],
+    };
+  }
   const target =
     input.matchIndex === undefined
       ? `${safeLabel(input.path ?? "?")}:${String(input.line ?? "?")}`
@@ -431,6 +461,47 @@ function inspectCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallV
     primary: `${signalGrepTitle(theme)}  ${theme.fg("accent", copy.inspect)} ${theme.fg("muted", target)}`,
     secondary: [],
   };
+}
+
+function renderInspectBatch(
+  presentation: InspectBatchPresentation,
+  copy: TuiCopy,
+  theme: Theme,
+  width: number,
+): string[] {
+  const returned = presentation.items.filter((item) => item.status === "returned").length;
+  const deferred = presentation.items.filter((item) => item.status === "deferred").length;
+  const failed = presentation.items.filter((item) => item.status === "error").length;
+  const lines = [
+    title(copy.inspect, theme),
+    `${String(presentation.items.length)} ${copy.locations} · ${String(returned)} ${copy.returned}`,
+  ];
+  for (const item of presentation.items) {
+    const target = item.path
+      ? `${safeLabel(item.path)}:${String(item.line ?? "?")}`
+      : `#${String(item.matchIndex ?? item.inputIndex)}`;
+    const label =
+      item.status === "returned"
+        ? copy.returned
+        : item.status === "deferred"
+          ? copy.deferred
+          : copy.failed;
+    lines.push(
+      theme.fg(
+        item.status === "returned" ? "toolOutput" : "warning",
+        `${String(item.inputIndex)}. ${target} · ${label}`,
+      ),
+    );
+  }
+  if (deferred || failed)
+    lines.push(
+      theme.fg(
+        "warning",
+        `${String(deferred)} ${copy.deferred} · ${String(failed)} ${copy.failed}`,
+      ),
+    );
+  lines.push(theme.fg("dim", copy.originalOnExpand));
+  return finish(lines, width);
 }
 
 function continuationCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView {
@@ -508,6 +579,8 @@ export function renderSignalGrepPresentationLines(
       return renderMatches(presentation, copy, theme, width);
     case "inspect":
       return renderInspect(presentation, copy, theme, width);
+    case "inspect-batch":
+      return renderInspectBatch(presentation, copy, theme, width);
     default:
       throw new Error("Unsupported Signal Grep presentation");
   }

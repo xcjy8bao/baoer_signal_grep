@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { CursorError, SignalGrepError } from "./errors.js";
+import { abortError, CursorError, SignalGrepError } from "./errors.js";
 import type { CodeStructureProvider, StructureInspection } from "./structure.js";
 import {
   assertExistingPathInsideCwd,
@@ -7,14 +7,20 @@ import {
   isPathInsideCwd,
   readSourceRange,
   sameSourceRevision,
+  SourceBudgetTooSmallError,
   SourceTooLargeError,
+  type SourceRangeRead,
 } from "./source.js";
 import { SnapshotStore } from "./snapshot-store.js";
-import type {
-  SignalGrepDetails,
-  SignalGrepResult,
-  SourceRevision,
-  StructureDetails,
+import {
+  MAX_LINE_CHARACTERS,
+  MAX_RESULT_BYTES,
+  type MatchRecord,
+  type SignalGrepDetails,
+  type SignalGrepResult,
+  type SourceExcerptDetails,
+  type SourceRevision,
+  type StructureDetails,
 } from "./types.js";
 
 export interface InspectInput {
@@ -29,57 +35,208 @@ export interface InspectOptions {
   structure?: CodeStructureProvider;
 }
 
-function inspectDetails(structure: StructureDetails, returnedMatches: number): SignalGrepDetails {
-  return {
-    version: 1,
-    mode: "inspect",
-    status: "complete",
-    totalMatches: 0,
-    storedMatches: 0,
-    totalFiles: 1,
-    returnedMatches,
-    snapshotComplete: true,
-    structure,
-  };
+export interface InspectionTarget {
+  path: string;
+  absolutePath: string;
+  line: number;
+  retainedMatch?: MatchRecord;
+  expectedRevision?: SourceRevision;
+  unverified: boolean;
 }
 
-function sourceChangedDetails(details: StructureDetails): StructureDetails {
-  return {
-    status: "source-changed",
-    ...(details.provider ? { provider: details.provider } : {}),
-  };
+export interface InspectionEvidence {
+  target: InspectionTarget;
+  structure: StructureDetails;
+  source?: SourceRangeRead;
+  revision?: SourceRevision;
 }
 
-function sourceChangedResult(
-  path: string,
-  line: number,
-  structure: StructureDetails,
-): SignalGrepResult {
-  return {
-    text: `${path}:${String(line)}\n\n[structure: source-changed; refresh the search before inspecting this match]`,
-    details: inspectDetails(structure, 0),
-  };
-}
-
-function expectedRevisionForMatch(
+export function resolveInspectionTarget(
   input: InspectInput,
-  absolutePath: string,
+  cwd: string,
   snapshots: SnapshotStore,
-  line: number,
-): SourceRevision | undefined {
-  if (!input.cursor) return undefined;
-  const { snapshot } = snapshots.resolve(input.cursor);
-  const match = snapshot.matches.find(
-    (candidate) => candidate.absolutePath === absolutePath && candidate.lineNumber === line,
+): InspectionTarget {
+  let path = input.path?.replace(/^@/, "");
+  let line = input.line;
+  let retainedMatch: MatchRecord | undefined;
+  if (input.matchIndex !== undefined) {
+    if (!input.cursor) throw new SignalGrepError("matchIndex requires a cursor when mode=inspect");
+    if (input.path !== undefined || input.line !== undefined) {
+      throw new SignalGrepError("matchIndex replaces path and line when mode=inspect");
+    }
+    if (!Number.isSafeInteger(input.matchIndex) || input.matchIndex < 1) {
+      throw new SignalGrepError("matchIndex must be a positive integer when mode=inspect");
+    }
+    const { snapshot } = snapshots.resolve(input.cursor);
+    retainedMatch = snapshot.matches[input.matchIndex - 1];
+    if (!retainedMatch) {
+      throw new CursorError(
+        `matchIndex is ${snapshot.snapshotComplete ? "outside this snapshot" : "not retained in this partial snapshot"}.`,
+      );
+    }
+    path = retainedMatch.displayPath;
+    line = retainedMatch.lineNumber;
+  }
+  if (!path) throw new SignalGrepError("path is required when mode=inspect");
+  if (line === undefined || !Number.isSafeInteger(line) || line < 1) {
+    throw new SignalGrepError("line must be a positive integer when mode=inspect");
+  }
+  const absolutePath = retainedMatch?.absolutePath ?? resolve(cwd, path);
+  if (!isPathInsideCwd(absolutePath, cwd)) {
+    throw new SignalGrepError("Inspect path must stay within the working directory");
+  }
+  let expectedRevision: SourceRevision | undefined;
+  if (input.cursor) {
+    const { snapshot } = snapshots.resolve(input.cursor);
+    retainedMatch ??= snapshot.matches.find(
+      (match) => match.absolutePath === absolutePath && match.lineNumber === line,
+    );
+    if (!retainedMatch) {
+      throw new CursorError("The requested line is not a retained match in this snapshot.");
+    }
+    expectedRevision = snapshot.sourceRevisions.get(absolutePath);
+  }
+  return {
+    path,
+    absolutePath,
+    line,
+    unverified: input.cursor !== undefined && expectedRevision === undefined,
+    ...(retainedMatch ? { retainedMatch } : {}),
+    ...(expectedRevision ? { expectedRevision } : {}),
+  };
+}
+
+export function sourceExcerptDetails(source: SourceRangeRead): SourceExcerptDetails {
+  return {
+    range: { startLine: source.startLine, endLine: source.endLine },
+    omittedBefore: source.omittedBefore,
+    omittedAfter: source.omittedAfter,
+    truncatedLines: source.truncatedLines,
+  };
+}
+
+export function sourceTruncationText(source: SourceRangeRead): string {
+  const range = source.truncated
+    ? `\n[source range centered on target; omitted ${String(source.omittedBefore)} lines before and ${String(source.omittedAfter)} lines after]`
+    : "";
+  const lines =
+    source.truncatedLines.length > 0
+      ? `\n[source line excerpts truncated: ${source.truncatedLines.join(", ")}; maximum ${String(MAX_LINE_CHARACTERS)} source characters per line]`
+      : "";
+  return range + lines;
+}
+
+export function inspectionDescription(evidence: InspectionEvidence): string {
+  const symbol = evidence.structure.symbol;
+  return symbol
+    ? `${symbol.scope.length > 0 ? `${symbol.scope.join(".")}.` : ""}${symbol.name} (${symbol.kind}) lines ${symbol.range.startLine}-${symbol.range.endLine}`
+    : `No enclosing symbol found for line ${String(evidence.target.line)}`;
+}
+
+function unavailableEvidence(
+  target: InspectionTarget,
+  status: StructureDetails["status"],
+  provider?: string,
+): InspectionEvidence {
+  return { target, structure: { status, ...(provider ? { provider } : {}) } };
+}
+
+function isUnavailableSourceError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EISDIR"].includes(String(error.code))
   );
-  if (!match) {
-    throw new CursorError("The requested line is not a retained match in this snapshot.");
+}
+
+export async function inspectSourceEvidence(
+  target: InspectionTarget,
+  cwd: string,
+  signal: AbortSignal | undefined,
+  options: InspectOptions,
+  maxSourceBytes?: number,
+): Promise<InspectionEvidence> {
+  if (signal?.aborted) throw abortError();
+  try {
+    await assertExistingPathInsideCwd(target.absolutePath, cwd);
+  } catch (error) {
+    if (signal?.aborted) throw abortError();
+    if (isUnavailableSourceError(error)) return unavailableEvidence(target, "source-unavailable");
+    throw error;
   }
-  const revision = snapshot.sourceRevisions.get(absolutePath);
-  if (!revision) {
-    throw new CursorError("The source revision for this retained match is unavailable.");
+  if (signal?.aborted) throw abortError();
+  if (target.unverified) return unavailableEvidence(target, "source-unavailable");
+  let inspection: StructureInspection;
+  if (options.structure) {
+    inspection = await options.structure.inspect(
+      {
+        absolutePath: target.absolutePath,
+        cwd,
+        line: target.line,
+        ...(target.expectedRevision ? { expectedRevision: target.expectedRevision } : {}),
+      },
+      signal,
+    );
+  } else {
+    const currentRevision = await getSourceRevision(target.absolutePath);
+    inspection = {
+      details: { status: "provider-unavailable" },
+      ...(currentRevision ? { currentRevision } : {}),
+    };
   }
-  return revision;
+  const { details: structure } = inspection;
+  if (signal?.aborted) throw abortError();
+  if (["source-changed", "source-unavailable", "file-too-large"].includes(structure.status)) {
+    return { target, structure };
+  }
+  const revision = inspection.currentRevision ?? (await getSourceRevision(target.absolutePath));
+  if (!revision) return unavailableEvidence(target, "source-unavailable", structure.provider);
+  if (target.expectedRevision && !sameSourceRevision(target.expectedRevision, revision)) {
+    return unavailableEvidence(target, "source-changed", structure.provider);
+  }
+  const evidence: InspectionEvidence = { target, structure, revision };
+  const headerBytes = Buffer.byteLength(
+    `${target.path}:${String(target.line)}\n${inspectionDescription(evidence)}\n\n[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}]`,
+  );
+  const maxBytes = Math.min(
+    maxSourceBytes ?? MAX_RESULT_BYTES,
+    MAX_RESULT_BYTES - headerBytes - 1024,
+  );
+  if (maxBytes <= 0) throw new SourceBudgetTooSmallError();
+  const range = structure.range ?? {
+    startLine: Math.max(1, target.line - 10),
+    endLine: target.line + 10,
+  };
+  try {
+    evidence.source = await readSourceRange(
+      target.absolutePath,
+      range.startLine,
+      range.endLine,
+      signal,
+      target.line,
+      {
+        maxBytes,
+        ...(target.retainedMatch?.occurrences[0]
+          ? { focus: target.retainedMatch.occurrences[0] }
+          : {}),
+      },
+    );
+  } catch (error) {
+    if (signal?.aborted || (error instanceof Error && error.name === "AbortError"))
+      throw abortError();
+    if (error instanceof SourceTooLargeError)
+      return unavailableEvidence(target, "file-too-large", structure.provider);
+    if (isUnavailableSourceError(error)) {
+      return unavailableEvidence(target, "source-unavailable", structure.provider);
+    }
+    throw error;
+  }
+  const finalRevision = await getSourceRevision(target.absolutePath);
+  if (signal?.aborted) throw abortError();
+  if (!finalRevision || !sameSourceRevision(revision, finalRevision)) {
+    return unavailableEvidence(target, "source-changed", structure.provider);
+  }
+  return evidence;
 }
 
 export async function inspectSource(
@@ -88,118 +245,29 @@ export async function inspectSource(
   signal: AbortSignal | undefined,
   options: InspectOptions,
 ): Promise<SignalGrepResult> {
-  let rawPath = input.path?.replace(/^@/, "");
-  let line = input.line;
-  let retainedAbsolutePath: string | undefined;
-  if (input.matchIndex !== undefined) {
-    if (!input.cursor) {
-      throw new SignalGrepError("matchIndex requires a cursor when mode=inspect");
-    }
-    if (input.path !== undefined || input.line !== undefined) {
-      throw new SignalGrepError("matchIndex replaces path and line when mode=inspect");
-    }
-    if (!Number.isSafeInteger(input.matchIndex) || input.matchIndex < 1) {
-      throw new SignalGrepError("matchIndex must be a positive integer when mode=inspect");
-    }
-    const { snapshot } = options.snapshots.resolve(input.cursor);
-    const retainedMatch = snapshot.matches[input.matchIndex - 1];
-    if (!retainedMatch) {
-      const retention = snapshot.snapshotComplete
-        ? "outside this snapshot"
-        : "not retained in this partial snapshot";
-      throw new CursorError(`matchIndex is ${retention}.`);
-    }
-    rawPath = retainedMatch.displayPath;
-    line = retainedMatch.lineNumber;
-    retainedAbsolutePath = retainedMatch.absolutePath;
-  }
-
-  if (!rawPath) throw new SignalGrepError("path is required when mode=inspect");
-  if (!Number.isSafeInteger(line) || line === undefined || line < 1) {
-    throw new SignalGrepError("line must be a positive integer when mode=inspect");
-  }
-
-  const absolutePath = retainedAbsolutePath ?? resolve(cwd, rawPath);
-  if (!isPathInsideCwd(absolutePath, cwd)) {
-    throw new SignalGrepError("Inspect path must stay within the working directory");
-  }
-  await assertExistingPathInsideCwd(absolutePath, cwd);
-
-  const expectedRevision = expectedRevisionForMatch(input, absolutePath, options.snapshots, line);
-  let structure: StructureInspection;
-  if (options.structure) {
-    structure = await options.structure.inspect(
-      { absolutePath, cwd, line, ...(expectedRevision ? { expectedRevision } : {}) },
-      signal,
-    );
-  } else {
-    const currentRevision = await getSourceRevision(absolutePath);
-    const details: StructureDetails = { status: "provider-unavailable" };
-    structure = { details, ...(currentRevision ? { currentRevision } : {}) };
-  }
-
-  if (
-    expectedRevision &&
-    structure.currentRevision &&
-    !sameSourceRevision(expectedRevision, structure.currentRevision)
-  ) {
-    structure.details = sourceChangedDetails(structure.details);
-  }
-  if (structure.details.status === "source-changed") {
-    return sourceChangedResult(rawPath, line, structure.details);
-  }
-
-  const requestedRange = structure.details.range ?? {
-    startLine: Math.max(1, line - 10),
-    endLine: line + 10,
+  const target = resolveInspectionTarget(input, cwd, options.snapshots);
+  const evidence = await inspectSourceEvidence(target, cwd, signal, options);
+  const { source, structure } = evidence;
+  const details: SignalGrepDetails = {
+    version: 1,
+    mode: "inspect",
+    status: source ? "complete" : "partial",
+    totalMatches: 0,
+    storedMatches: 0,
+    totalFiles: 1,
+    returnedMatches: source?.lines.length ?? 0,
+    snapshotComplete: source !== undefined,
+    structure,
+    ...(source ? { source: sourceExcerptDetails(source) } : {}),
+    ...(source && source.truncatedLines.length > 0
+      ? { lineContentTruncated: source.truncatedLines.length }
+      : {}),
   };
-  let source;
-  try {
-    source = await readSourceRange(
-      absolutePath,
-      requestedRange.startLine,
-      requestedRange.endLine,
-      signal,
-      line,
-    );
-    if (expectedRevision) {
-      const finalRevision = await getSourceRevision(absolutePath);
-      if (!finalRevision || !sameSourceRevision(expectedRevision, finalRevision)) {
-        structure.details = sourceChangedDetails(structure.details);
-      }
-    }
-  } catch (error) {
-    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw error;
-    }
-    if (error instanceof SourceTooLargeError) {
-      const details: StructureDetails = {
-        status: "file-too-large",
-        ...(structure.details.provider ? { provider: structure.details.provider } : {}),
-      };
-      return {
-        text: `Unable to inspect ${rawPath}:${String(line)}.\n\n[structure: file-too-large]`,
-        details: inspectDetails(details, 0),
-      };
-    }
-    throw error;
-  }
-
-  if (structure.details.status === "source-changed") {
-    return sourceChangedResult(rawPath, line, structure.details);
-  }
-
-  const symbol = structure.details.symbol;
-  const symbolText = symbol
-    ? `${symbol.scope.length > 0 ? `${symbol.scope.join(".")}.` : ""}${symbol.name} (${symbol.kind}) lines ${symbol.range.startLine}-${symbol.range.endLine}`
-    : `No enclosing symbol found for line ${String(line)}`;
-  const statusText = `[structure: ${structure.details.status}${structure.details.provider ? ` via ${structure.details.provider}` : ""}]`;
-  const truncationText = source.truncated
-    ? `\n[source range centered on target; omitted ${String(source.omittedBefore)} lines before and ${String(source.omittedAfter)} lines after]`
-    : "";
-
-  return {
-    text: `${rawPath}:${String(line)}\n${symbolText}\n\n${source.text}${truncationText}\n\n${statusText}`,
-    details: inspectDetails(structure.details, source.endLine - source.startLine + 1),
-  };
+  const status = `[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}${!source && target.retainedMatch ? "; refresh the search before inspecting this match" : ""}]`;
+  const text = source
+    ? `${target.path}:${String(target.line)}\n${inspectionDescription(evidence)}\n\n${source.text}${sourceTruncationText(source)}\n\n${status}`
+    : `${target.path}:${String(target.line)}\n\n${status}`;
+  if (Buffer.byteLength(text) > MAX_RESULT_BYTES)
+    throw new SignalGrepError("Inspection metadata exceeds the result byte budget");
+  return { text, details };
 }

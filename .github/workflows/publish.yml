@@ -1,0 +1,66 @@
+name: Publish npm release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Reviewed release tag at the current main commit (for example v0.5.6)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed tag and package identity
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const tag = process.env.RELEASE_TAG;
+          if (!/^v\d+\.\d+\.\d+$/.test(tag ?? '')) throw new Error('Invalid release tag');
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const commit = git('rev-parse', `${tag}^{commit}`);
+          if (commit !== git('rev-parse', 'origin/main') || commit !== git('rev-parse', 'HEAD')) {
+            throw new Error('Release tag must identify the current reviewed main commit');
+          }
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (`v${pkg.version}` !== tag || pkg.name !== 'pi-plugin-signal-grep' || pkg.author !== '宝儿') {
+            throw new Error('Release version, package name or author does not match');
+          }
+          NODE
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ripgrep
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run pack:check
+      - name: Publish with npm provenance
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

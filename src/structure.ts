@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { consumeCappedLines } from "./capped-lines.js";
+import { runOwnedProcess } from "./owned-process.js";
 import { abortError, SignalGrepError } from "./errors.js";
 import { getSourceRevision, sameSourceRevision } from "./source.js";
 import {
@@ -57,6 +56,8 @@ class CtagsCommandError extends Error {
   }
 }
 
+class CtagsProtocolError extends SignalGrepError {}
+
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
@@ -104,58 +105,45 @@ async function runCtagsCommand(
   cwd: string,
   signal?: AbortSignal,
 ): Promise<CtagsTag[]> {
-  if (signal?.aborted) throw abortError();
-  const child = spawn(executable, [...CTAGS_CAPABILITY_ARGUMENTS, absolutePath], {
-    cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => {
-    if (stderr.length < 16_384) stderr += chunk.toString("utf8");
-  });
-
-  let aborted = false;
-  const onAbort = () => {
-    aborted = true;
-    if (!child.killed) child.kill();
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-
-  const closePromise = new Promise<number | null>((resolveClose, rejectClose) => {
-    child.once("error", rejectClose);
-    child.once("close", resolveClose);
-  });
-
-  try {
-    const tags: CtagsTag[] = [];
-    const outputPromise = consumeCappedLines(
-      child.stdout,
-      (line) => {
-        if (line.length === 0) return;
-        let value: unknown;
-        try {
-          value = JSON.parse(line);
-        } catch (error) {
-          throw new SignalGrepError("Failed to parse Universal Ctags JSON output", {
-            cause: error,
-          });
+  const tags: CtagsTag[] = [];
+  const { code, stderr } = await runOwnedProcess(
+    {
+      executable,
+      args: [...CTAGS_CAPABILITY_ARGUMENTS, absolutePath],
+      cwd,
+      ...(signal ? { signal } : {}),
+    },
+    async (stdout) => {
+      try {
+        await consumeCappedLines(
+          stdout,
+          (line) => {
+            if (line.length === 0) return;
+            let value: unknown;
+            try {
+              value = JSON.parse(line);
+            } catch (error) {
+              throw new CtagsProtocolError("Failed to parse Universal Ctags JSON output", {
+                cause: error,
+              });
+            }
+            const tag = parseCtagsTag(value);
+            if (tag) tags.push(tag);
+          },
+          { maxLineBytes: MAX_PROTOCOL_LINE_BYTES },
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Input line exceeds the ")) {
+          throw new CtagsProtocolError(error.message, { cause: error });
         }
-        const tag = parseCtagsTag(value);
-        if (tag) tags.push(tag);
-      },
-      { maxLineBytes: MAX_PROTOCOL_LINE_BYTES },
-    );
-    const [code] = await Promise.all([closePromise, outputPromise]);
-    if (aborted || signal?.aborted) throw abortError();
-    if (code !== 0) {
-      throw new CtagsCommandError(stderr.trim() || `ctags exited with status ${String(code)}`);
-    }
-    return tags;
-  } finally {
-    if (aborted && !child.killed) child.kill();
-    signal?.removeEventListener("abort", onAbort);
+        throw error;
+      }
+    },
+  );
+  if (code !== 0) {
+    throw new CtagsCommandError(stderr.trim() || `ctags exited with status ${String(code)}`);
   }
+  return tags;
 }
 
 function pathMatches(tagPath: string, absolutePath: string, cwd: string): boolean {
@@ -204,15 +192,6 @@ export function createCtagsStructureProvider(
   return {
     async inspect(request, signal) {
       if (signal?.aborted) throw abortError();
-      let metadata: Awaited<ReturnType<typeof stat>>;
-      try {
-        metadata = await stat(request.absolutePath, { bigint: false });
-      } catch (error) {
-        if (hasCode(error, "ENOENT")) {
-          return { details: { status: "source-unavailable", provider: "universal-ctags" } };
-        }
-        throw error;
-      }
       const currentRevision = await getSourceRevision(request.absolutePath);
       if (!currentRevision) {
         return { details: { status: "source-unavailable", provider: "universal-ctags" } };
@@ -226,7 +205,7 @@ export function createCtagsStructureProvider(
           currentRevision,
         };
       }
-      if (metadata.size > maxFileBytes) {
+      if (currentRevision.size > maxFileBytes) {
         return {
           details: { status: "file-too-large", provider: "universal-ctags" },
           currentRevision,
@@ -246,10 +225,13 @@ export function createCtagsStructureProvider(
             currentRevision,
           };
         }
-        return {
-          details: { status: "parse-error", provider: "universal-ctags" },
-          currentRevision,
-        };
+        if (error instanceof CtagsProtocolError) {
+          return {
+            details: { status: "parse-error", provider: "universal-ctags" },
+            currentRevision,
+          };
+        }
+        throw error;
       }
 
       const symbol = chooseEnclosingSymbol(tags, request.absolutePath, request.cwd, request.line);

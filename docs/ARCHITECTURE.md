@@ -1,44 +1,40 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.2 adds responsive, human-facing Pi TUI views over the existing 0.5.1 search contract without changing model-facing text, structured details, cursor state, or search policy.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.6 connects real cross-file search samples, text-visible cursors, and bounded batch inspection. It also closes revision, context-pagination, Git-exclusion, occurrence-output, and child-process cleanup gaps. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read.
 
 ## Data flow
 
 ```text
-config.ts ─── selects tool mode and the human-facing interface locale
-    │
-    ▼
-conflicts.ts ─ detects installed packages that own the public "grep" tool name
-    │
-    ▼
-Pi tool input
-    │
-    ▼
-request.ts ── validates and normalizes the public request
-    │
-    ▼
-rg.ts ─────── owns the ripgrep child process, bounded JSON-line parsing, and match ranges
-    │
-    ▼
-snapshot-store.ts ── owns bounded, stable, session-local snapshots, cursors, and revisions
-    │
-    ▼
-service.ts ── chooses auto/summary/matches/inspect behavior and composes results
-    │          │
-    │          └─► source.ts ── owns bounded source ranges, revisions, and workspace paths
-    │
-    ▼
-format.ts ─── owns model-facing summary, page, byte, and deduplicated context formatting
-    │
-    ├─► structure.ts ── optionally maps a source location to an enclosing symbol
-    │
-    └─► metrics.ts ── optionally compares cumulative result text with normal grep
+config.ts / conflicts.ts ── tool ownership, locale, installed-tool conflicts
+             │
+             ▼
+request.ts ── public search defaults and normalization
+             │
+             ▼
+rg.ts ─────── matching arguments, JSON events, exact occurrence ranges
+  │          │
+  │          ├─► scan-revisions.ts ── names-only enumeration and bounded before/after metadata
+  │          └─► owned-process.ts ── spawn, cancellation, termination, stream closure
+  ▼
+snapshot-store.ts ── bounded session snapshots, stable indices and cursors
+  │
+  ▼
+service.ts ── auto/summary/matches/inspect policy and response composition
+  ├─► summary.ts ───── count-ranked file pages and real retained samples
+  ├─► format.ts ────── bounded detail pages, deduplicated context and normal-format baseline
+  └─► inspect.ts / inspect-batch.ts ── source verification and bounded single/batch inspection
+                   ├─► source.ts ───── file revisions, workspace paths, centered source excerpts
+                   └─► structure.ts ── optional Ctags symbols, using owned-process.ts
 
-index.ts ───── owns the Pi adapter boundary
-    └─► tui/ ───── safely recognizes existing text/details for Pi-only responsive rendering
+runtime.ts ── session lifecycle, cancellation, cursor/metrics coordination
+index.ts / extension-controls.ts ── Pi schema, tool registration and commands
+  ├─► metrics.ts ── opt-in comparable search-text accounting
+  └─► tui/ ─────── responsive human-only presentation of existing text/details
 ```
 
-`index.ts` is the Pi adapter entry point. It defines the schema, registers exactly one Signal Grep tool, and composes the runtime with `extension-controls.ts`. The controls module registers human-facing commands and lifecycle cleanup; it also owns conflict checks performed during command transitions so override and Metrics enablement cannot drift into duplicate policies. `runtime.ts` owns the service/metrics/cursor coordination used by the tool and contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. `messages.ts` is the single catalog for human-facing command and notification text in English and Simplified Chinese. Its typed keys enforce catalog completeness, and message formatting rejects missing parameters or translated placeholder drift. Model-facing tool response text is intentionally not routed through it.
+`index.ts` registers exactly one Signal Grep tool: additive `signal_grep` or explicit override `grep`. `runtime.ts` owns session coordination rather than search algorithms. `extension-controls.ts` owns commands, conflict checks during transitions, and lifecycle cleanup. `messages.ts` is the typed English/Simplified Chinese catalog for human-facing commands and notifications; model-facing evidence is not translated through that catalog.
+
+The tool schema retains the single-target inspection forms and adds `matchIndices` or `targets` arrays of 1–5 entries. These are mutually exclusive request forms, not aliases or a persisted-format migration. `service.ts` dispatches to single or batch inspection; inspection modules validate their own target combinations before source access.
 
 ## Responsibilities
 
@@ -54,19 +50,17 @@ The same package detection runs in additive mode to compose prompt guidance. Whe
 
 `request.ts` is the only authority for defaults and numeric bounds. Internal components receive a normalized `SearchRequest` and do not repeat input validation.
 
-### Ripgrep process boundary
+### Ripgrep and process boundaries
 
-`rg.ts` is the only component that starts the ripgrep process. It:
+`rg.ts` owns the matching engine boundary: argument arrays, workspace-scoped search roots, JSON match validation, matching-line counts, and exact occurrence ranges. One shared file-scope argument builder applies hidden-file, include, exclude, and ignore behavior to candidate enumeration and content search. Git exclusions follow user globs so they cannot be overridden; explicit Git-internal search paths are rejected.
 
-- builds an argument array without a shell;
-- confines the search root to the working directory;
-- excludes `.git` while preserving meaningful hidden files;
-- parses `rg --json` events through a bounded LF reader;
-- retains every occurrence range while counting matching lines;
-- captures source revision metadata for retained files;
-- propagates startup, protocol, exit, and cancellation failures.
+`scan-revisions.ts` first runs `rg --files --null` and streams candidate names with backpressure. It records revisions for at most `MAX_SOURCE_REVISION_FILES` (50,000) candidates, with at most 16 concurrent metadata reads, before content search starts. NUL framing preserves newline-containing names. After content search it checks retained files again and only binds revisions that match both observations. File size, modification time, identity and available change time are compared by `source.ts`.
 
-It never formats model output or owns cursor state. `capped-lines.ts` deliberately treats only LF as a delimiter so valid Unicode separators inside JSON strings cannot corrupt the protocol.
+Changed files, files discovered after enumeration, unreadable metadata, lossy path decoding, and files outside the metadata cache remain unverified. They still contribute matching text and exact counts. `service.ts` derives `sourceUnverifiedFileCount` from retained paths missing a trusted revision and explains the consequence in text. No second state list is maintained. The metadata cap does not reduce the matching set or change snapshot-retention completeness. This policy costs an extra names-only traversal and metadata reads; it does not claim to make search faster or to provide an atomic repository snapshot.
+
+`owned-process.ts` is the shared ripgrep/Ctags subprocess owner. It spawns without a shell, bounds captured stderr by bytes, checks cancellation across spawn, and awaits stdout consumption and child closure. Cancellation or a protocol-consumer failure sends termination, escalates to a forced kill after 250 ms, and reports failure if closure has not completed within two seconds. Startup errors retain their original cause rather than being hidden by a stream-close error. Cleanup failures remain runtime failures.
+
+`capped-lines.ts` bounds LF-delimited protocol records and preserves Unicode U+2028/U+2029 inside JSON strings. The source-name protocol is separately NUL-delimited. Neither raw protocol is model output.
 
 ### Snapshot ownership
 
@@ -83,18 +77,24 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
 1. no matches → explicit complete empty result;
-2. `summary` → one match-count-ranked file-distribution page plus separate summary/detail continuations as needed;
+2. `summary` → a count-ranked file page, first-retained-match samples that fit the budget, and a cursor in the text and details;
 3. implicit `auto` complete result fits its resolved context budget → return every grouped detail directly;
 4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
 5. other `auto` results that exceed the adaptive budget or retention is partial → return a summary first;
 6. `matches` or a summary cursor → return one default-budget detail page, optionally filtered to one canonical set of retained files;
 7. a match cursor → continue only its bound selection;
-8. cursor-scoped `inspect` → resolve a stable match index, verify revision, and return a centered bounded source range with the smallest proven enclosing symbol;
+8. single or batch `inspect` → resolve one target or 1–5 targets, verify revisions, and return bounded source with proven structure when available;
 9. retention bound exceeded → explicit partial result.
 
 ### Output formatting
 
-`format.ts` owns presentation boundaries. File summaries are sorted by descending count with path-order ties, then paged by the public file limit. Detail formatting accepts an internal result-text target for the initial implicit `auto` trial and defaults every other page to about 2,000 estimated tokens. It stops before the match-count, character, or 16 KiB hard byte budget is exceeded. Every match carries its stable snapshot index. Lines over 500 characters use an occurrence-centered excerpt while rendering columns from the untruncated snapshot line. Overlapping context windows are merged, and current-file context is included only when its source revision still equals the retained revision; changed context is omitted and attributed. Retained matching-line text always comes from the snapshot. The normal-format metrics baseline is rendered separately from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
+`summary.ts` owns count-ranked file rows and samples. Each shown file contributes its first retained matching line if it fits; this is not relevance ranking, syntax interpretation, or exhaustive code coverage. Samples carry the retained path, line and stable match number. File rows and samples share the applicable response budget, with room reserved for cursor instructions, completeness, and omission notes. The service exposes `summaryPreviewsShown`/`summaryPreviewsOmitted` and never assumes that structured-only cursor metadata reaches the model.
+
+`format.ts` owns detail and normal-baseline output. Detail pages stop at the match-count, character or 16 KiB hard byte boundary. Every rendered matching line keeps its path, original line number, and stable snapshot index. At most `MAX_DISPLAYED_OCCURRENCES` (20) ranges are displayed per line; excess range counts are explicit in text and `occurrenceRangesOmitted`/`occurrenceMatchesTruncated`. The snapshot retains all parsed ranges. Dense same-line matches therefore cannot consume the budget until their identifying evidence disappears.
+
+Lines over 500 source characters use occurrence-centered excerpts while columns remain absolute. Current-file context requires a trusted retained revision and another revision check around reading. Context deduplication also respects matches not yet emitted on a future page, so context cannot display a future match early and duplicate it later. Unavailable or changed context is attributed explicitly.
+
+The normal-format Metrics baseline is rendered from the same retained matches, reproducing Pi grep's path, context, match-limit, byte-limit and long-line formatting. It does not run a separate search. Its bounded prefix and limit notices are preserved, not described as a claim of completeness.
 
 ### Interactive TUI rendering
 
@@ -102,13 +102,21 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 
 ### Source ranges and structure inspection
 
-`source.ts` owns bounded current-file reads, revision metadata, workspace containment, and numbered source ranges. Its centered range builder reserves the model-facing header and omission-marker budget before selecting lines, so an oversized symbol still keeps the requested line in view without exceeding the 16 KiB response contract. It is intentionally separate from `structure.ts`: reading source is valid for every text language, while symbol structure requires a capability provider.
+`source.ts` owns bounded current-file reads, revision comparison, workspace containment, and numbered source excerpts. It reserves response metadata and omission-marker space before selecting a centered range. The requested line remains in the excerpt; a cursor target additionally supplies the retained occurrence so a late match in a long line remains visible. Returned source metadata includes the exact displayed range, omitted lines before/after, and clipped line numbers. Reads are capped at 5 MiB; source lines are excerpted to 500 characters.
 
-`structure.ts` defines the `CodeStructureProvider` boundary and implements optional Universal Ctags support. The provider validates the exact JSON, line/end field, and extras options used by inspection; `--version` alone is insufficient evidence. It invokes Ctags with a workspace-relative file argument and no unsupported `--` separator, then selects the smallest tag with a proven enclosing range. It never infers ranges from braces or turns provider absence into an ordinary-search failure. Provider statuses such as `provider-unavailable`, `source-unavailable`, `parse-error`, `file-too-large`, `source-changed`, and `no-symbol` remain explicit.
+`inspect.ts` resolves the existing `path`/`line` or cursor/`matchIndex` forms and provides one verification/read boundary for both single and batch calls. Missing snapshot revisions fail closed. Direct current-source inspection also checks that the provider result and source read still correspond to the same revision. Provider absence may still return bounded source with `provider-unavailable`; it does not fabricate a symbol. Unavailable evidence yields an explicit partial result, while invalid requests, cancellation, and unexpected runtime failures reject.
+
+`inspect-batch.ts` validates either cursor-bound `matchIndices` or cursorless `targets`, each with 1–5 entries. It shares one 16 KiB response budget across metadata and source, executes targets sequentially, and reports one `details.inspections` item per input. Outcomes are `returned`, `deferred`, or `error`. Returned items reference deduplicated source blocks; overlapping lines are combined only for the same file and verified revision. Each target retains its own range/line omission metadata. Budget deferral and bounded ranges can include a complete single-target retry request in both text and details. Retry requests are guidance, not an automatic retry loop.
+
+A batch is complete when every requested target has returned bounded evidence; this does not imply that entire enclosing symbols fit. Source errors remain item-specific where the protocol defines them, but cancellation, invalid request combinations, and unexpected runtime failures fail the call. A failure must not be converted into fabricated empty source.
+
+`structure.ts` is the optional Universal Ctags capability provider. It validates the exact JSON, line/end, and extras options used by inspection, invokes Ctags without an unsupported `--` separator, and selects the smallest symbol with a proven enclosing range. `owned-process.ts` handles its lifecycle, including parse failures. Provider absence, unsupported ranges, protocol parse errors, oversized files, unavailable source, and changed source remain distinct statuses. No brace heuristic, LSP, persistent index, or symbol guess is used.
 
 ### Opt-in comparison metrics
 
-`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. Every new search contributes one Signal Grep result and one normal-format rendering of the exact same snapshot; tracked cursor pages contribute only their Signal Grep result. Locale changes only the human-facing labels and prose after accounting is complete. Metrics never run a second search, alter model-facing search text, persist state, or transmit data.
+`metrics.ts` owns one session-local comparison window, the characters-over-four token estimate, exact byte totals, and compact Status Line/report formatting. It is disabled by default. Every comparable new search contributes one Signal Grep result and one normal-format rendering of the same snapshot; tracked cursor pages contribute only their Signal Grep result. Single and batch inspections are excluded. This is search-result-text accounting, not task-total tokens, model reasoning cost, API billing, or an estimate of inspection/read output. Locale changes only the human-facing labels and prose after accounting is complete. Metrics never run a second search, alter model-facing search text, persist state, or transmit data.
+
+For truncated matching lines within the normal baseline's first page, `rg.ts` retains the original normalized first 500 characters separately from the match-centered excerpt. `formatNormalBlock` uses that scan-time prefix to reproduce normal grep's head truncation without reading a changed source file. Only the first `pageSize` matches can carry this extra prefix: public requests cap that page at 100, bounding additional retained text to 50,000 UTF-16 code units per snapshot, excluding runtime/object overhead. Missing required prefix evidence fails explicitly.
 
 ## Core invariants
 
@@ -117,10 +125,10 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 - Partial retention is observable in text and structured details.
 - A cursor never silently reruns a search or changes a bound file selection.
 - An original summary cursor remains reusable independently of filtered detail continuations.
-- A cursor-scoped inspection never silently reads a changed source revision.
+- A cursor-scoped inspection never accepts a missing or changed retained source revision; a direct inspection also checks provider/read revision consistency.
 - Current-file context is never mixed with retained matching text from another revision.
-- Every retained occurrence has a precise range and stable match index; long excerpts keep the occurrence visible.
-- Process and protocol errors never become an empty successful result.
+- Every retained occurrence has a precise range, and every matching line has a stable index. Range display limits never delete retained occurrences or identifying evidence; long excerpts keep the primary occurrence visible.
+- Process and protocol errors never become an empty successful result; failure and cancellation await owned subprocess cleanup.
 - Structure provider absence or parse failure is explicit and does not corrupt ordinary search.
 - Limits have one source of truth in `types.ts`.
 - Runtime source uses Node.js 22+ APIs and remains executable under Bun 1.4+.
@@ -128,7 +136,10 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 - Metrics never recount a normal baseline for cursor continuation and never hide negative savings.
 - Additive and override modes each register exactly one Signal Grep-owned public tool.
 - Config updates preserve the complete validated object; locale and Metrics handoff state are never dual-written.
-- Compact complete searches return directly; adaptive policy never changes the underlying match set.
+- Compact complete searches return directly; adaptive policy and the candidate-revision cache never change the underlying match set.
+- Summary samples are retained source evidence, not relevance ranking; their cursor and follow-up instructions are visible in model-facing text.
+- Batch inspection has one byte budget, per-input outcomes, and no duplicate same-revision source lines.
+- Inspection output is excluded from Metrics and must not be represented as task-level token savings.
 - Context-aware budgeting never downshifts explicit limits, `matches`, inspection, or cursor continuation.
 - A known context adjustment is attributed in structured details; tight and critical adjustments are also explicit in model-facing text.
 - TUI rendering never mutates or replaces model-facing text, structured details, cursor state, Metrics accounting, or non-interactive output; unknown or failed presentation paths expose the original text.

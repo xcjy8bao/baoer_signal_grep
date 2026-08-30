@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CTAGS_CAPABILITY_ARGUMENTS, createCtagsStructureProvider } from "../src/structure.js";
@@ -93,6 +93,103 @@ describe("Universal Ctags structure provider", () => {
     expect(CTAGS_CAPABILITY_ARGUMENTS).not.toContain("--");
   });
 
+  test("propagates unexpected provider implementation failures", async () => {
+    const { root, file } = await fixture();
+    const provider = createCtagsStructureProvider({
+      runCtags: async () => {
+        throw new TypeError("unexpected implementation error");
+      },
+    });
+    const failure: unknown = await provider
+      .inspect({ absolutePath: file, cwd: root, line: 2 })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(TypeError);
+    expect(failure).toMatchObject({ message: "unexpected implementation error" });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "reaps a Ctags process after invalid JSON even when it ignores SIGTERM",
+    async () => {
+      const { root, file } = await fixture();
+      const executable = join(root, "bad-ctags");
+      const pidPath = join(root, "ctags.pid");
+      await writeFile(
+        executable,
+        `#!${process.execPath}\nimport { writeFileSync } from "node:fs";\nprocess.on("SIGTERM", () => {});\nwriteFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nprocess.stdout.write("invalid-json\\n");\nsetInterval(() => {}, 1000);\n`,
+        { mode: 0o755 },
+      );
+      let pid: number | undefined;
+      try {
+        const result = await createCtagsStructureProvider({ executable }).inspect({
+          absolutePath: file,
+          cwd: root,
+          line: 2,
+        });
+        pid = Number(await readFile(pidPath, "utf8"));
+        expect(result.details.status).toBe("parse-error");
+        expect(() => process.kill(pid ?? 0, 0)).toThrow();
+      } finally {
+        if (pid !== undefined) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            /* The owned child has already exited. */
+          }
+        }
+      }
+    },
+    5_000,
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "cancels Ctags with bounded owned-process cleanup",
+    async () => {
+      const { root, file } = await fixture();
+      const executable = join(root, "waiting-ctags");
+      const pidPath = join(root, "waiting.pid");
+      await writeFile(
+        executable,
+        `#!${process.execPath}\nimport { writeFileSync } from "node:fs";\nprocess.on("SIGTERM", () => {});\nwriteFileSync(${JSON.stringify(pidPath)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
+        { mode: 0o755 },
+      );
+      const controller = new AbortController();
+      const inspection = createCtagsStructureProvider({ executable }).inspect(
+        { absolutePath: file, cwd: root, line: 2 },
+        controller.signal,
+      );
+      let pid: number | undefined;
+      try {
+        const deadline = Date.now() + 2_000;
+        while (pid === undefined && Date.now() < deadline) {
+          try {
+            // oxlint-disable-next-line no-await-in-loop -- bounded wait for the child readiness signal.
+            pid = Number(await readFile(pidPath, "utf8"));
+          } catch {
+            // oxlint-disable-next-line no-await-in-loop -- bounded wait for the child readiness signal.
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        if (pid === undefined)
+          throw new Error("Ctags child did not signal readiness before the test deadline");
+        controller.abort();
+        const failure: unknown = await inspection.catch((error: unknown) => error);
+        expect(failure).toMatchObject({ name: "AbortError" });
+        expect(() => process.kill(pid ?? 0, 0)).toThrow();
+      } finally {
+        controller.abort();
+        await inspection.catch(() => undefined);
+        if (pid !== undefined) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            /* The owned child has already exited. */
+          }
+        }
+      }
+    },
+    5_000,
+  );
+
   test("inspects a real source file when Universal Ctags is installed", async () => {
     const executable = Bun.which("ctags");
     if (!executable) return;
@@ -143,11 +240,17 @@ describe("readSourceRange", () => {
     const result = await readSourceRange(file, 2, 4);
     expect(result).toEqual({
       text: "2:   request(url: string) {\n3:     return this.send(url);\n4:   }",
+      lines: [
+        { line: 2, text: "  request(url: string) {", truncated: false },
+        { line: 3, text: "    return this.send(url);", truncated: false },
+        { line: 4, text: "  }", truncated: false },
+      ],
       startLine: 2,
       endLine: 4,
       truncated: false,
       omittedBefore: 0,
       omittedAfter: 0,
+      truncatedLines: [],
     });
     expect(root).toContain("signal-grep-structure-");
   });

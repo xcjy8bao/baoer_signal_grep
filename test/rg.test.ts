@@ -113,7 +113,47 @@ describe("ripgrep runner", () => {
     expect(() => buildRipgrepArguments({ ...request, path: ".." }, "/repo/project")).toThrow(
       "Search path must stay within the working directory",
     );
+    expect(() =>
+      buildRipgrepArguments({ ...request, path: "../outside" }, "/repo/project"),
+    ).toThrow("Search path must stay within the working directory");
   });
+
+  test("rejects explicit Git internals even though ripgrep would bypass file globs", () => {
+    for (const path of [".git", ".git/config", "nested/.git/HEAD"]) {
+      expect(() => buildRipgrepArguments({ ...request, path }, "/repo/project")).toThrow(
+        "Git internals are excluded from search",
+      );
+    }
+  });
+
+  test("bounds candidate revisions without limiting the actual matching set", async () => {
+    const root = await createTodoFixture();
+    try {
+      const scan = await createRipgrepRunner({ maxSourceRevisionFiles: 1 })(request, root);
+      expect(scan.totalMatches).toBe(33);
+      expect(scan.snapshotComplete).toBe(true);
+      expect(scan.sourceRevisions.size).toBe(1);
+      expect(new Set(scan.matches.map((match) => match.absolutePath)).size).toBe(4);
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test("cancels during asynchronous path validation before attempting to spawn", async () => {
+    const root = await createTodoFixture();
+    const controller = new AbortController();
+    try {
+      const operation = createRipgrepRunner({ executable: "must-not-start" })(
+        request,
+        root,
+        controller.signal,
+      );
+      queueMicrotask(() => controller.abort());
+      expect(operation).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      await removeFixture(root);
+    }
+  }, 5_000);
 
   test("fails immediately for an already aborted search", async () => {
     const controller = new AbortController();

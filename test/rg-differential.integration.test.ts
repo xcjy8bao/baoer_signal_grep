@@ -34,6 +34,7 @@ async function createDifferentialFixture(): Promise<string> {
   await mkdir(join(root, "docs"), { recursive: true });
   await mkdir(join(root, "dist"), { recursive: true });
   await mkdir(join(root, ".git"), { recursive: true });
+  await mkdir(join(root, "src", "nested", ".git"), { recursive: true });
   await writeFile(join(root, "src", "app.ts"), "todo lower\nTODO upper\nTODO[1]\ncafé\n");
   await writeFile(join(root, "src", "view.tsx"), "todo view\nTODO view upper\n");
   await writeFile(join(root, "docs", "guide.md"), "todo guide\n");
@@ -44,6 +45,7 @@ async function createDifferentialFixture(): Promise<string> {
   await writeFile(join(root, "space name.txt"), " TODO spaced \njust spaces   \n");
   await writeFile(join(root, ".gitignore"), "ignored.ts\n");
   await writeFile(join(root, ".git", "config"), "todo git internals\n");
+  await writeFile(join(root, "src", "nested", ".git", "config"), "todo nested git internals\n");
   return root;
 }
 
@@ -102,6 +104,16 @@ async function runReference(
 }
 
 const cases: DifferentialCase[] = [
+  {
+    name: "broad include glob cannot override Git exclusion",
+    input: { pattern: "todo", glob: "**/*" },
+    referenceFlags: ["--hidden", "--smart-case", "--glob", "**/*"],
+  },
+  {
+    name: "basename wildcard cannot override Git exclusion",
+    input: { pattern: "todo", glob: "*" },
+    referenceFlags: ["--hidden", "--smart-case", "--glob", "*"],
+  },
   {
     name: "smart-case lowercase with hidden files",
     input: { pattern: "todo" },

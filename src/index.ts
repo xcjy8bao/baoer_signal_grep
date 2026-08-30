@@ -15,12 +15,12 @@ import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
 import { type SignalGrepInput, SignalGrepService } from "./service.js";
-import { MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
+import { MAX_INSPECT_TARGETS, MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
 import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
-  "Context-efficient ripgrep search with exact match ranges and bounded code inspection. Small searches return grouped matches; broad searches return a per-file summary first. Use mode=inspect with path and line to inspect a source block. Cursor pages come from a stable snapshot and explicitly report partial retention.";
+  "Search code with bounded, verifiable evidence. Small searches return matches directly; broad searches return file counts and real match samples. Inspect one or several selected locations with mode=inspect. Reuse the visible snapshot cursor to inspect sampled match numbers or select files without rerunning a search. Incomplete retention, excerpts and unverified source are explicit.";
 
 export interface SignalGrepExtensionOptions {
   /** Overrides the Pi agent directory used for package conflict detection and config writes (test seam). */
@@ -35,8 +35,8 @@ export function signalGrepPromptGuidelines(
 ): string[] {
   const guidelines = [
     `Use ${toolName} for content search instead of unbounded rg output.`,
-    `When ${toolName} returns a summary, narrow with path or use its cursor only when exhaustive detail is required.`,
-    `Use ${toolName} mode=inspect with path and line when a matching location needs its enclosing code block.`,
+    `Use the file samples in ${toolName} summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
+    `Use ${toolName} mode=inspect with cursor and matchIndex or matchIndices (up to ${String(MAX_INSPECT_TARGETS)}) to inspect sampled locations together. Without a cursor, inspect path/line or targets=[{path,line}]. Prefer a bounded batch over repeatedly reading whole files.`,
     `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
   ];
   if (grepOwnerPackage === HASHLINE_PACKAGE) {
@@ -49,7 +49,10 @@ export function signalGrepPromptGuidelines(
 
 const searchSchema = Type.Object({
   pattern: Type.Optional(
-    Type.String({ description: "Regex or literal text. Required unless cursor is provided." }),
+    Type.String({
+      description:
+        "Regex or literal text. Required for a new search, not for inspect or cursor continuation.",
+    }),
   ),
   path: Type.Optional(
     Type.String({ description: "File or directory to search, relative to the working directory." }),
@@ -101,6 +104,22 @@ const searchSchema = Type.Object({
         "1-based retained match index for cursor-scoped inspect; replaces path and line.",
     }),
   ),
+  matchIndices: Type.Optional(
+    Type.Array(Type.Integer({ minimum: 1 }), {
+      minItems: 1,
+      maxItems: MAX_INSPECT_TARGETS,
+      description:
+        "Inspect up to five visible match numbers together using the same cursor; mutually exclusive with matchIndex, path, line and targets.",
+    }),
+  ),
+  targets: Type.Optional(
+    Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }) }), {
+      minItems: 1,
+      maxItems: MAX_INSPECT_TARGETS,
+      description:
+        "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget.",
+    }),
+  ),
   cursor: Type.Optional(
     Type.String({ description: "Opaque cursor from a previous stable search snapshot." }),
   ),
@@ -117,7 +136,8 @@ export function effectiveSignalGrepInput(
   config: OverrideConfig,
   overrideActive: boolean = config.overrideBuiltinGrep,
 ): SignalGrepInput {
-  if (!overrideActive || input.cursor || input.ignoreCase !== undefined) return input;
+  if (!overrideActive || input.mode === "inspect" || input.cursor || input.ignoreCase !== undefined)
+    return input;
   return { ...input, ignoreCase: false };
 }
 

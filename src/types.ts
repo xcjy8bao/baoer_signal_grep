@@ -13,6 +13,8 @@ export const CONTEXT_BUDGET_POLICY = {
 export const ESTIMATED_CHARACTERS_PER_TOKEN = 4;
 export const DEFAULT_SUMMARY_FILE_LIMIT = 30;
 export const MAX_SELECTED_PATHS = 20;
+export const MAX_INSPECT_TARGETS = 5;
+export const MAX_DISPLAYED_OCCURRENCES = 20;
 export const MAX_STORED_MATCHES = 50_000;
 export const MAX_LINE_CHARACTERS = 500;
 export const MAX_RESULT_BYTES = 16 * 1024;
@@ -20,6 +22,7 @@ export const MAX_CONTEXT_LINES = 20;
 export const MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
 export const MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
+export const MAX_SOURCE_REVISION_FILES = 50_000;
 
 export type SearchMode = "auto" | "summary" | "matches" | "inspect";
 
@@ -51,6 +54,7 @@ export interface MatchOccurrence {
 export interface SourceRevision {
   size: number;
   mtimeMs: number;
+  ctimeMs?: number;
   inode?: number;
   device?: number;
 }
@@ -84,6 +88,39 @@ export interface StructureDetails {
   range?: SymbolRange;
 }
 
+export interface InspectTarget {
+  path: string;
+  line: number;
+}
+
+export interface SourceExcerptDetails {
+  range: SymbolRange;
+  omittedBefore: number;
+  omittedAfter: number;
+  truncatedLines: number[];
+}
+
+export interface InspectRetry {
+  mode: "inspect";
+  cursor?: string;
+  matchIndex?: number;
+  path?: string;
+  line?: number;
+}
+
+export interface InspectBatchItemDetails {
+  inputIndex: number;
+  path?: string;
+  line?: number;
+  matchIndex?: number;
+  status: "returned" | "deferred" | "error";
+  block?: number;
+  structure?: StructureDetails;
+  source?: SourceExcerptDetails;
+  error?: string;
+  retry?: InspectRetry;
+}
+
 export interface SearchRequest {
   pattern: string;
   path?: string;
@@ -102,6 +139,8 @@ export interface MatchRecord {
   lineNumber: number;
   lineContent: string;
   lineTruncated: boolean;
+  /** Original line head for truncated matches within the normal grep result limit. */
+  normalLinePrefix?: string;
   occurrences: MatchOccurrence[];
 }
 
@@ -137,12 +176,19 @@ export interface SignalGrepDetails {
   selectionMissingPaths?: string[];
   summaryFilesOmitted?: number;
   lineContentTruncated?: number;
+  occurrenceRangesOmitted?: number;
+  occurrenceMatchesTruncated?: number;
+  sourceUnverifiedFileCount?: number;
+  summaryPreviewsShown?: number;
+  summaryPreviewsOmitted?: number;
   budgetTier?: ContextBudgetTier;
   contextRemainderPercent?: number;
   resultTokenBudget?: number;
   contextOmittedFiles?: string[];
   contextChangedFiles?: string[];
   structure?: StructureDetails;
+  source?: SourceExcerptDetails;
+  inspections?: InspectBatchItemDetails[];
 }
 
 export interface SignalGrepResult {

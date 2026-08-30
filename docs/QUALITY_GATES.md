@@ -65,7 +65,17 @@ TypeScript 7 runs in strict, no-emit mode with erasable syntax only. This gate o
 bun test
 ```
 
-Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including exact occurrence ranges, Unicode-safe JSON framing, workspace path confinement, cursor completeness and file selection, cancellation, adaptive result budgets, ignore behavior, byte limits, context deduplication, bounded source inspection, structure-provider absence, stale source rejection, partial snapshots, persistent override/reload handoff, an independently constructed raw-`rg` differential matrix, and medium-repository exhaustive/parallel runtime stress with cumulative Metrics enabled.
+Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep integration, including:
+
+- exact retained occurrences and bounded range display without losing path/line/match identity;
+- Unicode-safe JSON and NUL-delimited candidate paths, workspace confinement, and Git exclusions that user globs cannot override;
+- scan-before/after revision binding, unchanged-match-line mutations, newly discovered files, and the candidate-metadata cap without lost matches;
+- text-visible cursors, first-retained-match samples, selected-file continuation, complete pagination, and cross-page context deduplication;
+- cancellation and protocol-failure cleanup, including children that ignore graceful termination and executable startup errors;
+- adaptive result budgets, explicit limits, long-line inspection focus, single/batch byte bounds, per-target failures, retries, deduplication, and source revision rechecks;
+- provider absence and parse failure, partial snapshots, persistent override/reload handoff, actual service-output TUI recognition, independent raw-`rg` parity, and medium-repository exhaustive/parallel runtime stress with Metrics enabled.
+
+Controlled process wrappers make the scan-mutation timing deterministic and invoke real ripgrep; these executable-script fixtures run on POSIX. Portable process lifecycle tests and the remaining real-ripgrep matrix also run on Windows. Every asynchronous/process test needs a completion condition and an explicit timeout. Missing optional Ctags must not turn ordinary search into a failure.
 
 ## Node compatibility smoke test
 
@@ -81,7 +91,15 @@ The smoke test builds a temporary Node-targeted bundle, imports it with the conf
 bun run benchmark
 ```
 
-The benchmark checks three observable contracts: a compact 33-match search returns every result directly without an extra turn; a broad 233-match search exposes the exact total through a small summary instead of normal grep's 100-match prefix; and one 18-match medium fixture returns details in the full context tier but summaries in tight and critical tiers. It also retains an explicit 20 + 13 cursor reconstruction check, reports model-facing byte counts and resolved estimated-token targets, and removes its fixture. It measures result shape rather than search speed or model tokenization.
+The benchmark checks that a compact 33-match search returns all results directly, a broad 233-match search exposes its exact total through a bounded summary, and the same 18-match fixture returns details in the full context tier but summaries in tight/critical tiers. It preserves an explicit 20 + 13 cursor reconstruction check, reports current model-facing byte counts and token-estimate targets, and removes its fixture. Summary responses now include real samples and text-visible navigation, so historical response sizes are not a release guarantee.
+
+The baseline is Pi's real built-in grep, including its output-limit notices. This benchmark measures result shape, not search speed, model tokenization, task success, or overall token/cost savings. Metrics excludes single/batch inspection, read output, and model reasoning; it is not a substitute for a complete task comparison.
+
+## Separate release task evaluation
+
+The [0.5.6 task evaluation](EVALUATION_0.5.6.md) owns the broader task corpus, comparison procedure, evidence, and any declared release thresholds. Keep task correctness, full evidence-acquisition calls, and total task token/cost measurements separate from first-response byte counts. Report incomplete runs and unavailable measurements explicitly; a local search-shape result cannot satisfy a task-level saving claim.
+
+Paid multi-run model evaluation is deliberate release work and does not run inside the ordinary `bun run check` gate or every CI job. Do not claim percentage savings or an overall speedup before the corresponding evaluation evidence exists.
 
 ## Package boundary
 
@@ -98,3 +116,7 @@ GitHub Actions runs the same commands on Linux, macOS, and Windows with Node.js 
 CI cannot prevent someone from opening a pull request. Repository rules prevent a non-compliant pull request from merging. Local hooks are intentionally not the authority because they can be bypassed and differ by contributor environment.
 
 Required checks and pull-request rules are configured on `main` and apply to administrators. Maintainers must not bypass a failed gate merely to merge faster.
+
+## Publication boundary
+
+The manual publication workflow validates a release tag against the current `main` commit and package metadata, reruns the quality/package gates, and publishes with npm provenance from GitHub Actions. Publication remains a separately authorized action; local validation is not permission to publish.

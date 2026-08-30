@@ -13,6 +13,7 @@ import {
   DEFAULT_RESULT_TOKEN_BUDGET,
   ESTIMATED_CHARACTERS_PER_TOKEN,
   MAX_CONTEXT_LINES,
+  MAX_DISPLAYED_OCCURRENCES,
   MAX_LINE_CHARACTERS,
   MAX_RESULT_BYTES,
   MAX_SOURCE_FILE_BYTES,
@@ -22,8 +23,13 @@ import type { MatchRecord, SearchSnapshot, SourceRevision } from "./types.js";
 const RESULT_METADATA_RESERVE_BYTES = 1024;
 const RESULT_METADATA_RESERVE_CHARACTERS = 512;
 const MAX_PAGE_BODY_BYTES = MAX_RESULT_BYTES - RESULT_METADATA_RESERVE_BYTES;
-const DEFAULT_MAX_PAGE_BODY_CHARACTERS =
-  DEFAULT_RESULT_TOKEN_BUDGET * ESTIMATED_CHARACTERS_PER_TOKEN - RESULT_METADATA_RESERVE_CHARACTERS;
+
+export class MatchPageSoftLimitError extends Error {
+  constructor() {
+    super("A single match exceeds the estimated-token detail target");
+    this.name = "MatchPageSoftLimitError";
+  }
+}
 
 function pageBodyCharacterLimit(resultTokenBudget = DEFAULT_RESULT_TOKEN_BUDGET): number {
   if (!Number.isSafeInteger(resultTokenBudget) || resultTokenBudget <= 0) {
@@ -44,6 +50,8 @@ export interface FormattedPage {
   hasNext: boolean;
   hasMatchRanges: boolean;
   hasByteRanges: boolean;
+  occurrenceRangesOmitted: number;
+  occurrenceMatchesTruncated: number;
   firstMatchIndex?: number;
   lastMatchIndex?: number;
   contextOmittedFiles: string[];
@@ -66,26 +74,23 @@ function compactLine(line: string): string {
 
 function matchLocationSuffix(match: MatchRecord): string {
   if (match.occurrences.length === 0) return "";
-  const ranges = match.occurrences.map(({ range }) => {
+  const displayed = match.occurrences.slice(0, MAX_DISPLAYED_OCCURRENCES);
+  const ranges = displayed.map(({ range }) => {
     const start = range.start.character + 1;
     const end = Math.max(start, range.end.character);
     const suffix = range.encoding === "utf-8" ? "b" : "";
     return `${start}-${end}${suffix}`;
   });
-  return ` [${ranges.join(",")}]`;
+  const omitted = match.occurrences.length - displayed.length;
+  const notice =
+    omitted > 0
+      ? ` [ranges: ${String(displayed.length)} of ${String(match.occurrences.length)} shown; ${String(omitted)} omitted; mode=inspect with this path/line for source]`
+      : "";
+  return ` [${ranges.join(",")}]${notice}`;
 }
 
 function formatMatchLine(match: MatchRecord, matchIndex: number): string {
   return ` ${match.lineNumber}: ${match.lineContent}${matchLocationSuffix(match)} {match #${String(matchIndex)}}`;
-}
-
-function indexedMatchLine(
-  match: MatchRecord,
-  matchIndices: ReadonlyMap<MatchRecord, number>,
-): string {
-  const matchIndex = matchIndices.get(match);
-  if (matchIndex === undefined) throw new Error("Match index is unavailable");
-  return formatMatchLine(match, matchIndex);
 }
 
 async function loadContextLines(
@@ -119,7 +124,7 @@ async function loadContextLines(
     }
     const available = {
       status: "available" as const,
-      lines: content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n"),
+      lines: content.replaceAll("\r", "").split("\n"),
     };
     cache.set(match.absolutePath, available);
     return available;
@@ -133,53 +138,83 @@ async function loadContextLines(
   }
 }
 
+interface MatchContextWindow {
+  startLine: number;
+  endLine: number;
+}
+
+interface FormattedMatchBlock {
+  text: string;
+  contextStatus: "available" | "changed" | "unavailable" | "none";
+}
+
+function matchContextWindows(
+  snapshot: SearchSnapshot,
+  include: MatchPageOptions["include"],
+): Map<MatchRecord, MatchContextWindow> {
+  const windows = new Map<MatchRecord, MatchContextWindow>();
+  const context = Math.min(Math.max(0, snapshot.request.context), MAX_CONTEXT_LINES);
+  if (context === 0) return windows;
+
+  const selectedFiles = new Map<string, MatchRecord[]>();
+  for (const [index, match] of snapshot.matches.entries()) {
+    if (include && !include(match, index)) continue;
+    const matches = selectedFiles.get(match.absolutePath) ?? [];
+    matches.push(match);
+    selectedFiles.set(match.absolutePath, matches);
+  }
+  for (const matches of selectedFiles.values()) {
+    const ordered = matches.toSorted((left, right) => left.lineNumber - right.lineNumber);
+    for (const [index, match] of ordered.entries()) {
+      const previous = ordered[index - 1];
+      const next = ordered[index + 1];
+      // Each context line belongs to its nearest selected match; ties belong to the earlier one.
+      // This partitions overlapping windows without guessing what a previous cursor page emitted.
+      windows.set(match, {
+        startLine: Math.max(
+          1,
+          match.lineNumber - context,
+          previous ? Math.floor((previous.lineNumber + match.lineNumber) / 2) + 1 : 1,
+        ),
+        endLine: Math.min(
+          match.lineNumber + context,
+          next ? Math.floor((match.lineNumber + next.lineNumber) / 2) : Number.MAX_SAFE_INTEGER,
+        ),
+      });
+    }
+  }
+  return windows;
+}
+
 async function formatBlock(
   match: MatchRecord,
+  matchIndex: number,
   expectedRevision: SourceRevision | undefined,
-  matchIndices: ReadonlyMap<MatchRecord, number>,
-  context: number,
+  window: MatchContextWindow | undefined,
   cache: ContextCache,
-  omittedFiles: Set<string>,
-  changedFiles: Set<string>,
-  emittedLines: Map<string, Set<number>>,
-  pageMatches: Map<string, Map<number, MatchRecord>>,
   allMatchLines: Map<string, Set<number>>,
-  priorContextLines: Map<string, Set<number>>,
   signal?: AbortSignal,
-): Promise<string> {
-  const matchIndex = matchIndices.get(match);
-  if (matchIndex === undefined) throw new Error("Match index is unavailable");
-  if (context === 0) return formatMatchLine(match, matchIndex);
+): Promise<FormattedMatchBlock> {
+  const matchingLine = formatMatchLine(match, matchIndex);
+  if (!window) return { text: matchingLine, contextStatus: "none" };
 
   const contextLoad = await loadContextLines(match, expectedRevision, cache, signal);
   if (contextLoad.status !== "available") {
-    const affectedFiles = contextLoad.status === "changed" ? changedFiles : omittedFiles;
-    affectedFiles.add(match.displayPath);
-    return formatMatchLine(match, matchIndex);
+    return { text: matchingLine, contextStatus: contextLoad.status };
   }
   const { lines } = contextLoad;
-
-  const boundedContext = Math.min(Math.max(0, context), MAX_CONTEXT_LINES);
-  const start = Math.max(1, match.lineNumber - boundedContext);
-  const end = match.lineNumber + boundedContext;
   const output: string[] = [];
-  const emitted = emittedLines.get(match.absolutePath) ?? new Set<number>();
-  const matchesByLine = pageMatches.get(match.absolutePath);
-  for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const matchingRecord = matchesByLine?.get(lineNumber);
-    if (lineNumber > lines.length && !matchingRecord) continue;
-    if (emitted.has(lineNumber)) continue;
-    if (!matchingRecord && allMatchLines.get(match.absolutePath)?.has(lineNumber)) continue;
-    if (!matchingRecord && priorContextLines.get(match.absolutePath)?.has(lineNumber)) continue;
-    output.push(
-      matchingRecord
-        ? indexedMatchLine(matchingRecord, matchIndices)
-        : ` ${lineNumber}- ${compactLine(lines[lineNumber - 1] ?? "")}`,
-    );
-    emitted.add(lineNumber);
+  for (let lineNumber = window.startLine; lineNumber <= window.endLine; lineNumber += 1) {
+    if (lineNumber === match.lineNumber) {
+      output.push(matchingLine);
+    } else if (
+      lineNumber <= lines.length &&
+      !allMatchLines.get(match.absolutePath)?.has(lineNumber)
+    ) {
+      output.push(` ${lineNumber}- ${compactLine(lines[lineNumber - 1] ?? "")}`);
+    }
   }
-  emittedLines.set(match.absolutePath, emitted);
-  return output.join("\n");
+  return { text: output.join("\n"), contextStatus: "available" };
 }
 
 export async function formatMatchPage(
@@ -192,7 +227,6 @@ export async function formatMatchPage(
   const cache: ContextCache = new Map();
   const omittedFiles = new Set<string>();
   const changedFiles = new Set<string>();
-  const matchIndices = new Map(snapshot.matches.map((match, index) => [match, index + 1] as const));
   const output: string[] = [];
   let returnedMatches = 0;
   let nextOffset = offset;
@@ -203,40 +237,16 @@ export async function formatMatchPage(
   let lastMatchIndex: number | undefined;
   let hasMatchRanges = false;
   let hasByteRanges = false;
-  const emittedLines = new Map<string, Set<number>>();
-  const candidateIndices: number[] = [];
-  for (let index = offset; index < snapshot.matches.length; index += 1) {
-    const match = snapshot.matches[index];
-    if (match && (!options.include || options.include(match, index))) candidateIndices.push(index);
-    if (candidateIndices.length >= snapshot.request.pageSize) break;
-  }
+  let occurrenceRangesOmitted = 0;
+  let occurrenceMatchesTruncated = 0;
+  const contextWindows = matchContextWindows(snapshot, options.include);
   const allMatchLines = new Map<string, Set<number>>();
-  for (const match of snapshot.matches) {
-    const lines = allMatchLines.get(match.absolutePath) ?? new Set<number>();
-    lines.add(match.lineNumber);
-    allMatchLines.set(match.absolutePath, lines);
-  }
-  const priorContextLines = new Map<string, Set<number>>();
-  const boundedContext = Math.min(Math.max(0, snapshot.request.context), MAX_CONTEXT_LINES);
-  for (let index = 0; index < offset; index += 1) {
-    const match = snapshot.matches[index];
-    if (!match || (options.include && !options.include(match, index))) continue;
-    const lines = priorContextLines.get(match.absolutePath) ?? new Set<number>();
-    const matchLines = allMatchLines.get(match.absolutePath);
-    const start = Math.max(1, match.lineNumber - boundedContext);
-    const end = match.lineNumber + boundedContext;
-    for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-      if (!matchLines?.has(lineNumber)) lines.add(lineNumber);
+  if (contextWindows.size > 0) {
+    for (const match of snapshot.matches) {
+      const lines = allMatchLines.get(match.absolutePath) ?? new Set<number>();
+      lines.add(match.lineNumber);
+      allMatchLines.set(match.absolutePath, lines);
     }
-    priorContextLines.set(match.absolutePath, lines);
-  }
-  const pageMatches = new Map<string, Map<number, MatchRecord>>();
-  for (const index of candidateIndices) {
-    const match = snapshot.matches[index];
-    if (!match) continue;
-    const lines = pageMatches.get(match.absolutePath) ?? new Map<number, MatchRecord>();
-    lines.set(match.lineNumber, match);
-    pageMatches.set(match.absolutePath, lines);
   }
 
   while (nextOffset < snapshot.matches.length && returnedMatches < snapshot.request.pageSize) {
@@ -246,40 +256,20 @@ export async function formatMatchPage(
     if (!match) break;
     nextOffset += 1;
     if (options.include && !options.include(match, matchIndex)) continue;
-    hasMatchRanges ||= match.occurrences.length > 0;
-    hasByteRanges ||= match.occurrences.some(({ range }) => range.encoding === "utf-8");
     // Formatting is sequential because each block consumes the remaining shared byte budget.
-    const emittedBefore = new Map(
-      [...emittedLines].map(([path, lines]) => [path, new Set(lines)] as const),
-    );
     // oxlint-disable-next-line no-await-in-loop -- the shared output budget is consumed in order.
     let block = await formatBlock(
       match,
+      matchIndex + 1,
       snapshot.sourceRevisions.get(match.absolutePath),
-      matchIndices,
-      snapshot.request.context,
+      contextWindows.get(match),
       cache,
-      omittedFiles,
-      changedFiles,
-      emittedLines,
-      pageMatches,
       allMatchLines,
-      priorContextLines,
       signal,
     );
-    const restoreEmittedLines = () => {
-      emittedLines.clear();
-      for (const [path, lines] of emittedBefore) emittedLines.set(path, lines);
-    };
-    if (block.length === 0) {
-      returnedMatches += 1;
-      firstMatchIndex ??= matchIndex;
-      lastMatchIndex = matchIndex;
-      continue;
-    }
     const fileHeader = match.displayPath === currentFile ? "" : `${match.displayPath}\n`;
-    const separator = output.length === 0 || fileHeader.length === 0 ? "" : "\n";
-    let addition = `${separator}${fileHeader}${block}`;
+    const separator = output.length === 0 ? "" : fileHeader.length === 0 ? "\n" : "\n\n";
+    let addition = `${separator}${fileHeader}${block.text}`;
     let additionBytes = Buffer.byteLength(addition);
     let additionCharacters = addition.length;
     const exceedsBudget = () =>
@@ -288,26 +278,33 @@ export async function formatMatchPage(
 
     if (exceedsBudget()) {
       if (returnedMatches > 0) {
-        restoreEmittedLines();
         nextOffset = matchIndex;
         break;
       }
-      restoreEmittedLines();
-      block = indexedMatchLine(match, matchIndices);
-      addition = `${fileHeader}${block}`;
+      block = { text: formatMatchLine(match, matchIndex + 1), contextStatus: "unavailable" };
+      addition = `${fileHeader}${block.text}`;
       additionBytes = Buffer.byteLength(addition);
       additionCharacters = addition.length;
-      omittedFiles.add(match.displayPath);
     }
-    if (additionBytes > MAX_PAGE_BODY_BYTES || additionCharacters > maxPageBodyCharacters) {
+    if (additionBytes > MAX_PAGE_BODY_BYTES) {
       throw new Error("A single match exceeds the reserved result budget");
     }
+    if (additionCharacters > maxPageBodyCharacters) throw new MatchPageSoftLimitError();
 
     output.push(addition);
     outputBytes += additionBytes;
     outputCharacters += additionCharacters;
     currentFile = match.displayPath;
     returnedMatches += 1;
+    hasMatchRanges ||= match.occurrences.length > 0;
+    hasByteRanges ||= match.occurrences
+      .slice(0, MAX_DISPLAYED_OCCURRENCES)
+      .some(({ range }) => range.encoding === "utf-8");
+    const omittedRanges = Math.max(0, match.occurrences.length - MAX_DISPLAYED_OCCURRENCES);
+    occurrenceRangesOmitted += omittedRanges;
+    if (omittedRanges > 0) occurrenceMatchesTruncated += 1;
+    if (block.contextStatus === "changed") changedFiles.add(match.displayPath);
+    if (block.contextStatus === "unavailable") omittedFiles.add(match.displayPath);
     firstMatchIndex ??= matchIndex;
     lastMatchIndex = matchIndex;
   }
@@ -317,12 +314,14 @@ export async function formatMatchPage(
     .some((match, index) => !options.include || options.include(match, nextOffset + index));
 
   const page: FormattedPage = {
-    body: output.join("\n"),
+    body: output.join(""),
     returnedMatches,
     nextOffset,
     hasNext,
     hasMatchRanges,
     hasByteRanges,
+    occurrenceRangesOmitted,
+    occurrenceMatchesTruncated,
     contextOmittedFiles: [...omittedFiles].toSorted((left, right) => left.localeCompare(right)),
     contextChangedFiles: [...changedFiles].toSorted((left, right) => left.localeCompare(right)),
   };
@@ -366,8 +365,11 @@ async function formatNormalBlock(
   signal?: AbortSignal,
 ): Promise<NormalBlock> {
   if (context === 0) {
+    if (match.lineTruncated && match.normalLinePrefix === undefined) {
+      throw new Error("Normal grep baseline requires the original truncated line prefix");
+    }
     const content = match.lineTruncated
-      ? `${match.lineContent.slice(0, MAX_LINE_CHARACTERS)}... [truncated]`
+      ? `${match.normalLinePrefix}... [truncated]`
       : match.lineContent;
     return {
       lines: [`${displayPath}:${match.lineNumber}: ${content}`],
@@ -470,47 +472,4 @@ export async function formatNormalBaseline(
   }
   if (notices.length > 0) text += `\n\n[${notices.join(". ")}]`;
   return text;
-}
-
-export function formatSummary(snapshot: SearchSnapshot, fileLimit: number, offset = 0) {
-  if (!Number.isSafeInteger(fileLimit) || fileLimit <= 0) {
-    throw new Error("Summary file limit must be a positive safe integer");
-  }
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > snapshot.fileCounts.size) {
-    throw new Error("Summary offset is outside the file summary");
-  }
-  const files = [...snapshot.fileCounts.entries()].toSorted(
-    ([leftPath, leftCount], [rightPath, rightCount]) =>
-      rightCount - leftCount || leftPath.localeCompare(rightPath),
-  );
-  const rows: string[] = [];
-  let bytes = 0;
-  let characters = 0;
-
-  for (const [file, count] of files.slice(offset, offset + fileLimit)) {
-    const row = `${file}  ${String(count).padStart(6)}`;
-    const separatorLength = rows.length === 0 ? 0 : 1;
-    const rowBytes = Buffer.byteLength(row) + separatorLength;
-    const rowCharacters = row.length + separatorLength;
-    if (
-      rows.length > 0 &&
-      (bytes + rowBytes > MAX_PAGE_BODY_BYTES ||
-        characters + rowCharacters > DEFAULT_MAX_PAGE_BODY_CHARACTERS)
-    ) {
-      break;
-    }
-    rows.push(row);
-    bytes += rowBytes;
-    characters += rowCharacters;
-  }
-
-  const nextOffset = offset + rows.length;
-  return {
-    body: rows.join("\n"),
-    shown: rows.length,
-    offset,
-    nextOffset,
-    hasNext: nextOffset < files.length,
-    omitted: files.length - nextOffset,
-  };
 }

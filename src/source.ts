@@ -1,8 +1,13 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
-import { MAX_RESULT_BYTES, MAX_SOURCE_FILE_BYTES, type SourceRevision } from "./types.js";
+import {
+  MAX_RESULT_BYTES,
+  MAX_SOURCE_FILE_BYTES,
+  type MatchOccurrence,
+  type SourceRevision,
+} from "./types.js";
 
 const SOURCE_RANGE_METADATA_RESERVE_BYTES = 1024;
 const MAX_SOURCE_RANGE_BYTES = MAX_RESULT_BYTES - SOURCE_RANGE_METADATA_RESERVE_BYTES;
@@ -13,6 +18,7 @@ export async function getSourceRevision(path: string): Promise<SourceRevision | 
     return {
       size: metadata.size,
       mtimeMs: metadata.mtimeMs,
+      ctimeMs: metadata.ctimeMs,
       ...(metadata.ino !== 0 ? { inode: metadata.ino } : {}),
       ...(metadata.dev !== 0 ? { device: metadata.dev } : {}),
     };
@@ -25,6 +31,7 @@ export function sameSourceRevision(left: SourceRevision, right: SourceRevision):
   return (
     left.size === right.size &&
     left.mtimeMs === right.mtimeMs &&
+    (left.ctimeMs === undefined || right.ctimeMs === undefined || left.ctimeMs === right.ctimeMs) &&
     left.inode === right.inode &&
     left.device === right.device
   );
@@ -32,7 +39,7 @@ export function sameSourceRevision(left: SourceRevision, right: SourceRevision):
 
 export function isPathInsideCwd(path: string, cwd: string): boolean {
   const localPath = relative(resolve(cwd), resolve(path));
-  return localPath !== ".." && !localPath.startsWith("../") && !isAbsolute(localPath);
+  return localPath !== ".." && !localPath.startsWith(`..${sep}`) && !isAbsolute(localPath);
 }
 
 export async function assertExistingPathInsideCwd(path: string, cwd: string): Promise<void> {
@@ -58,25 +65,63 @@ export class SourceTooLargeError extends SignalGrepError {
   }
 }
 
+export class SourceBudgetTooSmallError extends SignalGrepError {
+  constructor() {
+    super("Source target line exceeds the available byte budget");
+    this.name = "SourceBudgetTooSmallError";
+  }
+}
+
+export class SourceLineUnavailableError extends SignalGrepError {
+  constructor(line: number) {
+    super(`Source line ${String(line)} is beyond the end of the file`);
+    this.name = "SourceLineUnavailableError";
+  }
+}
+
 export interface SourceRangeRead {
   text: string;
+  lines: SourceExcerptLine[];
   startLine: number;
   endLine: number;
   truncated: boolean;
   omittedBefore: number;
   omittedAfter: number;
+  truncatedLines: number[];
+}
+
+export interface SourceExcerptLine {
+  line: number;
+  text: string;
+  truncated: boolean;
+}
+
+export interface SourceRangeOptions {
+  maxBytes?: number;
+  focus?: MatchOccurrence;
 }
 
 interface SelectedSourceWindow {
-  lines: string[];
+  lines: SourceExcerptLine[];
   startIndex: number;
   endIndex: number;
 }
 
-function selectSourceWindow(rendered: string[], targetIndex: number): SelectedSourceWindow {
+function sourceLineBytes(line: SourceExcerptLine): number {
+  return Buffer.byteLength(`${String(line.line)}: ${line.text}`, "utf8");
+}
+
+function selectSourceWindow(
+  rendered: SourceExcerptLine[],
+  targetIndex: number,
+  maxBytes: number,
+): SelectedSourceWindow {
   let startIndex = targetIndex;
   let endIndex = targetIndex;
-  let bytes = Buffer.byteLength(rendered[targetIndex] ?? "", "utf8");
+  const target = rendered[targetIndex];
+  if (!target) throw new Error("Source target line is unavailable");
+  let bytes = sourceLineBytes(target);
+  if (bytes > maxBytes) throw new SourceBudgetTooSmallError();
   let canGrowBefore = true;
   let canGrowAfter = true;
 
@@ -86,9 +131,9 @@ function selectSourceWindow(rendered: string[], targetIndex: number): SelectedSo
       const candidate = rendered[startIndex - 1];
       if (candidate === undefined) {
         canGrowBefore = false;
-      } else if (bytes + 1 + Buffer.byteLength(candidate, "utf8") <= MAX_SOURCE_RANGE_BYTES) {
+      } else if (bytes + 1 + sourceLineBytes(candidate) <= maxBytes) {
         startIndex -= 1;
-        bytes += 1 + Buffer.byteLength(candidate, "utf8");
+        bytes += 1 + sourceLineBytes(candidate);
         grew = true;
       } else {
         canGrowBefore = false;
@@ -99,9 +144,9 @@ function selectSourceWindow(rendered: string[], targetIndex: number): SelectedSo
       const candidate = rendered[endIndex + 1];
       if (candidate === undefined) {
         canGrowAfter = false;
-      } else if (bytes + 1 + Buffer.byteLength(candidate, "utf8") <= MAX_SOURCE_RANGE_BYTES) {
+      } else if (bytes + 1 + sourceLineBytes(candidate) <= maxBytes) {
         endIndex += 1;
-        bytes += 1 + Buffer.byteLength(candidate, "utf8");
+        bytes += 1 + sourceLineBytes(candidate);
         grew = true;
       } else {
         canGrowAfter = false;
@@ -120,38 +165,70 @@ export async function readSourceRange(
   endLine: number,
   signal?: AbortSignal,
   targetLine = startLine,
+  options: SourceRangeOptions = {},
 ): Promise<SourceRangeRead> {
   if (signal?.aborted) throw abortError();
+  const maxBytes = options.maxBytes ?? MAX_SOURCE_RANGE_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_SOURCE_RANGE_BYTES) {
+    throw new Error("Source range byte budget must be within the result body limit");
+  }
   const metadata = await stat(absolutePath, { bigint: false });
   if (metadata.size > MAX_SOURCE_FILE_BYTES) {
     throw new SourceTooLargeError(
       `Source file exceeds the ${String(MAX_SOURCE_FILE_BYTES)}-byte source limit`,
     );
   }
-  const content = await readFile(absolutePath, { encoding: "utf8", signal });
-  const lines = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  const content = await readFile(absolutePath, { signal });
+  if (content.byteLength > MAX_SOURCE_FILE_BYTES) {
+    throw new SourceTooLargeError(
+      `Source file exceeds the ${String(MAX_SOURCE_FILE_BYTES)}-byte source limit`,
+    );
+  }
+  // ripgrep counts LF-delimited lines. Keep original bytes until byte-based
+  // occurrence offsets have been decoded; re-encoding replacement characters
+  // would move the focus in files containing invalid UTF-8.
+  const lines: Buffer[] = [];
+  let lineStart = 0;
+  for (let newline = content.indexOf(10); newline >= 0; newline = content.indexOf(10, lineStart)) {
+    lines.push(content.subarray(lineStart, newline));
+    lineStart = newline + 1;
+  }
+  lines.push(content.subarray(lineStart));
   const boundedStart = Math.max(1, startLine);
   if (boundedStart > lines.length) {
-    throw new SignalGrepError(`Source line ${String(targetLine)} is beyond the end of the file`);
+    throw new SourceLineUnavailableError(targetLine);
   }
   const boundedEnd = Math.min(lines.length, Math.max(boundedStart, endLine));
   if (targetLine < 1 || targetLine > lines.length) {
-    throw new SignalGrepError(`Source line ${String(targetLine)} is beyond the end of the file`);
+    throw new SourceLineUnavailableError(targetLine);
   }
   const boundedTarget = Math.min(boundedEnd, Math.max(boundedStart, targetLine));
   const rendered = Array.from({ length: boundedEnd - boundedStart + 1 }, (_, index) => {
     const lineNumber = boundedStart + index;
-    return `${String(lineNumber)}: ${excerptText(lines[lineNumber - 1] ?? "").text}`;
+    const raw = lines[lineNumber - 1];
+    if (!raw) throw new Error("Source line is unavailable");
+    const focus = lineNumber === targetLine ? options.focus : undefined;
+    const start = focus?.range.start.character ?? 0;
+    const end = focus?.range.end.character ?? start;
+    const bytes = focus?.range.encoding === "utf-8" ? raw : undefined;
+    const excerpt = excerptText(
+      raw.toString("utf8").replaceAll("\r", ""),
+      bytes ? bytes.subarray(0, start).toString("utf8").replaceAll("\r", "").length : start,
+      bytes ? bytes.subarray(0, end).toString("utf8").replaceAll("\r", "").length : end,
+    );
+    return { line: lineNumber, text: excerpt.text, truncated: excerpt.truncated };
   });
-  const selected = selectSourceWindow(rendered, boundedTarget - boundedStart);
+  const selected = selectSourceWindow(rendered, boundedTarget - boundedStart, maxBytes);
   const omittedBefore = selected.startIndex;
   const omittedAfter = rendered.length - selected.endIndex - 1;
   return {
-    text: selected.lines.join("\n"),
+    text: selected.lines.map((line) => `${String(line.line)}: ${line.text}`).join("\n"),
+    lines: selected.lines,
     startLine: boundedStart + selected.startIndex,
     endLine: boundedStart + selected.endIndex,
     truncated: omittedBefore > 0 || omittedAfter > 0,
     omittedBefore,
     omittedAfter,
+    truncatedLines: selected.lines.filter((line) => line.truncated).map((line) => line.line),
   };
 }
