@@ -31,6 +31,7 @@ All notable changes will be documented in this file. The project follows [Semant
 - Candidate source metadata is bounded to 50,000 files with 16 concurrent reads. The extra names-only traversal and metadata reads do not limit the matching set or imply a search-speed improvement.
 - Summary formatting has a dedicated module; detail formatting, process ownership, source verification, and batch composition each have explicit responsibilities.
 - Existing single-target request forms and configuration remain valid. Metrics still excludes inspection and does not represent task-total tokens or API cost; documentation no longer treats normal grep's explicit truncation notice as a false completeness claim.
+- Tool guidance distinguishes ordinary auto searches from deliberate detail paging, explains when exact matching evidence is sufficient, and gives inspection-only selectors and corrective errors instead of leaving models to guess which search parameters must be omitted.
 
 Publisher: **宝儿**.
 

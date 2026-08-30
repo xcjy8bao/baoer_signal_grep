@@ -212,7 +212,7 @@ export class SignalGrepService {
       const unsupported = searchOptions.filter((key) => input[key] !== undefined);
       if (unsupported.length > 0) {
         throw new SignalGrepError(
-          `Search options cannot be used with mode=inspect: ${unsupported.join(", ")}`,
+          `Search options cannot be used with mode=inspect: ${unsupported.join(", ")}. Inspection selects its own bounded source window. Retry with only mode="inspect" and either path+line, cursor+matchIndex/matchIndices, or targets=[{path,line}]; omit all search options, including pattern, context and limit.`,
         );
       }
       if (input.paths !== undefined) {

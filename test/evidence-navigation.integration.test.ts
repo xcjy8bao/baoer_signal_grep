@@ -131,9 +131,9 @@ describe("model-visible evidence navigation", () => {
         () => undefined,
         (error: unknown) => error,
       );
-    expect(inspectError).toMatchObject({
-      message: expect.stringContaining("Search options cannot be used"),
-    });
+    if (!(inspectError instanceof Error)) throw new Error("Expected invalid inspect input to fail");
+    expect(inspectError.message).toContain("Search options cannot be used");
+    expect(inspectError.message).toContain('Retry with only mode="inspect"');
     const searchError = await service
       .search({ pattern: "NEEDLE", targets: [{ path: "app.ts", line: 2 }] }, root)
       .then(
