@@ -47,3 +47,21 @@ APPEND_SYSTEM.md
 *.key
 *.p12
 *.pfx
+
+# Local test reports, diagnostics, and evaluation material
+test-results/
+test-reports/
+playwright-report/
+blob-report/
+benchmark-results/
+.nyc_output/
+*.log
+*.lcov
+lcov.info
+junit*.xml
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+/docs/evaluation/
+/docs/EVALUATION_*.md
+/scripts/agent-eval.ts
