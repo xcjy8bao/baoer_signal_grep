@@ -4,6 +4,17 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-30
+
+### Added
+
+- Responsive Pi TUI renderers for search calls, ranked summaries, grouped matches, bounded inspection, partial-retention warnings, and errors in English and Simplified Chinese.
+- Collapsed result views adapt across narrow, medium, and wide terminals while expanded views preserve the complete original tool text.
+
+### Changed
+
+- Human-facing rendering now fails open to the original result when details or text are not safely recognized, or when custom layout rendering fails; search text, structured details, cursors, Metrics, and non-TUI behavior remain unchanged.
+
 ## [0.5.1] - 2026-08-29
 
 ### Added

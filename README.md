@@ -8,7 +8,7 @@
 
 Context-efficient, correctness-first content search and bounded code inspection for the [Pi coding agent](https://pi.dev). Signal Grep keeps broad `ripgrep` output from flooding model context without pretending that truncated results are complete.
 
-> **Latest release:** `0.5.1`.
+> **Latest release:** `0.5.2`.
 
 ## Why Signal Grep?
 
@@ -85,6 +85,12 @@ Summary rows are ranked by descending match count, with path order as the determ
 Every matching line includes a stable `{match #N}` marker. Use `mode="inspect"`, the summary cursor, and `matchIndex=N` to inspect that retained occurrence without copying its path and line. Long matching lines are excerpted around the occurrence, so the match remains visible while reported columns stay absolute.
 
 For implicit `auto` searches without `limit`, the initial detail trial follows the context remainder reported by Pi: `full` above 40% targets 2,000 estimated result-text tokens, `tight` from 12% through 40% targets 1,000, and `critical` below 12% targets 500. A compact complete result still returns directly in every tier. Unknown context usage preserves the existing 2,000-token target without claiming an adjustment. `matches`, explicit `limit`, inspection, and cursor continuation are never downshifted.
+
+## Human-readable Pi TUI
+
+In Pi's interactive terminal, Signal Grep presents the same result as a responsive evidence view: ranked bars for summaries, grouped file evidence for match pages, explicit partial-retention warnings, and bounded inspection status. The collapsed view adapts to narrow, medium, and wide terminals; expanding the tool row shows the complete original result.
+
+This is a display-only boundary. The renderer does not change model-facing text, structured `details`, cursors, search policy, Metrics accounting, JSON/RPC/print output, or persisted state. If the current text/details shape cannot be recognized safely—or custom rendering fails—the Pi row falls back to the original result text.
 
 ## Reproducible before/after test
 
