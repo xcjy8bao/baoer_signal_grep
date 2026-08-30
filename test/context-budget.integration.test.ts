@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveContextBudget } from "../src/context-budget.js";
 import { createRipgrepRunner } from "../src/rg.js";
@@ -27,6 +27,31 @@ afterEach(async () => {
 });
 
 describe("context-aware auto budget with ripgrep", () => {
+  test("summarizes a legal long-path match that exceeds the critical soft detail target", async () => {
+    const root = await fixture();
+    const directory = Array.from(
+      { length: 10 },
+      (_, index) => `${String(index)}${"d".repeat(79)}`,
+    ).join("/");
+    await mkdir(join(root, directory), { recursive: true });
+    const path = `${directory}/long.txt`;
+    await writeFile(join(root, path), `${"a".repeat(1_000)}\n`);
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const result = await service.search({ pattern: "a", path }, root, undefined, {
+      contextBudget: budgetAtUsagePercent(95),
+    });
+    expect(result.details.totalMatches).toBe(1);
+    expect(result.details.returnedMatches).toBe(0);
+    expect(result.details.budgetTier).toBe("critical");
+    expect(result.text).toContain("Snapshot cursor=");
+    expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16_384);
+    const cursor = result.details.cursor;
+    if (!cursor) throw new Error("Expected a retained summary cursor");
+    const details = await service.search({ mode: "matches", cursor }, root);
+    expect(details.details.returnedMatches).toBe(1);
+    expect(details.text).toContain("980 omitted");
+  });
+
   test("keeps a compact complete result direct in the critical tier", async () => {
     const root = await fixture();
     const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });

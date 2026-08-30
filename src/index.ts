@@ -15,12 +15,12 @@ import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
 import { type SignalGrepInput, SignalGrepService } from "./service.js";
-import { MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
+import { MAX_INSPECT_TARGETS, MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
 import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
-  "Context-efficient ripgrep search with exact match ranges and bounded code inspection. Small searches return grouped matches; broad searches return a per-file summary first. Use mode=inspect with path and line to inspect a source block. Cursor pages come from a stable snapshot and explicitly report partial retention.";
+  "Search code with bounded, verifiable evidence. For a new search, supply pattern and optional path; normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Partial evidence and source changes are explicit.";
 
 export interface SignalGrepExtensionOptions {
   /** Overrides the Pi agent directory used for package conflict detection and config writes (test seam). */
@@ -34,9 +34,10 @@ export function signalGrepPromptGuidelines(
   grepOwnerPackage?: string,
 ): string[] {
   const guidelines = [
-    `Use ${toolName} for content search instead of unbounded rg output.`,
-    `When ${toolName} returns a summary, narrow with path or use its cursor only when exhaustive detail is required.`,
-    `Use ${toolName} mode=inspect with path and line when a matching location needs its enclosing code block.`,
+    `Use ${toolName} for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
+    `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
+    `Use the file samples in ${toolName} summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
+    `When source context is missing, use one ${toolName} batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
     `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
   ];
   if (grepOwnerPackage === HASHLINE_PACKAGE) {
@@ -49,10 +50,15 @@ export function signalGrepPromptGuidelines(
 
 const searchSchema = Type.Object({
   pattern: Type.Optional(
-    Type.String({ description: "Regex or literal text. Required unless cursor is provided." }),
+    Type.String({
+      description:
+        "New search only: regex, or plain text with literal=true. Required for search; MUST be omitted for inspect and cursor continuation.",
+    }),
   ),
   path: Type.Optional(
-    Type.String({ description: "File or directory to search, relative to the working directory." }),
+    Type.String({
+      description: "Working-directory-relative search root, or the file to inspect with line.",
+    }),
   ),
   paths: Type.Optional(
     Type.Array(Type.String(), {
@@ -82,23 +88,50 @@ const searchSchema = Type.Object({
   hidden: Type.Optional(
     Type.Boolean({ description: "Search hidden files (default true; .git is always excluded)." }),
   ),
-  context: Type.Optional(Type.Number({ description: "Context lines before and after (0-20)." })),
+  context: Type.Optional(
+    Type.Number({
+      description:
+        "New search only: nearby lines (0-20). MUST be omitted for inspect, which selects its own bounded source window.",
+    }),
+  ),
   limit: Type.Optional(
-    Type.Number({ description: "Maximum matches per adaptive detail page (max 100)." }),
+    Type.Number({
+      description:
+        "New search only: explicit detail-page match limit (max 100). Normally omit to preserve automatic summarization; not valid for inspect.",
+    }),
   ),
   mode: Type.Optional(
     StringEnum(["auto", "summary", "matches", "inspect"] as const, {
       description:
-        "auto summarizes broad searches; matches returns details; inspect returns a code block.",
+        "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never search options such as pattern/context/limit.",
     }),
   ),
   line: Type.Optional(
-    Type.Number({ description: "1-indexed source line required by mode=inspect." }),
+    Type.Number({
+      description:
+        "1-indexed source line for path+line inspection only. Omit with matchIndex, matchIndices or targets.",
+    }),
   ),
   matchIndex: Type.Optional(
     Type.Number({
       description:
         "1-based retained match index for cursor-scoped inspect; replaces path and line.",
+    }),
+  ),
+  matchIndices: Type.Optional(
+    Type.Array(Type.Integer({ minimum: 1 }), {
+      minItems: 1,
+      maxItems: MAX_INSPECT_TARGETS,
+      description:
+        "Inspect up to five visible match numbers together using the same cursor; mutually exclusive with matchIndex, path, line and targets.",
+    }),
+  ),
+  targets: Type.Optional(
+    Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }) }), {
+      minItems: 1,
+      maxItems: MAX_INSPECT_TARGETS,
+      description:
+        "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget.",
     }),
   ),
   cursor: Type.Optional(
@@ -117,7 +150,8 @@ export function effectiveSignalGrepInput(
   config: OverrideConfig,
   overrideActive: boolean = config.overrideBuiltinGrep,
 ): SignalGrepInput {
-  if (!overrideActive || input.cursor || input.ignoreCase !== undefined) return input;
+  if (!overrideActive || input.mode === "inspect" || input.cursor || input.ignoreCase !== undefined)
+    return input;
   return { ...input, ignoreCase: false };
 }
 

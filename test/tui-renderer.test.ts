@@ -217,7 +217,7 @@ describe("Signal Grep TUI renderers", () => {
     };
 
     for (const status of statuses) {
-      const blocked = status === "file-too-large" || status === "source-changed";
+      const blocked = ["file-too-large", "source-changed", "source-unavailable"].includes(status);
       const text = blocked
         ? `src/auth.ts:42\n\n[structure: ${status}]`
         : [
@@ -236,6 +236,8 @@ describe("Signal Grep TUI renderers", () => {
         text,
         details({
           mode: "inspect",
+          status: blocked ? "partial" : "complete",
+          snapshotComplete: !blocked,
           totalMatches: 0,
           storedMatches: 0,
           totalFiles: 1,

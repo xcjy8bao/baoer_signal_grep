@@ -1,4 +1,9 @@
-import type { SearchMode, SignalGrepDetails, StructureStatus } from "../types.js";
+import type {
+  InspectBatchItemDetails,
+  SearchMode,
+  SignalGrepDetails,
+  StructureStatus,
+} from "../types.js";
 
 export interface SummaryRow {
   path: string;
@@ -17,6 +22,12 @@ interface EmptyPresentation extends PresentationBase {
 export interface SummaryPresentation extends PresentationBase {
   kind: "summary";
   rows: SummaryRow[];
+  previews: string[];
+}
+
+export interface InspectBatchPresentation extends PresentationBase {
+  kind: "inspect-batch";
+  items: InspectBatchItemDetails[];
 }
 
 export interface MatchesPresentation extends PresentationBase {
@@ -38,7 +49,8 @@ export type SignalGrepPresentation =
   | EmptyPresentation
   | SummaryPresentation
   | MatchesPresentation
-  | InspectPresentation;
+  | InspectPresentation
+  | InspectBatchPresentation;
 
 const STRUCTURE_STATUSES = new Set<StructureStatus>([
   "available",
@@ -137,7 +149,11 @@ function parseInspect(text: string, details: SignalGrepDetails): InspectPresenta
   const lines = text.split("\n");
   const target = lines[0];
   if (!target) return undefined;
-  if (structure.status === "source-changed" || structure.status === "file-too-large") {
+  if (
+    structure.status === "source-changed" ||
+    structure.status === "file-too-large" ||
+    structure.status === "source-unavailable"
+  ) {
     return {
       kind: "inspect",
       details,
@@ -172,7 +188,22 @@ export function recognizeSignalGrepResult(
 ): SignalGrepPresentation | undefined {
   if (!hasRecognizableDetails(details)) return undefined;
 
-  if (details.mode === "inspect") return parseInspect(text, details);
+  if (details.mode === "inspect") {
+    if (details.inspections) {
+      if (
+        details.inspections.length === 0 ||
+        details.inspections.some(
+          (item) =>
+            !Number.isSafeInteger(item.inputIndex) ||
+            item.inputIndex < 1 ||
+            !["returned", "deferred", "error"].includes(item.status),
+        )
+      )
+        return undefined;
+      return { kind: "inspect-batch", details, text, items: details.inspections };
+    }
+    return parseInspect(text, details);
+  }
 
   if (details.totalMatches === 0) {
     return { kind: "empty", details, text };
@@ -181,7 +212,16 @@ export function recognizeSignalGrepResult(
   if (details.summaryFilesShown !== undefined) {
     const rows = parseSummaryRows(text, details.summaryFilesShown);
     if (!rows) return undefined;
-    return { kind: "summary", details, text, rows };
+    const lines = text.split("\n");
+    const sampleHeading = lines.findIndex((line) =>
+      line.startsWith("Samples: first retained match"),
+    );
+    const sampleCount = details.summaryPreviewsShown ?? 0;
+    const previews =
+      sampleHeading >= 0 && isNonNegativeSafeInteger(sampleCount)
+        ? lines.slice(sampleHeading + 1, sampleHeading + 1 + sampleCount)
+        : [];
+    return { kind: "summary", details, text, rows, previews };
   }
 
   if (details.returnedMatches > 0) {

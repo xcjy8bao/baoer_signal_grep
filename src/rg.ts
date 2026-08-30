@@ -1,18 +1,20 @@
-import { spawn } from "node:child_process";
-import { isAbsolute, relative, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
 import { consumeCappedLines } from "./capped-lines.js";
-import { assertExistingPathInsideCwd, getSourceRevision } from "./source.js";
+import { assertExistingPathInsideCwd } from "./source.js";
+import { runOwnedProcess } from "./owned-process.js";
+import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
+  MAX_LINE_CHARACTERS,
   MAX_PROTOCOL_LINE_BYTES,
-  MAX_SOURCE_REVISION_CONCURRENCY,
+  MAX_SOURCE_REVISION_FILES,
   MAX_STORED_MATCHES,
   type MatchOccurrence,
   type MatchRecord,
   type SearchRequest,
   type SearchScan,
-  type SourceRevision,
   type TextRange,
 } from "./types.js";
 
@@ -41,6 +43,7 @@ export interface RipgrepRunnerOptions {
   executable?: string;
   maxStoredMatches?: number;
   maxEventBytes?: number;
+  maxSourceRevisionFiles?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -104,10 +107,29 @@ function displayPath(rawPath: string, cwd: string): { absolutePath: string; disp
   };
 }
 
+function assertOutsideGit(searchPath: string): void {
+  if (searchPath.split(sep).includes(".git")) {
+    throw new SignalGrepError("Git internals are excluded from search");
+  }
+}
+
 function assertSearchPathInsideCwd(searchPath: string, cwd: string): void {
   const localPath = relative(resolve(cwd), searchPath);
-  if (localPath === ".." || localPath.startsWith("../") || isAbsolute(localPath)) {
+  if (localPath === ".." || localPath.startsWith(`..${sep}`) || isAbsolute(localPath)) {
     throw new SignalGrepError("Search path must stay within the working directory");
+  }
+  assertOutsideGit(searchPath);
+}
+
+async function assertResolvedTargetOutsideGit(searchPath: string): Promise<void> {
+  try {
+    // Explicit file arguments bypass rg's globs. Resolve both symbolic links
+    // and filesystem case aliases before allowing that target to be searched.
+    assertOutsideGit(await realpath(searchPath));
+  } catch (error) {
+    // Leave missing-path diagnostics to the search process, as with workspace validation.
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
   }
 }
 
@@ -162,42 +184,27 @@ function createOccurrences(
   return occurrences;
 }
 
-async function captureSourceRevisions(
-  paths: ReadonlySet<string>,
-): Promise<Map<string, SourceRevision>> {
-  const pathList = [...paths];
-  const entries: Array<readonly [string, SourceRevision] | undefined> = Array(pathList.length);
-  let nextIndex = 0;
-  const worker = async () => {
-    while (true) {
-      const index = nextIndex;
-      nextIndex += 1;
-      const path = pathList[index];
-      if (path === undefined) return;
-      // The concurrency bound prevents a broad search from exhausting file descriptors.
-      // oxlint-disable-next-line no-await-in-loop -- each worker owns one bounded queue slot.
-      const revision = await getSourceRevision(path);
-      if (revision) entries[index] = [path, revision];
-    }
-  };
-  const workerCount = Math.min(MAX_SOURCE_REVISION_CONCURRENCY, pathList.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return new Map(
-    entries.filter((entry): entry is readonly [string, SourceRevision] => entry !== undefined),
-  );
-}
-
-export function buildRipgrepArguments(request: SearchRequest, cwd: string): string[] {
-  const args = ["--json", "--line-number", "--color=never", "--no-heading"];
-
+function fileScopeArguments(request: SearchRequest): string[] {
+  const args: string[] = [];
   if (request.hidden) args.push("--hidden");
-  args.push("--glob", "!.git/**", "--glob", "!**/.git/**");
-
   for (const glob of request.glob) args.push("--glob", glob);
   for (const excluded of request.exclude) {
     const normalized = excluded.startsWith("!") ? excluded : `!${excluded}`;
     args.push("--glob", normalized);
   }
+  // Ripgrep gives the last matching glob priority, so this invariant must come last.
+  args.push("--glob", "!.git", "--glob", "!.git/**", "--glob", "!**/.git/**");
+  return args;
+}
+
+export function buildRipgrepArguments(request: SearchRequest, cwd: string): string[] {
+  const args = [
+    "--json",
+    "--line-number",
+    "--color=never",
+    "--no-heading",
+    ...fileScopeArguments(request),
+  ];
 
   if (request.literal) args.push("--fixed-strings");
   if (request.ignoreCase === true) args.push("--ignore-case");
@@ -214,6 +221,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
   const executable = options.executable ?? "rg";
   const maxStoredMatches = options.maxStoredMatches ?? MAX_STORED_MATCHES;
   const maxEventBytes = options.maxEventBytes ?? MAX_PROTOCOL_LINE_BYTES;
+  const maxSourceRevisionFiles = options.maxSourceRevisionFiles ?? MAX_SOURCE_REVISION_FILES;
 
   return async function runRipgrep(
     request: SearchRequest,
@@ -221,130 +229,103 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     signal?: AbortSignal,
   ): Promise<SearchScan> {
     if (signal?.aborted) throw abortError();
-    await assertExistingPathInsideCwd(resolve(cwd, request.path ?? "."), cwd);
+    const searchPath = resolve(cwd, request.path ?? ".");
+    const args = buildRipgrepArguments(request, cwd);
+    await assertExistingPathInsideCwd(searchPath, cwd);
+    await assertResolvedTargetOutsideGit(searchPath);
+    if (signal?.aborted) throw abortError();
 
-    return new Promise<SearchScan>((resolveSearch, rejectSearch) => {
-      const child = spawn(executable, buildRipgrepArguments(request, cwd), {
+    const matches: MatchRecord[] = [];
+    const fileCounts = new Map<string, number>();
+    const lossyPaths = new Set<string>();
+    let totalMatches = 0;
+    let truncatedLines = 0;
+
+    const onLine = (line: string) => {
+      if (line.length === 0) return;
+      let event: unknown;
+      try {
+        event = JSON.parse(line);
+      } catch (error) {
+        throw new SignalGrepError("Failed to parse ripgrep JSON output", { cause: error });
+      }
+      if (!isRecord(event) || event.type !== "match") return;
+      if (!isRgMatchEvent(event)) {
+        throw new SignalGrepError("ripgrep emitted an invalid match event");
+      }
+
+      const rawPath = decodeRgText(event.data.path, "path");
+      const rawContent = decodeRgText(event.data.lines, "line content");
+      const normalizedContent = rawContent.text.replaceAll("\r", "").replace(/\n$/, "");
+      const path = displayPath(rawPath.text, cwd);
+      if (rawPath.encoding === "utf-8") lossyPaths.add(path.absolutePath);
+      const submatches = event.data.submatches ?? [];
+      const occurrences = createOccurrences(event.data.line_number, rawContent, submatches);
+      const primaryOccurrence = occurrences[0];
+      let focusStart = 0;
+      let focusEnd = 0;
+      if (primaryOccurrence) {
+        focusStart = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteStart, "utf-16");
+        focusEnd = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteEnd, "utf-16");
+      }
+      const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
+      const { text: lineContent, truncated: lineTruncated } = excerpt;
+
+      totalMatches += 1;
+      fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
+      if (lineTruncated) truncatedLines += 1;
+      if (matches.length < maxStoredMatches) {
+        matches.push({
+          ...path,
+          lineNumber: event.data.line_number,
+          lineContent,
+          lineTruncated,
+          ...(lineTruncated && matches.length < request.pageSize
+            ? { normalLinePrefix: normalizedContent.slice(0, MAX_LINE_CHARACTERS) }
+            : {}),
+          occurrences,
+        });
+      }
+    };
+
+    try {
+      const before = await captureCandidateRevisions(
+        executable,
+        ["--files", "--null", ...fileScopeArguments(request), "--", searchPath],
         cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-
-      const matches: MatchRecord[] = [];
-      const fileCounts = new Map<string, number>();
-      let totalMatches = 0;
-      let truncatedLines = 0;
-      let stderr = "";
-      let aborted = false;
-
-      const closePromise = new Promise<number | null>((resolveClose, rejectClose) => {
-        child.once("error", rejectClose);
-        child.once("close", resolveClose);
-      });
-
-      const onLine = (line: string) => {
-        if (line.length === 0) return;
-        let event: unknown;
-        try {
-          event = JSON.parse(line);
-        } catch (error) {
-          throw new SignalGrepError("Failed to parse ripgrep JSON output", { cause: error });
-        }
-        if (!isRecord(event) || event.type !== "match") return;
-        if (!isRgMatchEvent(event)) {
-          throw new SignalGrepError("ripgrep emitted an invalid match event");
-        }
-
-        const rawPath = decodeRgText(event.data.path, "path");
-        const rawContent = decodeRgText(event.data.lines, "line content");
-        const normalizedContent = rawContent.text.replaceAll("\r", "").replace(/\n$/, "");
-        const path = displayPath(rawPath.text, cwd);
-        const submatches = event.data.submatches ?? [];
-        const occurrences = createOccurrences(event.data.line_number, rawContent, submatches);
-        const primaryOccurrence = occurrences[0];
-        let focusStart = 0;
-        let focusEnd = 0;
-        if (primaryOccurrence) {
-          if (primaryOccurrence.range.encoding === "utf-16") {
-            focusStart = primaryOccurrence.range.start.character;
-            focusEnd = primaryOccurrence.range.end.character;
-          } else {
-            focusStart = primaryOccurrence.byteStart;
-            focusEnd = primaryOccurrence.byteEnd;
-          }
-        }
-        const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
-        const { text: lineContent, truncated: lineTruncated } = excerpt;
-
-        totalMatches += 1;
-        fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
-        if (lineTruncated) truncatedLines += 1;
-        if (matches.length < maxStoredMatches) {
-          matches.push({
-            ...path,
-            lineNumber: event.data.line_number,
-            lineContent,
-            lineTruncated,
-            occurrences,
-          });
-        }
+        maxSourceRevisionFiles,
+        signal,
+      );
+      const { code, stderr } = await runOwnedProcess(
+        { executable, args, cwd, ...(signal ? { signal } : {}) },
+        (stdout) => consumeCappedLines(stdout, onLine, { maxLineBytes: maxEventBytes }),
+      );
+      if (code !== 0 && code !== 1) {
+        throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);
+      }
+      const retainedPaths = new Set(
+        matches.map((match) => match.absolutePath).filter((path) => !lossyPaths.has(path)),
+      );
+      const sourceRevisions = await retainStableSourceRevisions(retainedPaths, before, signal);
+      if (signal?.aborted) throw abortError();
+      return {
+        request,
+        matches,
+        totalMatches,
+        fileCounts,
+        sourceRevisions,
+        snapshotComplete: matches.length === totalMatches,
+        truncatedLines,
       };
-
-      child.stderr.on("data", (chunk: Buffer) => {
-        if (stderr.length < 16_384) stderr += chunk.toString("utf8");
-      });
-
-      const onAbort = () => {
-        aborted = true;
-        if (!child.killed) child.kill();
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-
-      void (async () => {
-        try {
-          const outputPromise = consumeCappedLines(child.stdout, onLine, {
-            maxLineBytes: maxEventBytes,
-          });
-          const [code] = await Promise.all([closePromise, outputPromise]);
-          if (aborted || signal?.aborted) {
-            rejectSearch(abortError());
-            return;
-          }
-          if (code !== 0 && code !== 1) {
-            rejectSearch(
-              new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`),
-            );
-            return;
-          }
-
-          const retainedPaths = new Set(matches.map((match) => match.absolutePath));
-          const sourceRevisions = await captureSourceRevisions(retainedPaths);
-          resolveSearch({
-            request,
-            matches,
-            totalMatches,
-            fileCounts,
-            sourceRevisions,
-            snapshotComplete: matches.length === totalMatches,
-            truncatedLines,
-          });
-        } catch (error) {
-          if (!child.killed) child.kill();
-          if (aborted || signal?.aborted) {
-            rejectSearch(abortError());
-            return;
-          }
-          const cause = error instanceof Error ? error : new Error(String(error));
-          const executableMissing = "code" in cause && cause.code === "ENOENT";
-          const message = executableMissing
-            ? `ripgrep executable not found: ${executable}`
-            : cause.message;
-          rejectSearch(new SignalGrepError(message, { cause }));
-        } finally {
-          signal?.removeEventListener("abort", onAbort);
-        }
-      })();
-    });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw abortError();
+      const cause = error instanceof Error ? error : new Error(String(error));
+      const executableMissing = "code" in cause && cause.code === "ENOENT";
+      const message = executableMissing
+        ? `ripgrep executable not found: ${executable}`
+        : cause.message;
+      throw new SignalGrepError(message, { cause });
+    }
   };
 }
 

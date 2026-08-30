@@ -1,6 +1,6 @@
 {
   "name": "pi-plugin-signal-grep",
-  "version": "0.5.2",
+  "version": "0.5.6",
   "description": "Context-efficient, correctness-first ripgrep search and bounded code inspection for the Pi coding agent",
   "keywords": [
     "ai-agent",
@@ -19,15 +19,16 @@
     "url": "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
   },
   "license": "AGPL-3.0-only",
-  "author": "baoer",
+  "author": "宝儿",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xcjy8bao/pi-plugin-signal-grep.git"
   },
   "files": [
-    "src",
-    "docs",
-    "AGENTS.md",
+    "src/**/*.ts",
+    "docs/AI_PULL_REQUEST_GUIDE.md",
+    "docs/ARCHITECTURE.md",
+    "docs/QUALITY_GATES.md",
     "README.md",
     "README.zh-CN.md",
     "CONTRIBUTING.md",

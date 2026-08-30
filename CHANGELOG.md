@@ -4,6 +4,36 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-08-31
+
+### Added
+
+- Broad summaries now show bounded real first-retained-match samples across displayed files, with stable match numbers and explicit sample-omission counts. Samples are not relevance ranking.
+- `mode="inspect"` accepts either cursor-bound `matchIndices` or cursorless `targets`, each containing 1–5 entries. The complete batch shares 16 KiB, reports every target's outcome, deduplicates same-revision source lines, and provides explicit single-target retry requests for budget-limited evidence.
+
+### Fixed
+
+- Summary cursors and follow-up instructions are included in model-facing text rather than only structured details.
+- Context windows no longer emit future matching lines early and duplicate them on later cursor pages.
+- Snapshot source revisions are bound only when metadata collected before and after the content scan agrees; changed, new, unreadable, and uncached files retain matching evidence but are explicitly unverified for context and inspection.
+- Git exclusions now take precedence over positive user globs, and explicit Git-internal search paths are rejected after resolving symbolic links and filesystem case aliases.
+- Human-facing summary rendering recognizes actual service responses, including their blank-line layout, samples, and cursor instructions.
+- Ctags and ripgrep share owned-process cleanup that terminates and awaits children after cancellation or protocol failures, preserving startup errors and failing explicitly when cleanup cannot finish.
+- Cursor inspection keeps a late occurrence visible in a long source line and reports source-range and clipped-line omissions in text and details; direct source inspection also rechecks revisions.
+- Dense same-line matches retain their path, line and stable match marker within bounded output; displayed occurrence ranges are capped at 20 per line with explicit omitted-range counts, without deleting snapshot occurrences.
+- Search and inspection excerpts preserve distant matches in non-UTF-8 files. Inspection and context keep ripgrep's LF-based line numbers when source contains bare carriage returns.
+- Implicit auto mode returns a navigable summary when one matching line exceeds its estimated-token detail target; hard byte limits and execution failures remain explicit errors.
+- Opt-in Metrics reconstructs normal grep's original long-line prefix from scan-time evidence rather than reusing a match-centered excerpt, preserving the actual baseline text and byte count.
+
+### Changed
+
+- Candidate source metadata is bounded to 50,000 files with 16 concurrent reads. The extra names-only traversal and metadata reads do not limit the matching set or imply a search-speed improvement.
+- Summary formatting has a dedicated module; detail formatting, process ownership, source verification, and batch composition each have explicit responsibilities.
+- Existing single-target request forms and configuration remain valid. Metrics still excludes inspection and does not represent task-total tokens or API cost; documentation no longer treats normal grep's explicit truncation notice as a false completeness claim.
+- Tool guidance distinguishes ordinary auto searches from deliberate detail paging, explains when exact matching evidence is sufficient, and gives inspection-only selectors and corrective errors instead of leaving models to guess which search parameters must be omitted.
+
+Publisher: **宝儿**.
+
 ## [0.5.2] - 2026-08-30
 
 ### Added

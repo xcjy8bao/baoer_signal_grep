@@ -7,7 +7,7 @@ Thank you for improving Signal Grep.
 1. Search existing issues and pull requests.
 2. Open an issue before large behavioral or public-schema changes.
 3. Fork the repository or create a focused branch from `main`.
-4. Follow `AGENTS.md`, `docs/AI_PULL_REQUEST_GUIDE.md`, and `docs/QUALITY_GATES.md`.
+4. Follow `docs/AI_PULL_REQUEST_GUIDE.md` and `docs/QUALITY_GATES.md`.
 5. Add tests and documentation with the implementation.
 6. Run `bun run check` and `bun run pack:check`.
 7. Open a pull request using the repository template.
