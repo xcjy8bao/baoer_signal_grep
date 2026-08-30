@@ -90,6 +90,7 @@ type SessionStartHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 function createMockPi(): {
   pi: ExtensionAPI;
   toolNames: string[];
+  rendererToolNames: string[];
   promptGuidelines: string[][];
   notifications: MockNotify[];
   commands: Map<string, CommandHandler>;
@@ -97,6 +98,7 @@ function createMockPi(): {
   sessionStartHandlers: SessionStartHandler[];
 } {
   const toolNames: string[] = [];
+  const rendererToolNames: string[] = [];
   const promptGuidelines: string[][] = [];
   const notifications: MockNotify[] = [];
   const commands = new Map<string, CommandHandler>();
@@ -106,8 +108,16 @@ function createMockPi(): {
   // assertion here replaces seven scattered per-call-site assertions.
   // oxlint-disable-next-line no-unsafe-type-assertion -- test double covers only the consumed host surface
   const pi = {
-    registerTool: (tool: { name: string; promptGuidelines?: string[] }) => {
+    registerTool: (tool: {
+      name: string;
+      promptGuidelines?: string[];
+      renderCall?: unknown;
+      renderResult?: unknown;
+    }) => {
       toolNames.push(tool.name);
+      if (tool.renderCall !== undefined && tool.renderResult !== undefined) {
+        rendererToolNames.push(tool.name);
+      }
       promptGuidelines.push(tool.promptGuidelines ?? []);
     },
     registerCommand: (name: string, options: { handler: CommandHandler }) => {
@@ -135,6 +145,7 @@ function createMockPi(): {
   return {
     pi,
     toolNames,
+    rendererToolNames,
     promptGuidelines,
     notifications,
     commands,
@@ -189,6 +200,7 @@ describe("Signal Grep extension registration", () => {
     });
 
     expect(harness.toolNames).toEqual(["signal_grep"]);
+    expect(harness.rendererToolNames).toEqual(["signal_grep"]);
     expect(harness.promptGuidelines[0]?.some((line) => line.includes("served anchors"))).toBe(true);
     const ctx = createContext(harness.notifications);
     await Promise.all(

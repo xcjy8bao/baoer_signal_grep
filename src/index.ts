@@ -15,7 +15,8 @@ import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
 import { type SignalGrepInput, SignalGrepService } from "./service.js";
-import { MAX_SELECTED_PATHS } from "./types.js";
+import { MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
+import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
@@ -165,7 +166,7 @@ export async function registerSignalGrepExtension(
   const toolName = overrideActive ? "grep" : "signal_grep";
   const { locale } = config;
 
-  pi.registerTool({
+  pi.registerTool<typeof searchSchema, SignalGrepDetails>({
     name: toolName,
     label: SIGNAL_GREP_LABEL,
     description: SIGNAL_GREP_DESCRIPTION,
@@ -173,7 +174,20 @@ export async function registerSignalGrepExtension(
     promptGuidelines: signalGrepPromptGuidelines(toolName, conflict),
     parameters: searchSchema,
 
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    renderCall(params, theme) {
+      return renderSignalGrepCall(params, locale, theme);
+    },
+
+    renderResult(result, { expanded, isPartial }, theme, context) {
+      return renderSignalGrepResult(
+        result,
+        { expanded, isPartial, isError: context.isError },
+        locale,
+        theme,
+      );
+    },
+
+    async execute(...[_toolCallId, params, signal, _onUpdate, ctx]) {
       const result = await runtime.search(
         effectiveSignalGrepInput(params, config, overrideActive),
         ctx.cwd,

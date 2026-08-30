@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.1 adds ranked paged summaries, reusable single/multi-file snapshot selection, stable match-index inspection, occurrence-centered excerpts, revision-safe context, and capability-validated structure inspection without turning the core into a background index or language server.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.2 adds responsive, human-facing Pi TUI views over the existing 0.5.1 search contract without changing model-facing text, structured details, cursor state, or search policy.
 
 ## Data flow
 
@@ -33,6 +33,9 @@ format.ts ─── owns model-facing summary, page, byte, and deduplicated cont
     ├─► structure.ts ── optionally maps a source location to an enclosing symbol
     │
     └─► metrics.ts ── optionally compares cumulative result text with normal grep
+
+index.ts ───── owns the Pi adapter boundary
+    └─► tui/ ───── safely recognizes existing text/details for Pi-only responsive rendering
 ```
 
 `index.ts` is the Pi adapter entry point. It defines the schema, registers exactly one Signal Grep tool, and composes the runtime with `extension-controls.ts`. The controls module registers human-facing commands and lifecycle cleanup; it also owns conflict checks performed during command transitions so override and Metrics enablement cannot drift into duplicate policies. `runtime.ts` owns the service/metrics/cursor coordination used by the tool and contains no search algorithm. Additive mode uses `signal_grep`; explicit override mode uses `grep` and replaces Pi's built-in implementation. When metrics are enabled, `service.ts` derives both Signal Grep and normal-format text from the same snapshot and passes them to `metrics.ts`. `messages.ts` is the single catalog for human-facing command and notification text in English and Simplified Chinese. Its typed keys enforce catalog completeness, and message formatting rejects missing parameters or translated placeholder drift. Model-facing tool response text is intentionally not routed through it.
@@ -93,6 +96,10 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 
 `format.ts` owns presentation boundaries. File summaries are sorted by descending count with path-order ties, then paged by the public file limit. Detail formatting accepts an internal result-text target for the initial implicit `auto` trial and defaults every other page to about 2,000 estimated tokens. It stops before the match-count, character, or 16 KiB hard byte budget is exceeded. Every match carries its stable snapshot index. Lines over 500 characters use an occurrence-centered excerpt while rendering columns from the untruncated snapshot line. Overlapping context windows are merged, and current-file context is included only when its source revision still equals the retained revision; changed context is omitted and attributed. Retained matching-line text always comes from the snapshot. The normal-format metrics baseline is rendered separately from the same retained matches, reproduces Pi grep's path, context, match-limit, byte-limit, and long-line formatting, and never starts a process.
 
+### Interactive TUI rendering
+
+`tui/presentation.ts` is the fail-open recognition boundary for the existing model-facing text and `SignalGrepDetails`; it does not create durable presentation data. `tui/layout.ts` owns responsive, ANSI/CJK-aware call and collapsed-result layouts. `tui/renderers.ts` adapts those pure views to Pi components, returns the complete original text when expanded, and falls back to the original text for unrecognized shapes or renderer failures. Pi ignores these renderers outside interactive TUI mode, so JSON, RPC, print, Metrics, and stored tool results retain the original contract.
+
 ### Source ranges and structure inspection
 
 `source.ts` owns bounded current-file reads, revision metadata, workspace containment, and numbered source ranges. Its centered range builder reserves the model-facing header and omission-marker budget before selecting lines, so an oversized symbol still keeps the requested line in view without exceeding the 16 KiB response contract. It is intentionally separate from `structure.ts`: reading source is valid for every text language, while symbol structure requires a capability provider.
@@ -124,6 +131,7 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 - Compact complete searches return directly; adaptive policy never changes the underlying match set.
 - Context-aware budgeting never downshifts explicit limits, `matches`, inspection, or cursor continuation.
 - A known context adjustment is attributed in structured details; tight and critical adjustments are also explicit in model-facing text.
+- TUI rendering never mutates or replaces model-facing text, structured details, cursor state, Metrics accounting, or non-interactive output; unknown or failed presentation paths expose the original text.
 
 ## Deliberate non-goals
 

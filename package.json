@@ -1,6 +1,6 @@
 {
   "name": "pi-plugin-signal-grep",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Context-efficient, correctness-first ripgrep search and bounded code inspection for the Pi coding agent",
   "keywords": [
     "ai-agent",
@@ -55,6 +55,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.3",
     "@earendil-works/pi-coding-agent": "0.84.3",
+    "@earendil-works/pi-tui": "0.84.3",
     "@types/bun": "^1.4.0",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
@@ -65,6 +66,7 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "engines": {
