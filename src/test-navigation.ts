@@ -142,16 +142,16 @@ async function relations(
     if (!binding.source?.startsWith(".")) continue;
     // oxlint-disable-next-line no-await-in-loop -- resolution and tracing share one source/read budget.
     const resolved = await resolveStaticModule(context, test.document.path, binding.source);
-    const direct = resolved.path === target.document.path;
+    const targetPath = navigationPath(target.document.path);
+    const direct = resolved.path === targetPath;
     // oxlint-disable-next-line no-await-in-loop -- dependencies are parsed serially within the bounded request.
     const trace = await traceImport(context, test, binding);
     if (trace.reason === "structural-read-budget-exhausted") {
       context.reasons.add(trace.reason);
       break;
     }
-    const paths = tracePaths(trace);
-    const indirect =
-      !direct && paths.includes(target.document.path) && trace.status !== "unresolved";
+    const paths = tracePaths(trace).map(navigationPath);
+    const indirect = !direct && paths.includes(targetPath) && trace.status !== "unresolved";
     if (!direct && !indirect) {
       if (
         trace.reason &&
@@ -173,7 +173,7 @@ async function relations(
       trace,
       reason: direct ? "static-import-target-module" : "static-import-re-export-path-to-target",
       targetBinding: !binding.typeOnly && traceTargetsSymbol(trace, target, symbol),
-      paths: [...new Set([test.document.path, target.document.path, ...paths])],
+      paths: [...new Set([navigationPath(test.document.path), targetPath, ...paths])],
     });
   }
   if (output.length) return output;
@@ -187,7 +187,7 @@ async function relations(
       association: "weak",
       reason: nameSimilar ? "filename-similarity-only" : "source-text-similarity-only",
       targetBinding: false,
-      paths: [test.document.path, target.document.path],
+      paths: [navigationPath(test.document.path), navigationPath(target.document.path)],
     });
   return output;
 }
@@ -298,7 +298,7 @@ export async function findRelatedTests(
     context.release(target);
   }
   const files = [...(await context.files())]
-    .filter((path) => path !== target.document.path && SOURCE_EXTENSION.test(path))
+    .filter((path) => path !== navigationPath(target.document.path) && SOURCE_EXTENSION.test(path))
     .toSorted(
       (a, b) => Number(TEST_FILENAME.test(b)) - Number(TEST_FILENAME.test(a)) || a.localeCompare(b),
     );

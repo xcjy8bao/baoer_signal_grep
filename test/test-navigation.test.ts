@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { NavigationHost } from "../src/import-model.js";
 import { findRelatedTests } from "../src/test-navigation.js";
-import { readWorkspaceDocument } from "../src/source-document.js";
+import { SourceDocument, readWorkspaceDocument } from "../src/source-document.js";
 import { parseSyntax } from "../src/syntax.js";
 
 const roots: string[] = [];
@@ -64,6 +64,27 @@ test("test candidates separate direct, indirect and weak evidence while preservi
     moduleRelations: 3,
   });
   expect(result.partial).toBe(false);
+}, 20_000);
+
+test("Windows-style source references retain direct test associations", async () => {
+  const host = await fixture({
+    "src/subject.ts": "export const subject=()=>1;",
+    "tests/subject.test.ts":
+      'import {test} from "node:test"; import {subject} from "../src/subject"; test("uses subject",()=>{subject();});',
+  });
+  const load = host.load;
+  host.load = async (path, expected) => {
+    const source = await load(path, expected);
+    return new SourceDocument(
+      { ...source.reference, path: source.path.replaceAll("/", "\\\\") },
+      source.bytes,
+    );
+  };
+  const result = await findRelatedTests(host, { path: "src/subject.ts", symbol: "subject" });
+  expect(result.items.find((item) => item.details.kind === "test-case")?.details).toMatchObject({
+    association: "direct",
+    useCount: 1,
+  });
 }, 20_000);
 
 test("only-imported modules and lexical shadowing do not prove target-function usage", async () => {

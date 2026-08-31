@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { readGitChanges, readGitSource } from "../src/git-source.js";
@@ -37,7 +37,7 @@ function git(cwd: string, ...args: string[]): string {
     ],
     {
       cwd,
-      env: { ...gitReadEnvironment(), GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1" },
+      env: { ...gitReadEnvironment(), GIT_CONFIG_NOSYSTEM: "1" },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     },

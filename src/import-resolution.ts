@@ -58,6 +58,8 @@ export async function resolveStaticModule(
   specifier: string | undefined,
 ): Promise<Resolution> {
   context.checkAbort();
+  // Navigation hosts can return native relative paths; resolution is always POSIX-based.
+  from = navigationPath(from);
   if (specifier === undefined) return { reason: "nonliteral-module-specifier" };
   if (!specifier.startsWith("./") && !specifier.startsWith("../"))
     return { reason: "external-package-or-path-alias-unsupported" };
