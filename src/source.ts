@@ -1,4 +1,5 @@
 import { readFile, realpath, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
@@ -15,16 +16,20 @@ const MAX_SOURCE_RANGE_BYTES = MAX_RESULT_BYTES - SOURCE_RANGE_METADATA_RESERVE_
 export async function getSourceRevision(path: string): Promise<SourceRevision | undefined> {
   try {
     const metadata = await stat(path);
-    return {
-      size: metadata.size,
-      mtimeMs: metadata.mtimeMs,
-      ctimeMs: metadata.ctimeMs,
-      ...(metadata.ino !== 0 ? { inode: metadata.ino } : {}),
-      ...(metadata.dev !== 0 ? { device: metadata.dev } : {}),
-    };
+    return sourceRevisionFromStats(metadata);
   } catch {
     return undefined;
   }
+}
+
+export function sourceRevisionFromStats(metadata: Stats): SourceRevision {
+  return {
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+    ...(metadata.ino !== 0 ? { inode: metadata.ino } : {}),
+    ...(metadata.dev !== 0 ? { device: metadata.dev } : {}),
+  };
 }
 
 export function sameSourceRevision(left: SourceRevision, right: SourceRevision): boolean {
@@ -184,6 +189,19 @@ export async function readSourceRange(
       `Source file exceeds the ${String(MAX_SOURCE_FILE_BYTES)}-byte source limit`,
     );
   }
+  return sourceRangeFromBytes(content, startLine, endLine, targetLine, options);
+}
+
+export function sourceRangeFromBytes(
+  content: Buffer,
+  startLine: number,
+  endLine: number,
+  targetLine = startLine,
+  options: SourceRangeOptions = {},
+): SourceRangeRead {
+  const maxBytes = options.maxBytes ?? MAX_SOURCE_RANGE_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_SOURCE_RANGE_BYTES)
+    throw new Error("Source range byte budget must be within the result body limit");
   // ripgrep counts LF-delimited lines. Keep original bytes until byte-based
   // occurrence offsets have been decoded; re-encoding replacement characters
   // would move the focus in files containing invalid UTF-8.

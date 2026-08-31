@@ -91,9 +91,7 @@ The smoke test builds a temporary Node-targeted bundle, imports it with the conf
 bun run benchmark
 ```
 
-The benchmark checks that a compact 33-match search returns all results directly, a broad 233-match search exposes its exact total through a bounded summary, and the same 18-match fixture returns details in the full context tier but summaries in tight/critical tiers. It preserves an explicit 20 + 13 cursor reconstruction check, reports current model-facing byte counts and token-estimate targets, and removes its fixture. Summary responses now include real samples and text-visible navigation, so historical response sizes are not a release guarantee.
-
-The baseline is Pi's real built-in grep, including its output-limit notices. This benchmark measures result shape, not search speed, model tokenization, task success, or overall token/cost savings. Metrics excludes single/batch inspection, read output, and model reasoning; it is not a substitute for a complete task comparison.
+The benchmark uses synthetic contract fixtures to verify direct detail, bounded summary, context-budget and cursor-reconstruction behavior. It removes its fixture after execution. Its byte and token-estimate diagnostics are local development evidence, not a release claim or a measure of model performance, task success, cost savings, coverage, or test success in a user repository.
 
 ## Package boundary
 

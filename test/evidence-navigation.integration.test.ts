@@ -60,7 +60,11 @@ describe("model-visible evidence navigation", () => {
     const samples = [...summary.text.matchAll(/\{match #(\d+)\}/g)].map((match) =>
       Number(match[1]),
     );
-    expect(samples).toHaveLength(3);
+    // A summary may show two bounded source windows for one file. Every displayed
+    // marker remains a valid inspect target, and the model-visible cap is five.
+    expect(samples.length).toBeGreaterThanOrEqual(3);
+    expect(samples.length).toBeLessThanOrEqual(5);
+    expect(new Set(samples).size).toBe(samples.length);
     expect(summary.text).toContain("NEEDLE application");
     expect(summary.text).toContain("NEEDLE authorization");
     const inspected = await service.search(
@@ -132,8 +136,8 @@ describe("model-visible evidence navigation", () => {
         (error: unknown) => error,
       );
     if (!(inspectError instanceof Error)) throw new Error("Expected invalid inspect input to fail");
-    expect(inspectError.message).toContain("Search options cannot be used");
-    expect(inspectError.message).toContain('Retry with only mode="inspect"');
+    expect(inspectError.message).toContain("mode=inspect does not accept pattern");
+    expect(inspectError.message).toContain("copy the complete returned request");
     const searchError = await service
       .search({ pattern: "NEEDLE", targets: [{ path: "app.ts", line: 2 }] }, root)
       .then(

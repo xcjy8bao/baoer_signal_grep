@@ -8,27 +8,38 @@
 
 Context-efficient, correctness-first content search and bounded code inspection for the [Pi coding agent](https://pi.dev). Signal Grep turns broad `ripgrep` output into file counts, real matching-line samples, and explicit follow-up requests while preserving retained evidence and reporting limits.
 
-> **Latest release:** `0.5.6`. Publisher: **宝儿**.
+> **Latest release:** `0.5.8`. Publisher: **宝儿**.
 
 ## Why Signal Grep?
 
 For a broad query, the next useful step is often to choose the right files and inspect their code. Signal Grep supports that path directly:
 
 - **Small search:** return all grouped matching lines in one call when they fit.
-- **Broad search:** return exact per-file counts and a real first retained matching line from each shown file when the budget permits.
+- **Broad search:** return exact per-file counts before bounded, labeled source-preview windows.
 - **Direct follow-up:** copy the cursor from the result text to retrieve selected files or inspect up to five visible match numbers together.
 - **Stable evidence:** cursor pages use the retained snapshot; current-file context and inspection require verified source revisions.
-- **Explicit limits:** distinguish retained matches, displayed samples, omitted ranges, deferred inspection targets, and partial retention.
+- **Explicit limits:** distinguish retained matches, displayed previews, missing source ranges, and partial retention.
+
+## 0.5.8 evidence operations
+
+Ordinary content search remains the default. The following operations add evidence that a plain grep response cannot establish:
+
+- `allOf: ["authorize", "persist"]` proves that every literal term occurs in one file. Add `within: "function"` to require JS/TS/TSX own implementation code; nested callbacks, comments, static strings, regex literals and type areas do not count.
+- `roles: ["declaration"]` or `roles: ["call"]` filters each individual occurrence by syntax role in JS/TS/TSX/Go. Go call-versus-conversion and short-declaration cases remain explicit candidates.
+- `changes: { "base": "HEAD", "scope": "lines", "side": "new" }` uses a fixed Git comparison. With `allOf`, every term must be wholly inside the selected side's changed lines. Historical output stays bound to commit/blob source; it does not switch to the worktree.
+- `mode: "outline"` returns paged JS/TS/TSX symbols. `mode: "imports"` follows bounded static named/default ESM bindings and named re-exports. `mode: "tests"` returns direct, indirect and weak related-test candidates; it never claims coverage or a passing test run.
+
+Use the complete JSON shown after `Next request:`. A `sourceCursor` continues only missing raw-byte source ranges from the exact same source version; replaying the same token is safe, while changed, expired or modified tokens fail explicitly.
 
 The samples are examples of matching text, not relevance scores or complete file contents. File order follows match counts, not an estimate of which file will solve the task. The plugin has no fuzzy fallback, background index, database, telemetry, or network requests.
 
 ## Example: choose files, then inspect code
 
-The example fixture has 233 `TODO` lines across five files. Pi's built-in grep returns a bounded prefix and a limit notice; it does not report the exact total after that limit. Signal Grep returns counts, source samples, and a usable cursor in the same model-facing response:
+For illustration, a broad `TODO` query can return counts, bounded source previews, and a usable cursor in one model-facing response:
 
 ```text
-233 matches across 5 files (complete snapshot).
-Files 1-5 of 5, ordered by match count.
+N matches across M files (complete snapshot).
+Files 1-M of M, ordered by match count.
 
 broad.ts     200
 noise.ts      30
@@ -36,7 +47,7 @@ README.md       1
 src/app.ts       1
 utils.ts       1
 
-Samples: first retained match per shown file, not relevance-ranked or exhaustive.
+Source previews are bounded, not relevance-ranked or exhaustive.
 broad.ts:1 {match #34} // TODO broad 0
 noise.ts:1 {match #4} // TODO fix 1
 README.md:1 {match #3} TODO readme
@@ -48,7 +59,7 @@ Inspect samples: mode="inspect", cursor, matchIndices=[one or more visible match
 Retrieve matching lines: cursor with path or paths selecting exact files, no mode.
 ```
 
-This output was captured from the local fixture; the cursor is replaced here with `<returned-cursor>`. Match numbers belong to that snapshot and can differ in a new search. Use the actual cursor and visible match numbers from your own response:
+The cursor is represented here by `<returned-cursor>`. Match numbers belong to that snapshot and can differ in a new search. Use the actual cursor and visible match numbers from your own response:
 
 ```json
 { "mode": "inspect", "cursor": "<returned-cursor>", "matchIndices": [1, 2] }
@@ -72,33 +83,26 @@ In Pi's interactive terminal, Signal Grep presents the same result as a responsi
 
 This is a display-only boundary. The renderer does not change model-facing text, structured `details`, cursors, search policy, Metrics accounting, JSON/RPC/print output, or persisted state. If the current text/details shape cannot be recognized safely—or custom rendering fails—the Pi row falls back to the original result text.
 
-## Reproducible comparison
+## Local verification
 
-Run the local context-shape benchmark:
+Run the repository quality gates before contributing:
 
 ```bash
-bun run benchmark
+bun run check
+bun run pack:check
 ```
 
-It creates temporary files, runs Pi's real built-in grep and Signal Grep, reports current response sizes, and removes the fixture. Its behavioral checks cover:
-
-| Scenario                | Pi built-in grep                                              | Signal Grep                                                                                             |
-| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Compact 33-match search | Returns the 33 matching lines                                 | Returns all 33 lines directly, with occurrence and navigation metadata                                  |
-| Broad 233-match search  | Returns up to 100 matching lines and an explicit limit notice | Reports the exact 233-match total, file distribution, bounded real samples, and a cursor                |
-| Explicit pagination     | Uses its configured output limit                              | Reconstructs the 33 retained matches as 20 + 13 without loss or duplication                             |
-| Context pressure        | Uses the built-in output policy                               | Returns the same 18-match fixture directly in `full`, or as a bounded summary in `tight` and `critical` |
-
-A shorter first response does not establish lower task cost: later inspections, cursor calls, model reasoning, and correctness all matter. The benchmark measures result shape and text bytes, not search speed, exact model tokens, task success, or money saved. Compact searches can produce more text because Signal Grep includes evidence metadata.
+These commands validate contracts and package contents. They do not measure model performance, task-level token use, cost, coverage, or test success in a user repository.
 
 ## Requirements
 
 ### Runtime
 
 - Pi 0.84.3 or newer
-- Node.js 22+ or Bun 1.4+
+- Node.js 22.19+ or Bun 1.4+
 - [`ripgrep`](https://github.com/BurntSushi/ripgrep) available as `rg` on `PATH`
 - Optional [Universal Ctags](https://docs.ctags.io/) with JSON output on `PATH` for symbol-level inspection
+- Pinned `@ast-grep/napi` and `@ast-grep/lang-go` packages installed with the plugin for JS/TS/TSX/Go syntax. No Go compiler, Ctags or network request is required for these parser-backed operations.
 
 ### Development
 
@@ -161,24 +165,30 @@ Supported values are `"en"` and `"zh-CN"`. Existing config files without `locale
 
 The extension registers one tool: `signal_grep` by default, or `grep` in override mode.
 
-| Parameter      | Type                                    | Default    | Purpose                                                                                       |
-| -------------- | --------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
-| `pattern`      | string                                  | —          | Regex or literal text; required for a new search                                              |
-| `path`         | string                                  | `.`        | File or directory relative to the working directory; with a cursor, selects one retained file |
-| `paths`        | string[]                                | —          | Select 1–20 exact retained files together; valid only with a cursor                           |
-| `glob`         | string or string[]                      | `[]`       | Include globs                                                                                 |
-| `exclude`      | string or string[]                      | `[]`       | Exclude globs                                                                                 |
-| `literal`      | boolean                                 | `false`    | Use fixed-string matching                                                                     |
-| `ignoreCase`   | boolean                                 | mode-aware | Force insensitive or sensitive matching                                                       |
-| `hidden`       | boolean                                 | `true`     | Include hidden files; `.git` is always excluded                                               |
-| `context`      | number                                  | `0`        | Before/after context, clamped to 0–20                                                         |
-| `limit`        | number                                  | adaptive   | Maximum matches per page, clamped to 1–100                                                    |
-| `mode`         | `auto`, `summary`, `matches`, `inspect` | `auto`     | Select adaptive, summary, detail, or code-block inspection                                    |
-| `line`         | number                                  | —          | 1-indexed source line for single-target `path` inspection                                     |
-| `matchIndex`   | number                                  | —          | Stable 1-based retained match selected by cursor-scoped `inspect`; replaces `path` and `line` |
-| `matchIndices` | number[]                                | —          | Inspect 1–5 visible match numbers together; requires `cursor` and `mode="inspect"`            |
-| `targets`      | `{path: string, line: number}[]`        | —          | Inspect 1–5 known source locations with `mode="inspect"`, without a cursor                    |
-| `cursor`       | string                                  | —          | Continue or select from a stable retained snapshot                                            |
+| Parameter      | Type                                                                   | Default    | Purpose                                                                                       |
+| -------------- | ---------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| `pattern`      | string                                                                 | —          | Regex or literal text; required for a new search                                              |
+| `path`         | string                                                                 | `.`        | File or directory relative to the working directory; with a cursor, selects one retained file |
+| `paths`        | string[]                                                               | —          | Select 1–20 exact retained files together; valid only with a cursor                           |
+| `glob`         | string or string[]                                                     | `[]`       | Include globs                                                                                 |
+| `exclude`      | string or string[]                                                     | `[]`       | Exclude globs                                                                                 |
+| `literal`      | boolean                                                                | `false`    | Use fixed-string matching                                                                     |
+| `ignoreCase`   | boolean                                                                | mode-aware | Force insensitive or sensitive matching                                                       |
+| `hidden`       | boolean                                                                | `true`     | Include hidden files; `.git` is always excluded                                               |
+| `context`      | number                                                                 | `0`        | Before/after context, clamped to 0–20                                                         |
+| `limit`        | number                                                                 | adaptive   | Maximum matches per page, clamped to 1–100                                                    |
+| `allOf`        | string[]                                                               | —          | Two or three distinct, case-sensitive literal terms; mutually exclusive with `pattern`/roles  |
+| `within`       | `file` or `function`                                                   | `file`     | Scope for `allOf`; function is JS/TS/TSX own-code only                                        |
+| `roles`        | role[]                                                                 | —          | Syntax-role filter for one ordinary pattern in JS/TS/TSX/Go                                   |
+| `changes`      | Git comparison object                                                  | —          | Fixed base/target, file/line scope and old/new side                                           |
+| `mode`         | `auto`, `summary`, `matches`, `inspect`, `outline`, `imports`, `tests` | `auto`     | Select search, source inspection or structural navigation                                     |
+| `line`         | number                                                                 | —          | 1-indexed source line for single-target `path` inspection                                     |
+| `matchIndex`   | number                                                                 | —          | Stable 1-based retained match selected by cursor-scoped `inspect`; replaces `path` and `line` |
+| `matchIndices` | number[]                                                               | —          | Inspect 1–5 visible match numbers together; requires `cursor` and `mode="inspect"`            |
+| `targets`      | `{path: string, line: number}[]`                                       | —          | Inspect 1–5 known source locations with `mode="inspect"`, without a cursor                    |
+| `cursor`       | string                                                                 | —          | Continue or select from a stable retained snapshot                                            |
+| `sourceCursor` | string                                                                 | —          | Continue missing source ranges with `mode="inspect"`                                          |
+| `symbol`       | string                                                                 | —          | Optional binding name for `imports` or `tests`                                                |
 
 When `ignoreCase` is omitted, additive `signal_grep` uses smart-case; override `grep` preserves Pi's built-in case-sensitive default.
 
@@ -229,8 +239,8 @@ Use `/signal-grep-metrics status` to inspect the active window without closing i
 5. Changed, newly discovered, unreadable, or uncached source revisions remain unverified. Their matching lines and counts are retained; `sourceUnverifiedFileCount` and text explain why current-file context and snapshot-scoped inspection are unavailable. Later source changes are also rejected.
 6. Retention above 50,000 matching lines is explicitly `partial`. The candidate-revision cap is separate and never truncates the matching set.
 7. Detail pages retain their match-count and 16 KiB limits. At most 20 occurrence ranges per matching line are displayed; all retained ranges remain in the snapshot, and text plus `occurrenceRangesOmitted`/`occurrenceMatchesTruncated` report display omissions. A dense line must not discard its path or stable match marker to fit.
-8. Lines over 500 source characters use excerpts. Matching lines and cursor inspections center the primary occurrence; source-range omissions and clipped source lines are reported in text and structured details. Source reads are limited to 5 MiB.
-9. Single and batch inspection share the same source-validation rules. An entire batch has one 16 KiB response limit, per-target outcomes, and deduplicated source lines. A returned target can still contain an explicitly bounded excerpt.
+8. Parser-backed inspection returns full valid UTF-8 source ranges whenever they fit. Larger ranges use raw-byte fragments and an executable version-bound `sourceCursor`; non-UTF-8 content is explicitly a lossy preview and cannot be continued. Source reads are limited to 5 MiB.
+9. Single and batch inspection share the same source-validation rules. An entire batch has one 16 KiB response limit, per-target outcomes, and deduplicated source ranges. A partial returned target includes a complete `sourceCursor` follow-up request.
 10. `.git` exclusions take precedence over user globs; explicit Git-internal search paths are rejected. Meaningful hidden files remain searchable by default.
 11. Invalid cursors or requests and runtime failures fail explicitly. Cancellation and protocol failures terminate and await owned subprocesses; cleanup failure is an error, not a successful empty result.
 
@@ -263,11 +273,11 @@ The [architecture](docs/ARCHITECTURE.md) explains ownership and lifecycle bounda
 
 Use one form at a time. `matchIndices` requires a cursor; `targets` forbids one. Batch fields cannot be combined with the single-target `path`, `line`, or `matchIndex`. Both arrays accept 1–5 entries. No configuration migration is required.
 
-The whole batch shares 16 KiB. Each `details.inspections` entry preserves its input index and reports `returned`, `deferred`, or `error`; returned entries identify a displayed source block. Overlapping lines from the same verified file revision appear once. Budget-deferred targets and bounded ranges can include a complete single-target `retry` request, also printed in the text. Retrying still respects single-inspection limits. Invalid requests fail before source access; cancellation and unexpected runtime failures fail the call instead of appearing as successful items.
+The whole batch shares 16 KiB. Each `details.inspections` entry preserves its input index and reports `returned` or `error`; returned entries identify a displayed source block. Overlapping ranges from the same verified file revision appear once. When a valid UTF-8 block does not fit, its text and details include a complete `sourceCursor` request for precisely the missing raw-byte ranges. Invalid requests fail before source access; cancellation and unexpected runtime failures fail the call instead of appearing as successful items.
 
-`complete` for a batch means every target returned bounded source, not that every enclosing symbol was returned in full. Each target's `source` describes its returned range, omitted lines, and clipped lines. Missing or changed snapshot revisions require refreshing the search; a current `path`/`line` request is a separate current-source inspection, not a substitute for snapshot verification.
+`complete` for a batch means every target's selected source range was returned. Each target's `source` describes returned and remaining byte ranges and, where applicable, the next complete request. Missing or changed snapshot revisions require refreshing the search; a current `path`/`line` request is a separate current-source inspection, not a substitute for snapshot verification.
 
-Universal Ctags is optional and is not downloaded automatically. The provider must support the actual JSON, line/end, and extras options. Proven symbol ranges are used when available; otherwise bounded source remains readable and structure status stays explicit. Missing providers, unsupported enclosing ranges, parse errors, oversized files, unavailable source, and changed source have distinct statuses. Direct inspections also recheck the revision after structure and source reads.
+For JS/TS/TSX, the installed parser determines implementation ranges without an external tool. Universal Ctags remains optional for unsupported worktree languages and is never downloaded automatically. Missing parsers or providers, parse errors, oversized files, unavailable source, and changed source have distinct statuses. Direct inspections recheck the source revision after parsing and reading.
 
 Match columns are UTF-16 positions for valid UTF-8 text; `b`-suffixed ranges use raw byte offsets for non-UTF-8 data. Raw ripgrep/Ctags protocol output is never sent to the model. Session shutdown clears retained snapshots.
 
@@ -275,7 +285,7 @@ Match columns are UTF-16 positions for valid UTF-8 text; `b`-suffixed ranges use
 
 - Search stays local.
 - The extension makes no network requests and has no telemetry.
-- `rg` and optional Universal Ctags are spawned directly with argument arrays; no shell is involved.
+- `rg`, the parser worker, and optional Universal Ctags are spawned directly with argument arrays; no shell is involved.
 - Search and inspection paths are confined to the working directory.
 - `.git` internals are always excluded.
 - Pi extensions run with the user's full permissions. Review third-party extension source before installation.

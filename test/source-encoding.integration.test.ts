@@ -30,9 +30,10 @@ for (const batch of [false, true]) {
       root,
     );
     expect(result.text).toContain("needle-target");
-    expect(result.text).toMatch(/^1: .*needle-target$/m);
-    expect(result.details.status).toBe("complete");
+    expect(result.text).toContain("lossy UTF-8 preview only");
+    expect(result.details.status).toBe("partial");
     const source = batch ? result.details.inspections?.[0]?.source : result.details.source;
+    expect(source?.complete).toBe(false);
     expect(source?.truncatedLines).toEqual([1]);
   });
 
@@ -45,13 +46,13 @@ for (const batch of [false, true]) {
     const cursor = summary.details.cursor;
     expect(cursor).toBeDefined();
     if (!cursor) throw new Error("Expected a snapshot cursor");
-    expect(summary.text).toContain("cr.txt:1 {match #1} aaaneedlebbb");
+    expect(summary.text).toContain("cr.txt:1 {match #1} [source preview lines 1-3]");
     const result = await service.search(
       { mode: "inspect", cursor, ...(batch ? { matchIndices: [1] } : { matchIndex: 1 }) },
       root,
     );
-    expect(result.text).toMatch(/^1: aaaneedlebbb$/m);
-    expect(result.text).toMatch(/^2: next$/m);
+    expect(result.text).toContain("1: aaa\rneedle\rbbb\r");
+    expect(result.text).toContain("2: next\r");
     expect(result.details.status).toBe("complete");
     const context = await service.search({ pattern: "needle", mode: "matches", context: 1 }, root);
     expect(context.text).toMatch(/^ 1: aaaneedlebbb/m);

@@ -22,7 +22,6 @@ import type { MatchRecord, SearchSnapshot, SourceRevision } from "./types.js";
 
 const RESULT_METADATA_RESERVE_BYTES = 1024;
 const RESULT_METADATA_RESERVE_CHARACTERS = 512;
-const MAX_PAGE_BODY_BYTES = MAX_RESULT_BYTES - RESULT_METADATA_RESERVE_BYTES;
 
 export class MatchPageSoftLimitError extends Error {
   constructor() {
@@ -60,6 +59,7 @@ export interface FormattedPage {
 
 export interface MatchPageOptions {
   resultTokenBudget?: number;
+  metadataReserveBytes?: number;
   include?: (match: MatchRecord, index: number) => boolean;
 }
 
@@ -223,6 +223,10 @@ export async function formatMatchPage(
   signal?: AbortSignal,
   options: MatchPageOptions = {},
 ): Promise<FormattedPage> {
+  const maxPageBodyBytes =
+    MAX_RESULT_BYTES - Math.max(RESULT_METADATA_RESERVE_BYTES, options.metadataReserveBytes ?? 0);
+  if (maxPageBodyBytes <= 0)
+    throw new Error("Continuation metadata exceeds the response byte budget; select fewer paths");
   const maxPageBodyCharacters = pageBodyCharacterLimit(options.resultTokenBudget);
   const cache: ContextCache = new Map();
   const omittedFiles = new Set<string>();
@@ -273,7 +277,7 @@ export async function formatMatchPage(
     let additionBytes = Buffer.byteLength(addition);
     let additionCharacters = addition.length;
     const exceedsBudget = () =>
-      outputBytes + additionBytes > MAX_PAGE_BODY_BYTES ||
+      outputBytes + additionBytes > maxPageBodyBytes ||
       outputCharacters + additionCharacters > maxPageBodyCharacters;
 
     if (exceedsBudget()) {
@@ -286,7 +290,7 @@ export async function formatMatchPage(
       additionBytes = Buffer.byteLength(addition);
       additionCharacters = addition.length;
     }
-    if (additionBytes > MAX_PAGE_BODY_BYTES) {
+    if (additionBytes > maxPageBodyBytes) {
       throw new Error("A single match exceeds the reserved result budget");
     }
     if (additionCharacters > maxPageBodyCharacters) throw new MatchPageSoftLimitError();
