@@ -70,7 +70,7 @@ function isNonNegativeSafeInteger(value: number): boolean {
 function hasRecognizableDetails(
   details: SignalGrepDetails | undefined,
 ): details is SignalGrepDetails {
-  if (!details || details.version !== 1) return false;
+  if (!details || details.version !== 1 || details.analysis !== undefined) return false;
   if (!SEARCH_MODES.has(details.mode)) return false;
   if (details.status !== "complete" && details.status !== "partial") return false;
   const counts = [

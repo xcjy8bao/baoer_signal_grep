@@ -1,3 +1,8 @@
+import type { AnalysisDetails } from "./analysis-types.js";
+import type { SourceFragment } from "./source-pages.js";
+import type { ByteRange, SourceReference } from "./source-document.js";
+import type { SignalGrepInput } from "./service.js";
+
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 100;
 export const DEFAULT_RESULT_TOKEN_BUDGET = 2_000;
@@ -24,7 +29,14 @@ export const MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
 export const MAX_SOURCE_REVISION_FILES = 50_000;
 
-export type SearchMode = "auto" | "summary" | "matches" | "inspect";
+export type SearchMode =
+  | "auto"
+  | "summary"
+  | "matches"
+  | "inspect"
+  | "outline"
+  | "imports"
+  | "tests";
 
 export type ContextBudgetTier = keyof typeof CONTEXT_BUDGET_POLICY.resultTokenBudgets;
 
@@ -98,6 +110,12 @@ export interface SourceExcerptDetails {
   omittedBefore: number;
   omittedAfter: number;
   truncatedLines: number[];
+  reference?: SourceReference;
+  targetRanges?: ByteRange[];
+  fragments?: SourceFragment[];
+  remainingRanges?: ByteRange[];
+  complete?: boolean;
+  nextRequest?: SignalGrepInput;
 }
 
 export interface InspectRetry {
@@ -170,6 +188,9 @@ export interface SignalGrepDetails {
   returnedMatches: number;
   snapshotComplete: boolean;
   cursor?: string;
+  nextRequest?: SignalGrepInput;
+  analysis?: AnalysisDetails;
+  sourceBlocks?: { path: string; source: SourceExcerptDetails }[];
   summaryFilesShown?: number;
   summaryOffset?: number;
   selectedPaths?: string[];

@@ -184,7 +184,9 @@ function createOccurrences(
   return occurrences;
 }
 
-function fileScopeArguments(request: SearchRequest): string[] {
+export function fileScopeArguments(
+  request: Pick<SearchRequest, "hidden" | "glob" | "exclude">,
+): string[] {
   const args: string[] = [];
   if (request.hidden) args.push("--hidden");
   for (const glob of request.glob) args.push("--glob", glob);
@@ -199,6 +201,7 @@ function fileScopeArguments(request: SearchRequest): string[] {
 
 export function buildRipgrepArguments(request: SearchRequest, cwd: string): string[] {
   const args = [
+    "--no-config",
     "--json",
     "--line-number",
     "--color=never",
@@ -206,15 +209,23 @@ export function buildRipgrepArguments(request: SearchRequest, cwd: string): stri
     ...fileScopeArguments(request),
   ];
 
-  if (request.literal) args.push("--fixed-strings");
-  if (request.ignoreCase === true) args.push("--ignore-case");
-  else if (request.ignoreCase === false) args.push("--case-sensitive");
-  else args.push("--smart-case");
+  args.push(...patternArguments(request));
 
   const searchPath = resolve(cwd, request.path ?? ".");
   assertSearchPathInsideCwd(searchPath, cwd);
   args.push("--", request.pattern, searchPath);
   return args;
+}
+
+export function patternArguments(request: Pick<SearchRequest, "literal" | "ignoreCase">): string[] {
+  return [
+    ...(request.literal ? ["--fixed-strings"] : []),
+    request.ignoreCase === true
+      ? "--ignore-case"
+      : request.ignoreCase === false
+        ? "--case-sensitive"
+        : "--smart-case",
+  ];
 }
 
 export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
@@ -291,7 +302,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     try {
       const before = await captureCandidateRevisions(
         executable,
-        ["--files", "--null", ...fileScopeArguments(request), "--", searchPath],
+        ["--no-config", "--files", "--null", ...fileScopeArguments(request), "--", searchPath],
         cwd,
         maxSourceRevisionFiles,
         signal,

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { EvidenceService, isEvidenceRequest } from "./evidence-service.js";
+import type { GitChangeRequest } from "./git-source.js";
+import type { SyntaxRoleName } from "./syntax.js";
 import { resolve } from "node:path";
 import { CursorError, SignalGrepError } from "./errors.js";
-import { inspectSource } from "./inspect.js";
-import { inspectSourceBatch } from "./inspect-batch.js";
 import {
   formatMatchPage,
   formatNormalBaseline,
@@ -10,6 +11,7 @@ import {
   type MatchPageOptions,
 } from "./format.js";
 import { formatSummary } from "./summary.js";
+import { summarySourcePreviews } from "./summary-previews.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
@@ -35,6 +37,12 @@ export interface SignalGrepInput extends RawSearchInput {
   matchIndices?: number[];
   targets?: InspectTarget[];
   line?: number;
+  sourceCursor?: string;
+  allOf?: string[];
+  within?: "file" | "function";
+  roles?: SyntaxRoleName[];
+  changes?: GitChangeRequest;
+  symbol?: string;
 }
 
 export interface SignalGrepServiceOptions {
@@ -180,14 +188,16 @@ export class SignalGrepService {
   readonly #runRipgrep: RipgrepRunner;
   readonly #snapshots: SnapshotStore;
   readonly #summaryFileLimit: number;
-  readonly #structure: CodeStructureProvider | undefined;
+  readonly #evidence: EvidenceService;
+  #lifecycle = new AbortController();
+  readonly #active = new Set<Promise<SignalGrepResult>>();
   readonly #reusableSummarySnapshots = new WeakSet<SearchSnapshot>();
 
   constructor(options: SignalGrepServiceOptions) {
     this.#runRipgrep = options.runRipgrep;
     this.#snapshots = options.snapshots ?? new SnapshotStore();
     this.#summaryFileLimit = options.summaryFileLimit ?? DEFAULT_SUMMARY_FILE_LIMIT;
-    this.#structure = options.structure;
+    this.#evidence = new EvidenceService(this.#runRipgrep, this.#snapshots, options.structure);
   }
 
   async search(
@@ -196,36 +206,33 @@ export class SignalGrepService {
     signal?: AbortSignal,
     options: SignalGrepSearchOptions = {},
   ): Promise<SignalGrepResult> {
+    const combined = signal
+      ? AbortSignal.any([signal, this.#lifecycle.signal])
+      : this.#lifecycle.signal;
+    const request = this.#search(input, cwd, combined, options);
+    this.#active.add(request);
+    try {
+      return await request;
+    } finally {
+      this.#active.delete(request);
+    }
+  }
+
+  async #search(
+    input: SignalGrepInput,
+    cwd: string,
+    signal?: AbortSignal,
+    options: SignalGrepSearchOptions = {},
+  ): Promise<SignalGrepResult> {
+    if (
+      input.cursor !== undefined &&
+      (typeof input.cursor !== "string" || input.cursor.trim().length === 0)
+    ) {
+      throw new CursorError("Invalid cursor. Copy a nonempty cursor from a previous result.");
+    }
     const mode = input.mode ?? "auto";
     const contextBudget = selectContextBudget(input, mode, options.contextBudget);
-    if (mode === "inspect") {
-      const searchOptions = [
-        "pattern",
-        "glob",
-        "exclude",
-        "literal",
-        "ignoreCase",
-        "hidden",
-        "context",
-        "limit",
-      ] as const;
-      const unsupported = searchOptions.filter((key) => input[key] !== undefined);
-      if (unsupported.length > 0) {
-        throw new SignalGrepError(
-          `Search options cannot be used with mode=inspect: ${unsupported.join(", ")}. Inspection selects its own bounded source window. Retry with only mode="inspect" and either path+line, cursor+matchIndex/matchIndices, or targets=[{path,line}]; omit all search options, including pattern, context and limit.`,
-        );
-      }
-      if (input.paths !== undefined) {
-        throw new SignalGrepError("paths cannot be used with mode=inspect");
-      }
-      const inspectOptions = this.#structure
-        ? { snapshots: this.#snapshots, structure: this.#structure }
-        : { snapshots: this.#snapshots };
-      if (input.matchIndices !== undefined || input.targets !== undefined) {
-        return inspectSourceBatch(input, cwd, signal, inspectOptions);
-      }
-      return inspectSource(input, cwd, signal, inspectOptions);
-    }
+    if (isEvidenceRequest(input)) return this.#evidence.search(input, cwd, signal);
     if (input.cursor) return this.#continue(input, cwd, signal);
     if (input.paths !== undefined) {
       throw new SignalGrepError("paths can only select retained files from a cursor");
@@ -255,7 +262,7 @@ export class SignalGrepService {
           details: baseDetails(snapshot, mode),
         };
       } else if (mode === "summary") {
-        result = this.#summary(snapshot, mode);
+        result = await this.#summary(snapshot, mode, cwd, signal);
       } else if (mode === "matches") {
         result = await this.#page(snapshot, 0, mode, signal);
       } else {
@@ -265,12 +272,12 @@ export class SignalGrepService {
             input.limit !== undefined ||
             (snapshot.snapshotComplete && page.nextOffset === snapshot.matches.length)
               ? this.#pageResult(snapshot, 0, mode, page)
-              : this.#summary(snapshot, mode, 0, contextBudget);
+              : await this.#summary(snapshot, mode, cwd, signal, 0, contextBudget);
         } catch (error) {
           // Auto can summarize evidence that does not fit its soft detail target.
           // Explicit limits, hard byte bounds, and runtime failures still fail clearly.
           if (input.limit !== undefined || !(error instanceof MatchPageSoftLimitError)) throw error;
-          result = this.#summary(snapshot, mode, 0, contextBudget);
+          result = await this.#summary(snapshot, mode, cwd, signal, 0, contextBudget);
         }
       }
 
@@ -283,7 +290,17 @@ export class SignalGrepService {
   }
 
   clear(): void {
+    this.#lifecycle.abort();
+    this.#lifecycle = new AbortController();
     this.#snapshots.clear();
+    this.#evidence.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    this.clear();
+    const pending = [...this.#active];
+    await Promise.allSettled(pending);
+    await this.#evidence.shutdown();
   }
 
   get snapshotCount(): number {
@@ -314,7 +331,7 @@ export class SignalGrepService {
       if (offset >= snapshot.fileCounts.size) {
         throw new CursorError("Cursor is already at the end of the file summary.");
       }
-      return this.#summary(snapshot, mode, offset);
+      return this.#summary(snapshot, mode, cwd, signal, offset);
     }
 
     const selection = cursorPathSelection(input, cwd);
@@ -342,12 +359,14 @@ export class SignalGrepService {
     return result;
   }
 
-  #summary(
+  async #summary(
     snapshot: SearchSnapshot,
     mode: SearchMode,
+    cwd: string,
+    signal: AbortSignal | undefined,
     offset = 0,
     budget?: ContextBudget,
-  ): SignalGrepResult {
+  ): Promise<SignalGrepResult> {
     this.#reusableSummarySnapshots.add(snapshot);
     const summary = formatSummary(
       snapshot,
@@ -366,29 +385,51 @@ export class SignalGrepService {
         : "No retained file summaries are available.";
     const omitted =
       summary.omitted > 0 ? `\n… ${String(summary.omitted)} lower-ranked files remain.` : "";
-    const samples =
-      summary.previews.length > 0
-        ? `\n\nSamples: first retained match per shown file, not relevance-ranked or exhaustive.\n${summary.previews}`
-        : "";
-    const sampleOmissions =
-      summary.previewsOmitted > 0
-        ? `\n[${String(summary.previewsOmitted)} file(s) have no sample on this page.]`
-        : "";
-    const navigation = cursor
-      ? `\n\nSnapshot cursor="${cursor}".\nInspect samples: mode="inspect", cursor, matchIndices=[one or more visible match numbers, max ${String(MAX_INSPECT_TARGETS)}].\nRetrieve matching lines: cursor with path or paths selecting exact files, no mode.${summary.hasNext ? '\nMore file summaries: cursor with mode="summary".' : ""}`
+    const preview = await summarySourcePreviews(
+      snapshot,
+      summary.shownPaths,
+      summary.previewByteBudget,
+      cwd,
+      signal,
+    );
+    const sampleText = preview.text || summary.previews;
+    const indices = preview.text ? preview.indices : summary.sampleIndices;
+    const samples = sampleText
+      ? `\n\nSamples: bounded source windows; not relevance-ranked or exhaustive.\n${sampleText}`
       : "";
-    const text = `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).\n${fileRange}\n\n${summary.body}${omitted}${samples}${sampleOmissions}${navigation}${sourceVerificationNote(details)}`;
+    const sampleOmissions = `\n[Preview limits: at most 5 source files, 2 non-overlapping windows/file, 7 lines/window. File rows and navigation take priority; shown ${preview.text ? preview.windows : summary.previewsShown} previews.]${preview.reasons.length ? `\n[${preview.reasons.map((reason) => reason.slice(0, 200)).join("; ")}]` : ""}`;
+    const nextRequest =
+      cursor && summary.hasNext ? { cursor, mode: "summary" as const } : undefined;
+    const inspectRequest =
+      cursor && indices.length
+        ? { mode: "inspect" as const, cursor, matchIndices: indices.slice(0, MAX_INSPECT_TARGETS) }
+        : undefined;
+    const matchesRequest =
+      cursor && summary.shownPaths.length
+        ? { cursor, paths: summary.shownPaths.slice(0, 1) }
+        : undefined;
+    const followUp = cursor
+      ? `\n\nSnapshot cursor="${cursor}".${inspectRequest ? `\nInspect samples: ${JSON.stringify(inspectRequest)}` : ""}${matchesRequest ? `\nRetrieve matching lines: ${JSON.stringify(matchesRequest)}` : ""}${nextRequest ? `\nNext request: ${JSON.stringify(nextRequest)}` : ""}`
+      : "";
+    const text = `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).\n${fileRange}\n\n${summary.body}${omitted}${samples}${sampleOmissions}${followUp}${sourceVerificationNote(details)}`;
 
     return {
       text,
       details: {
         ...details,
         ...(cursor ? { cursor } : {}),
+        ...(nextRequest ? { nextRequest } : {}),
         summaryOffset: summary.offset,
         summaryFilesShown: summary.shown,
         summaryFilesOmitted: summary.omitted,
-        summaryPreviewsShown: summary.previewsShown,
-        summaryPreviewsOmitted: summary.previewsOmitted,
+        summaryPreviewsShown: preview.text ? preview.windows : summary.previewsShown,
+        summaryPreviewsOmitted: Math.max(
+          0,
+          summary.shown -
+            (preview.text
+              ? new Set(indices.map((index) => snapshot.matches[index - 1]?.displayPath)).size
+              : summary.previewsShown),
+        ),
       },
     };
   }
@@ -406,6 +447,8 @@ export class SignalGrepService {
 
     const pageOptions = selection
       ? {
+          metadataReserveBytes:
+            1536 + Buffer.byteLength(JSON.stringify({ paths: selection.labels })),
           include: (match: SearchSnapshot["matches"][number]) =>
             selection.absolutePaths.has(match.absolutePath),
         }
@@ -462,7 +505,7 @@ export class SignalGrepService {
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
     const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor
-      ? `\n\nContinue with cursor="${cursor}"${selectedPaths ? " and the same path selection" : ""}.`
+      ? `\n\nContinue with cursor="${cursor}".\nNext request: ${JSON.stringify({ cursor, ...(selectedPaths ? { paths: selectedPaths } : {}) })}`
       : "";
     const missingSelectionNote =
       selectionMissingPaths.length > 0
@@ -497,6 +540,9 @@ export class SignalGrepService {
           ? { occurrenceMatchesTruncated: page.occurrenceMatchesTruncated }
           : {}),
         ...(cursor ? { cursor } : {}),
+        ...(cursor
+          ? { nextRequest: { cursor, ...(selectedPaths ? { paths: selectedPaths } : {}) } }
+          : {}),
         ...(selectedPaths ? { selectedPaths } : {}),
         ...(selectionMissingPaths.length > 0 ? { selectionMissingPaths } : {}),
         ...(page.contextOmittedFiles.length > 0

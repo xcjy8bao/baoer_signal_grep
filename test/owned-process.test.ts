@@ -12,6 +12,44 @@ function processExists(pid: number): boolean {
 }
 
 describe("owned search process", () => {
+  test("writes bounded stdin and uses the supplied environment", async () => {
+    const received: Buffer[] = [];
+    const input = Buffer.from("first\0second\nthird\0");
+    const result = await runOwnedProcess(
+      {
+        executable: process.execPath,
+        args: [
+          "-e",
+          'process.stdout.write(process.env.SIGNAL_GREP_INPUT_TEST ?? "missing"); process.stdin.pipe(process.stdout);',
+        ],
+        cwd: process.cwd(),
+        env: { ...process.env, SIGNAL_GREP_INPUT_TEST: "present:" },
+        input,
+      },
+      async (stdout) => {
+        for await (const chunk of stdout) received.push(Buffer.from(chunk));
+      },
+    );
+    expect(result.code).toBe(0);
+    expect(Buffer.concat(received)).toEqual(Buffer.concat([Buffer.from("present:"), input]));
+  }, 10_000);
+
+  test("cancellation closes a child with blocked stdin", async () => {
+    const controller = new AbortController();
+    const operation = runOwnedProcess(
+      {
+        executable: process.execPath,
+        args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000);'],
+        cwd: process.cwd(),
+        input: Buffer.alloc(8 * 1024 * 1024),
+        signal: controller.signal,
+      },
+      (stdout) => consumeCappedLines(stdout, () => controller.abort()),
+    );
+    expect(operation).rejects.toMatchObject({ name: "AbortError" });
+    await operation.catch(() => {});
+  }, 10_000);
+
   test("waits for forced process cleanup after a protocol consumer fails", async () => {
     let pid = 0;
     try {

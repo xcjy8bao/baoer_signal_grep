@@ -4,6 +4,30 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-08-31
+
+### Added
+
+- Reliable JS/TS/TSX source parsing now identifies concrete implementations, including methods, private/static/accessor members, arrows, generics and JSX-adjacent syntax. Go syntax roles are also supported without requiring a Go toolchain at query time.
+- `mode="inspect"` returns complete UTF-8 source whenever the selected implementation fits. Larger source is represented as raw byte fragments with an executable `sourceCursor` continuation that remains bound to the same worktree revision or Git commit/blob.
+- Batched inspection merges same-file overlapping ranges before assigning the shared 16 KiB output budget, reads/parses a file once per request, and gives unused budget to later source blocks.
+- Explicit `allOf` accepts two or three case-sensitive literal terms. It can require the terms in one file or, for JS/TS/TSX, in one implementation's own code while excluding nested functions, comments, static strings, regular expressions and type areas.
+- A single-pattern `roles` filter distinguishes declaration, call, import, export, comment, string, JSX text, code and unknown occurrences in JS/TS/TSX/Go. Go call-versus-conversion and short-declaration ambiguity are labelled as candidates.
+- `changes` searches a fixed Git comparison across changed files or only one side's changed lines. Worktree comparisons use final working-tree content and include unignored untracked files; historical inspection stays pinned to commit/blob evidence.
+- `mode="outline"` pages version-bound JS/TS/TSX symbols. `mode="imports"` follows bounded static named/default ESM import and named re-export links. `mode="tests"` reports direct, indirect and weak related-test candidates without claiming coverage or test success.
+
+### Changed
+
+- Broad summaries now reserve file navigation first, then show bounded source preview windows: at most 30 file rows, five previewed files, two non-overlapping windows per file and seven lines per window.
+- Advanced analysis output uses its own units (`files`, `functions`, `symbols`, relationships or evidence items) and is excluded from the legacy search-text Metrics comparison.
+- Runtime parsing uses installed, pinned ast-grep native packages in an owned short-lived process. Runtime configuration cannot preload code, load environment files, or install missing parsers.
+
+### Fixed
+
+- Empty and whitespace-only cursors fail before scanning. Every returned follow-up is complete JSON with its required cursor and retained path selection.
+- Source continuation rejects changed, expired, malformed and forged offsets; replaying the same valid token returns the same page.
+- Historical Git reads do not invoke repository hooks, external diff/text conversion, filters, lazy fetches or user ripgrep configuration. Current ignore rules continue to protect historical content.
+
 ## [0.5.6] - 2026-08-31
 
 ### Added
@@ -134,6 +158,6 @@ Publisher: **宝儿**.
 - Stable in-memory cursor snapshots with explicit partial-state reporting.
 - Bun 1.4 and Node.js 22 compatibility validation.
 - Type-aware Oxlint and deterministic Oxfmt quality gates.
-- Reproducible built-in-versus-Signal-Grep context-shape benchmark.
+- Synthetic context-shape contract benchmark.
 - English and Simplified Chinese documentation.
 - AI-specific pull request and review protocol.

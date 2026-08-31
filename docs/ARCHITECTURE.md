@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.6 connects real cross-file search samples, text-visible cursors, and bounded batch inspection. It also closes revision, context-pagination, Git-exclusion, occurrence-output, and child-process cleanup gaps. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.5.8 adds reliable parser-backed source boundaries, source-range continuation, explicit conjunctions and roles, fixed Git scopes, static ESM navigation, related-test candidates, and paged outlines. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read.
 
 ## Data flow
 
@@ -25,6 +25,13 @@ service.ts ── auto/summary/matches/inspect policy and response composition
   └─► inspect.ts / inspect-batch.ts ── source verification and bounded single/batch inspection
                    ├─► source.ts ───── file revisions, workspace paths, centered source excerpts
                    └─► structure.ts ── optional Ctags symbols, using owned-process.ts
+
+evidence-service.ts ── advanced-operation policy and analysis pagination
+  ├─► source-access.ts ── one verified source read and serialized parser ownership per request
+  ├─► syntax.ts ───────── owned ast-grep worker; JS/TS/TSX/Go facts only live in the request
+  ├─► source-inspection.ts / source-pages.ts / source-continuations.ts
+  ├─► evidence-candidates.ts / git-source.ts ── normal or fixed Git evidence, current privacy rules
+  └─► import-navigation.ts / test-navigation.ts ── bounded static links and test candidates
 
 runtime.ts ── session lifecycle, cancellation, cursor/metrics coordination
 index.ts / extension-controls.ts ── Pi schema, tool registration and commands
@@ -77,18 +84,18 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
 1. no matches → explicit complete empty result;
-2. `summary` → a count-ranked file page, first-retained-match samples that fit the budget, and a cursor in the text and details;
+2. `summary` → a count-ranked file page, bounded source-preview windows that fit the budget, and a cursor in the text and details;
 3. implicit `auto` complete result fits its resolved context budget → return every grouped detail directly;
 4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
 5. other `auto` results that exceed the adaptive budget or retention is partial → return a summary first;
 6. `matches` or a summary cursor → return one default-budget detail page, optionally filtered to one canonical set of retained files;
 7. a match cursor → continue only its bound selection;
-8. single or batch `inspect` → resolve one target or 1–5 targets, verify revisions, and return bounded source with proven structure when available;
+8. single or batch `inspect` → resolve one target or 1–5 targets, verify revisions, parse supported source once per request, and return complete source ranges or version-bound byte continuations;
 9. retention bound exceeded → explicit partial result.
 
 ### Output formatting
 
-`summary.ts` owns count-ranked file rows and samples. Each shown file contributes its first retained matching line if it fits; this is not relevance ranking, syntax interpretation, or exhaustive code coverage. Samples carry the retained path, line and stable match number. File rows and samples share the applicable response budget, with room reserved for cursor instructions, completeness, and omission notes. The service exposes `summaryPreviewsShown`/`summaryPreviewsOmitted` and never assumes that structured-only cursor metadata reaches the model.
+`summary.ts` owns count-ranked file rows and bounded previews. File rows are emitted first; preview selection is limited to five files, two non-overlapping windows per file and seven lines per window. Preview markers retain the path, line and stable match number, but they are not relevance ranking, syntax interpretation, or exhaustive code coverage. The service exposes `summaryPreviewsShown`/`summaryPreviewsOmitted` and never assumes that structured-only cursor metadata reaches the model.
 
 `format.ts` owns detail and normal-baseline output. Detail pages stop at the match-count, character or 16 KiB hard byte boundary. Every rendered matching line keeps its path, original line number, and stable snapshot index. At most `MAX_DISPLAYED_OCCURRENCES` (20) ranges are displayed per line; excess range counts are explicit in text and `occurrenceRangesOmitted`/`occurrenceMatchesTruncated`. The snapshot retains all parsed ranges. Dense same-line matches therefore cannot consume the budget until their identifying evidence disappears.
 
@@ -102,15 +109,11 @@ The normal-format Metrics baseline is rendered from the same retained matches, r
 
 ### Source ranges and structure inspection
 
-`source.ts` owns bounded current-file reads, revision comparison, workspace containment, and numbered source excerpts. It reserves response metadata and omission-marker space before selecting a centered range. The requested line remains in the excerpt; a cursor target additionally supplies the retained occurrence so a late match in a long line remains visible. Returned source metadata includes the exact displayed range, omitted lines before/after, and clipped line numbers. Reads are capped at 5 MiB; source lines are excerpted to 500 characters.
+`source-document.ts` owns the bounded (5 MiB) raw-byte document, UTF-8/UTF-16 offset mapping, revision binding and workspace containment. `source-access.ts` caches that document and serializes parser use for one request. For JS/TS/TSX, `syntax.ts` uses its owned ast-grep worker to identify complete implementation boundaries; unsupported languages can use optional Universal Ctags only for a worktree symbol range. Parser/provider absence, parse errors, oversized files, unavailable source and changed source remain distinct statuses.
 
-`inspect.ts` resolves the existing `path`/`line` or cursor/`matchIndex` forms and provides one verification/read boundary for both single and batch calls. Missing snapshot revisions fail closed. Direct current-source inspection also checks that the provider result and source read still correspond to the same revision. Provider absence may still return bounded source with `provider-unavailable`; it does not fabricate a symbol. Unavailable evidence yields an explicit partial result, while invalid requests, cancellation, and unexpected runtime failures reject.
+`source-inspection.ts` validates one cursor-bound or direct target, or a batch of 1–5 targets. It merges same-document ranges before allocating the single 16 KiB response budget, reads and parses each document only once, and reports one `details.inspections` item per input. Valid UTF-8 content is emitted as raw-byte fragments without line clipping. If a range remains, `source-continuations.ts` produces an executable version-bound `sourceCursor` for exactly those missing offsets; it rejects forged, expired or source-changed tokens, while valid replay is idempotent. Non-UTF-8 data is an explicit lossy preview and has no continuation. Cancellation, invalid request combinations and unexpected runtime failures reject rather than fabricate empty source.
 
-`inspect-batch.ts` validates either cursor-bound `matchIndices` or cursorless `targets`, each with 1–5 entries. It shares one 16 KiB response budget across metadata and source, executes targets sequentially, and reports one `details.inspections` item per input. Outcomes are `returned`, `deferred`, or `error`. Returned items reference deduplicated source blocks; overlapping lines are combined only for the same file and verified revision. Each target retains its own range/line omission metadata. Budget deferral and bounded ranges can include a complete single-target retry request in both text and details. Retry requests are guidance, not an automatic retry loop.
-
-A batch is complete when every requested target has returned bounded evidence; this does not imply that entire enclosing symbols fit. Source errors remain item-specific where the protocol defines them, but cancellation, invalid request combinations, and unexpected runtime failures fail the call. A failure must not be converted into fabricated empty source.
-
-`structure.ts` is the optional Universal Ctags capability provider. It validates the exact JSON, line/end, and extras options used by inspection, invokes Ctags without an unsupported `--` separator, and selects the smallest symbol with a proven enclosing range. `owned-process.ts` handles its lifecycle, including parse failures. Provider absence, unsupported ranges, protocol parse errors, oversized files, unavailable source, and changed source remain distinct statuses. No brace heuristic, LSP, persistent index, or symbol guess is used.
+A batch is complete when every selected source range has been returned. Source errors remain item-specific where the protocol defines them; overlapping same-version ranges appear once.
 
 ### Opt-in comparison metrics
 

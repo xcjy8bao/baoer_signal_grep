@@ -24,24 +24,6 @@ function service(structure?: CodeStructureProvider): SignalGrepService {
     ...(structure ? { structure } : {}),
   });
 }
-function enclosingSymbol(endLine: number): CodeStructureProvider {
-  return {
-    inspect: async () => ({
-      details: {
-        status: "available",
-        provider: "test-provider",
-        symbol: {
-          name: "container",
-          kind: "function",
-          scope: [],
-          range: { startLine: 1, endLine },
-        },
-        range: { startLine: 1, endLine },
-      },
-    }),
-  };
-}
-
 async function expectFailure(pending: Promise<unknown>, message: string): Promise<void> {
   const failure: unknown = await pending.catch((error: unknown) => error);
   expect(failure).toBeInstanceOf(Error);
@@ -49,28 +31,31 @@ async function expectFailure(pending: Promise<unknown>, message: string): Promis
 }
 
 describe("source inspection evidence", () => {
-  test("keeps a late Unicode match visible and reports line truncation in text and details", async () => {
+  test("returns complete late Unicode source when it fits the byte budget", async () => {
     const root = await fixture();
-    await writeFile(join(root, "long.ts"), `${"界".repeat(1_000)} needle-target\n`);
+    const source = `${"界".repeat(1_000)} needle-target\n`;
+    await writeFile(join(root, "long.ts"), source);
     const search = service();
     const summary = await search.search({ pattern: "needle-target", mode: "summary" }, root);
     const cursor = summary.details.cursor;
     if (!cursor) throw new Error("Expected a retained summary cursor");
     const result = await search.search({ mode: "inspect", cursor, matchIndex: 1 }, root);
     expect(result.text).toContain("needle-target");
-    expect(result.text).toContain("source line excerpts truncated: 1");
-    expect(result.details.source?.truncatedLines).toEqual([1]);
-    expect(result.details.lineContentTruncated).toBe(1);
+    expect(result.details.source?.complete).toBe(true);
+    expect(result.details.source?.truncatedLines).toEqual([]);
+    expect(result.details.source?.remainingRanges).toEqual([]);
+    expect(result.details.source?.fragments?.map((fragment) => fragment.text).join("")).toBe(
+      source,
+    );
+    expect(result.details.returnedMatches).toBe(0);
     expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
   });
 
   test("maps repeated retained targets to deduplicated source evidence", async () => {
     const root = await fixture();
-    await writeFile(
-      join(root, "sample.ts"),
-      "function container() {\n  needle first\n  needle second\n}\n",
-    );
-    const search = service(enclosingSymbol(4));
+    const source = "function container() {\n  // needle first\n  // needle second\n}";
+    await writeFile(join(root, "sample.ts"), `${source}\n`);
+    const search = service();
     const summary = await search.search({ pattern: "needle", mode: "summary" }, root);
     const cursor = summary.details.cursor;
     if (!cursor) throw new Error("Expected a retained summary cursor");
@@ -87,22 +72,25 @@ describe("source inspection evidence", () => {
       [2, 1, 1, "returned"],
       [3, 2, 1, "returned"],
     ]);
-    expect(result.text.match(/^2:   needle first$/gm)).toHaveLength(1);
-    expect(result.text.match(/^3:   needle second$/gm)).toHaveLength(1);
-    expect(result.details.returnedMatches).toBe(4);
+    expect(result.text.match(/^2:   \/\/ needle first$/gm)).toHaveLength(1);
+    expect(result.text.match(/^3:   \/\/ needle second$/gm)).toHaveLength(1);
+    expect(result.details.returnedMatches).toBe(0);
+    expect(result.details.sourceBlocks).toHaveLength(1);
+    expect(result.details.sourceBlocks?.[0]?.source.complete).toBe(true);
+    expect(
+      result.details.sourceBlocks?.[0]?.source.fragments?.map((fragment) => fragment.text).join(""),
+    ).toBe(source);
     expect(result.details.status).toBe("complete");
   });
 
   test("shares one byte budget across distant targets and reports omitted source ranges", async () => {
     const root = await fixture();
-    await writeFile(
-      join(root, "large.ts"),
-      Array.from(
-        { length: 1_000 },
-        (_, index) => `evidence-${String(index + 1)} ${"x".repeat(250)}`,
-      ).join("\n"),
-    );
-    const search = service(enclosingSymbol(1_000));
+    const source = `function container() {\n${Array.from(
+      { length: 1_000 },
+      (_, index) => `// evidence-${String(index + 2)} ${"x".repeat(250)}`,
+    ).join("\n")}\n}\n`;
+    await writeFile(join(root, "large.ts"), source);
+    const search = service();
     const lines = [50, 250, 500, 750, 950];
     const result = await search.search(
       { mode: "inspect", targets: lines.map((line) => ({ path: "large.ts", line })) },
@@ -111,18 +99,35 @@ describe("source inspection evidence", () => {
     expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
     expect(result.details.inspections).toHaveLength(5);
     for (const line of lines)
-      expect(result.text).toContain(`${String(line)}: evidence-${String(line)}`);
+      expect(result.text).toContain(`${String(line)}: // evidence-${String(line)}`);
     expect(
       result.details.inspections?.every(
         (item) =>
-          item.status === "returned" && item.block === 1 && (item.source?.omittedBefore ?? 0) > 0,
+          item.status === "returned" && item.block === 1 && item.structure?.status === "available",
       ),
     ).toBe(true);
-    expect(result.text).toContain("… omitted lines");
-    expect(result.text).toContain('"mode":"inspect","path":"large.ts"');
+    expect(result.details.sourceBlocks).toHaveLength(1);
+    const block = result.details.sourceBlocks?.[0]?.source;
+    expect(block?.complete).toBe(false);
+    expect(block?.remainingRanges?.length).toBeGreaterThan(0);
+    expect(result.text).toContain("missing byte ranges");
+    expect(result.text).toContain('"mode":"inspect","sourceCursor":');
+    if (!block?.nextRequest?.sourceCursor)
+      throw new Error("Expected executable source continuation");
+    const continued = await search.search(block.nextRequest, root);
+    expect(Buffer.byteLength(continued.text)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    expect(continued.details.source?.fragments?.length).toBeGreaterThan(0);
+    for (const fragment of continued.details.source?.fragments ?? []) {
+      expect(fragment.text).toBe(
+        Buffer.from(source).subarray(fragment.start, fragment.end).toString(),
+      );
+      expect(
+        block.fragments?.some((prior) => fragment.start < prior.end && prior.start < fragment.end),
+      ).toBe(false);
+    }
   });
 
-  test("returns executable retries when target excerpts cannot fit their shared budget", async () => {
+  test("returns executable gap continuations when target sources cannot fit their shared budget", async () => {
     const root = await fixture();
     const directory = Array.from(
       { length: 8 },
@@ -133,21 +138,50 @@ describe("source inspection evidence", () => {
       path: `${directory}/file-${String(index)}.ts`,
       line: 1,
     }));
-    await Promise.all(
-      targets.map((target) => writeFile(join(root, target.path), `${"界".repeat(1_000)}\n`)),
-    );
+    const source = `${"界".repeat(1_000)}\n`;
+    await Promise.all(targets.map((target) => writeFile(join(root, target.path), source)));
     const search = service();
     const result = await search.search({ mode: "inspect", targets }, root);
     expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
-    const deferred = result.details.inspections?.find((item) => item.status === "deferred");
-    expect(deferred?.retry).toBeDefined();
+    expect(result.details.inspections).toHaveLength(5);
+    expect(result.details.inspections?.every((item) => item.status === "returned")).toBe(true);
+    expect(result.details.sourceBlocks).toHaveLength(5);
     expect(result.details.status).toBe("partial");
     expect(result.details.snapshotComplete).toBe(false);
     expect(result.text).toContain("PARTIAL");
-    if (!deferred?.retry) throw new Error("Expected a retryable deferred target");
-    const retried = await search.search(deferred.retry, root);
-    expect(retried.details.source?.range.startLine).toBe(1);
-    expect(retried.details.returnedMatches).toBeGreaterThan(0);
+    expect(result.details.sourceBlocks?.some((block) => block.source.complete === false)).toBe(
+      true,
+    );
+    await Promise.all(
+      (result.details.sourceBlocks ?? []).map(async (block) => {
+        const fragments = [...(block.source.fragments ?? [])];
+        if (!block.source.complete) {
+          const next = block.source.nextRequest;
+          if (!next?.sourceCursor) throw new Error("Expected executable source continuation");
+          const continued = await search.search(next, root);
+          expect(Buffer.byteLength(continued.text)).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+          expect(continued.details.source?.reference?.path).toBe(block.path);
+          expect(continued.details.source?.complete).toBe(true);
+          expect(continued.details.source?.remainingRanges).toEqual([]);
+          expect(continued.details.returnedMatches).toBe(0);
+          fragments.push(...(continued.details.source?.fragments ?? []));
+        } else {
+          expect(block.source.nextRequest).toBeUndefined();
+          expect(block.source.remainingRanges).toEqual([]);
+        }
+        fragments.sort((left, right) => left.start - right.start);
+        let end = 0;
+        for (const fragment of fragments) {
+          expect(fragment.start).toBe(end);
+          expect(fragment.text).toBe(
+            Buffer.from(source).subarray(fragment.start, fragment.end).toString(),
+          );
+          end = fragment.end;
+        }
+        expect(end).toBe(Buffer.byteLength(source));
+        expect(fragments.map((fragment) => fragment.text).join("")).toBe(source);
+      }),
+    );
   });
 
   test("keeps independent targets available when another retained source changed", async () => {
@@ -173,7 +207,7 @@ describe("source inspection evidence", () => {
 
   test("does not combine different revisions of the same file inside a batch", async () => {
     const root = await fixture();
-    const file = join(root, "moving.ts");
+    const file = join(root, "moving.txt");
     await writeFile(file, "old evidence one\nold evidence two\n");
     let calls = 0;
     const search = service({
@@ -187,15 +221,22 @@ describe("source inspection evidence", () => {
       {
         mode: "inspect",
         targets: [
-          { path: "moving.ts", line: 1 },
-          { path: "moving.ts", line: 2 },
+          { path: "moving.txt", line: 1 },
+          { path: "moving.txt", line: 2 },
         ],
       },
       root,
     );
-    expect(result.text).toContain("old evidence one");
+    expect(calls).toBe(2);
+    expect(result.text).not.toContain("old evidence");
     expect(result.text).not.toContain("new evidence");
-    expect(result.details.inspections?.[1]?.structure?.status).toBe("source-changed");
+    expect(
+      result.details.inspections?.map((item) => [item.status, item.structure?.status]),
+    ).toEqual([
+      ["error", "source-changed"],
+      ["error", "source-changed"],
+    ]);
+    expect(result.details.sourceBlocks?.[0]?.source.fragments).toEqual([]);
     expect(result.details.status).toBe("partial");
   });
 
@@ -258,7 +299,7 @@ describe("source inspection evidence", () => {
 
   test("rejects ambiguous requests and propagates unexpected provider failures", async () => {
     const root = await fixture();
-    await writeFile(join(root, "valid.ts"), "evidence\n");
+    await writeFile(join(root, "valid.txt"), "evidence\n");
     const search = service();
     await expectFailure(
       search.search({ mode: "inspect", targets: [] }, root),
@@ -268,7 +309,7 @@ describe("source inspection evidence", () => {
       search.search(
         {
           mode: "inspect",
-          targets: Array.from({ length: 6 }, () => ({ path: "valid.ts", line: 1 })),
+          targets: Array.from({ length: 6 }, () => ({ path: "valid.txt", line: 1 })),
         },
         root,
       ),
@@ -276,10 +317,10 @@ describe("source inspection evidence", () => {
     );
     await expectFailure(
       search.search(
-        { mode: "inspect", targets: [{ path: "valid.ts", line: 1 }], path: "valid.ts" },
+        { mode: "inspect", targets: [{ path: "valid.txt", line: 1 }], path: "valid.txt" },
         root,
       ),
-      "cannot be combined",
+      "does not accept path",
     );
     await expectFailure(
       search.search({ mode: "inspect", matchIndices: [1] }, root),
@@ -295,14 +336,14 @@ describe("source inspection evidence", () => {
       },
     });
     await expectFailure(
-      broken.search({ mode: "inspect", targets: [{ path: "valid.ts", line: 1 }] }, root),
+      broken.search({ mode: "inspect", targets: [{ path: "valid.txt", line: 1 }] }, root),
       "provider programming failure",
     );
   });
 
   test("aborts the complete batch instead of reporting cancellation as an item error", async () => {
     const root = await fixture();
-    await writeFile(join(root, "valid.ts"), "evidence\n");
+    await writeFile(join(root, "valid.txt"), "evidence\n");
     const controller = new AbortController();
     let calls = 0;
     const search = service({
@@ -317,8 +358,8 @@ describe("source inspection evidence", () => {
         {
           mode: "inspect",
           targets: [
-            { path: "valid.ts", line: 1 },
-            { path: "valid.ts", line: 1 },
+            { path: "valid.txt", line: 1 },
+            { path: "valid.txt", line: 1 },
           ],
         },
         root,

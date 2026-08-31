@@ -10,6 +10,8 @@ interface OwnedProcessOptions {
   args: string[];
   cwd: string;
   signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
+  input?: Uint8Array;
 }
 
 /** Own the child until its streams close, including failed protocol consumers. */
@@ -17,12 +19,23 @@ export async function runOwnedProcess(
   options: OwnedProcessOptions,
   consumeOutput: (stdout: AsyncIterable<Uint8Array>) => Promise<void>,
 ): Promise<{ code: number | null; stderr: string }> {
-  const { executable, args, cwd, signal } = options;
+  const { executable, args, cwd, signal, env, input } = options;
   if (signal?.aborted) throw abortError();
-  const child = spawn(executable, args, {
-    cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
+  const spawnOptions = { cwd, windowsHide: true, ...(env ? { env } : {}) };
+  const child =
+    input === undefined
+      ? spawn(executable, args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(executable, args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
+  const inputComplete = new Promise<void>((resolveInput, rejectInput) => {
+    if (input === undefined || child.stdin === null) {
+      resolveInput();
+      return;
+    }
+    child.stdin.on("error", rejectInput);
+    child.stdin.end(input, (error?: Error | null) => {
+      if (error) rejectInput(error);
+      else resolveInput();
+    });
   });
   let closed = false;
   let spawnError: Error | undefined;
@@ -50,6 +63,7 @@ export async function runOwnedProcess(
 
   const terminate = () => {
     if (closed || forceTimer) return;
+    child.stdin?.destroy();
     child.kill("SIGTERM");
     forceTimer = setTimeout(() => {
       if (!closed) child.kill("SIGKILL");
@@ -62,7 +76,7 @@ export async function runOwnedProcess(
   if (signal?.aborted) terminate();
 
   try {
-    const [code] = await Promise.all([closePromise, consumeOutput(child.stdout)]);
+    const [code] = await Promise.all([closePromise, consumeOutput(child.stdout), inputComplete]);
     if (signal?.aborted) throw abortError();
     if (spawnError) throw spawnError;
     return { code, stderr: Buffer.concat(stderrChunks).toString("utf8") };

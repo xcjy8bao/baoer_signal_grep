@@ -38,6 +38,10 @@ export function signalGrepPromptGuidelines(
     `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
     `Use the file samples in ${toolName} summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
     `When source context is missing, use one ${toolName} batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
+    `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
+    `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
+    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
+    `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
     `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
   ];
   if (grepOwnerPackage === HASHLINE_PACKAGE) {
@@ -49,10 +53,79 @@ export function signalGrepPromptGuidelines(
 }
 
 const searchSchema = Type.Object({
+  allOf: Type.Optional(
+    Type.Array(Type.String(), {
+      minItems: 2,
+      maxItems: 3,
+      description:
+        "Explicit AND: 2-3 distinct case-sensitive literal terms, all in one file (default) or one function. Omit pattern, roles, literal and ignoreCase.",
+    }),
+  ),
+  within: Type.Optional(
+    StringEnum(["file", "function"] as const, {
+      description:
+        "Scope for allOf. function requires JS/TS/TSX and counts only that implementation's own code, excluding nested callbacks, strings/comments/types. Not proof of a shared execution path.",
+    }),
+  ),
+  roles: Type.Optional(
+    Type.Array(
+      StringEnum([
+        "declaration",
+        "call",
+        "import",
+        "export",
+        "comment",
+        "string",
+        "jsx-text",
+        "code",
+        "unknown",
+      ] as const),
+      {
+        minItems: 1,
+        description:
+          "Filter each single-pattern occurrence by syntax role (JS/TS/TSX/Go). Roles may be candidates, especially Go call/conversion ambiguity. Cannot combine with allOf.",
+      },
+    ),
+  ),
+  changes: Type.Optional(
+    Type.Object({
+      base: Type.Optional(
+        Type.String({
+          description: "Git base commit/ref; default HEAD, pinned to a commit at query time.",
+        }),
+      ),
+      target: Type.Optional(
+        Type.String({
+          description:
+            "Optional target commit/ref. Omit for final working-tree contents including unignored untracked files, not just the staged index.",
+        }),
+      ),
+      scope: StringEnum(["files", "lines"] as const, {
+        description:
+          "Search changed files or only changed lines. With allOf every term must lie on the chosen side's changed lines.",
+      }),
+      side: StringEnum(["new", "old"] as const, {
+        description:
+          "Choose final/new content or deleted/old content. Historical inspect and continuation remain bound to its commit/blob.",
+      }),
+    }),
+  ),
+  sourceCursor: Type.Optional(
+    Type.String({
+      description:
+        "Missing-source continuation token. Copy nextRequest exactly: mode=inspect plus sourceCursor only. Same token replays the same page; changed or expired sources fail clearly.",
+    }),
+  ),
+  symbol: Type.Optional(
+    Type.String({
+      description:
+        "Optional binding name for imports or tests navigation; never a whole-program call graph.",
+    }),
+  ),
   pattern: Type.Optional(
     Type.String({
       description:
-        "New search only: regex, or plain text with literal=true. Required for search; MUST be omitted for inspect and cursor continuation.",
+        "New search only: regex, or plain text with literal=true. Required for ordinary search; use allOf instead for explicit AND. Omit for inspect, outline, imports, tests and cursor continuation.",
     }),
   ),
   path: Type.Optional(
@@ -101,9 +174,9 @@ const searchSchema = Type.Object({
     }),
   ),
   mode: Type.Optional(
-    StringEnum(["auto", "summary", "matches", "inspect"] as const, {
+    StringEnum(["auto", "summary", "matches", "inspect", "outline", "imports", "tests"] as const, {
       description:
-        "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never search options such as pattern/context/limit.",
+        "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never pattern/context/limit. outline lists JS/TS/TSX symbols; imports follows static ESM binding links; tests finds related test candidates. These three use path, optional line/symbol, or cursor+matchIndex, without search options.",
     }),
   ),
   line: Type.Optional(
@@ -150,7 +223,16 @@ export function effectiveSignalGrepInput(
   config: OverrideConfig,
   overrideActive: boolean = config.overrideBuiltinGrep,
 ): SignalGrepInput {
-  if (!overrideActive || input.mode === "inspect" || input.cursor || input.ignoreCase !== undefined)
+  if (
+    !overrideActive ||
+    input.mode === "inspect" ||
+    input.mode === "outline" ||
+    input.mode === "imports" ||
+    input.mode === "tests" ||
+    input.allOf !== undefined ||
+    input.cursor ||
+    input.ignoreCase !== undefined
+  )
     return input;
   return { ...input, ignoreCase: false };
 }

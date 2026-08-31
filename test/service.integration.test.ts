@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { estimateTextTokens } from "../src/metrics.js";
 import { createRipgrepRunner } from "../src/rg.js";
 import { SignalGrepService } from "../src/service.js";
+import type { SignalGrepResult } from "../src/types.js";
 import { createTodoFixture, extractMatchIds, removeFixture } from "./helpers.js";
 
 const fixtures = new Set<string>();
@@ -27,8 +28,13 @@ describe("SignalGrepService with ripgrep", () => {
       "export class Client {\n  request() {\n    return true;\n  }\n}\n",
     );
     let providerCalls = 0;
+    let scans = 0;
+    const runner = createRipgrepRunner();
     const service = new SignalGrepService({
-      runRipgrep: createRipgrepRunner(),
+      runRipgrep: (...args) => {
+        scans += 1;
+        return runner(...args);
+      },
       structure: {
         inspect: async () => {
           providerCalls += 1;
@@ -51,11 +57,20 @@ describe("SignalGrepService with ripgrep", () => {
     });
 
     const result = await service.search({ mode: "inspect", path: "client.ts", line: 3 }, root);
-    expect(providerCalls).toBe(1);
-    expect(result.text).toContain("Client.request (method) lines 2-4");
-    expect(result.text).toContain("2:   request() {");
-    expect(result.text).toContain("[structure: available via test-provider]");
-    expect(result.details.structure).toMatchObject({ status: "available" });
+    expect(providerCalls).toBe(0);
+    expect(scans).toBe(0);
+    expect(result.text).toContain("request (method_definition) lines 2-4");
+    expect(result.text).toContain("request() {");
+    expect(result.text).toContain("[structure: available via tree-sitter]");
+    expect(result.details.structure).toMatchObject({
+      status: "available",
+      provider: "tree-sitter",
+      symbol: { scope: ["Client"], range: { startLine: 2, endLine: 4 } },
+    });
+    expect(result.details.source?.complete).toBe(true);
+    expect(result.details.source?.fragments?.map((fragment) => fragment.text).join("")).toBe(
+      "request() {\n    return true;\n  }",
+    );
   });
 
   test("returns a compact complete search directly instead of forcing an extra turn", async () => {
@@ -294,6 +309,7 @@ describe("SignalGrepService with ripgrep", () => {
 
     const result = await service.search({ pattern: "TODO", mode: "summary" }, "/tmp");
     expect(estimateTextTokens(result.text)).toBeLessThanOrEqual(2_200);
+    expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16 * 1024);
     expect(result.details.summaryFilesShown).toBeLessThan(30);
     expect(result.details.summaryFilesOmitted).toBeGreaterThan(0);
   });
@@ -580,27 +596,10 @@ describe("SignalGrepService with ripgrep", () => {
 
   test("keeps the requested line visible inside an oversized enclosing symbol", async () => {
     const root = await fixture();
-    await writeFile(
-      join(root, "huge-symbol.ts"),
-      `${Array.from({ length: 1_000 }, (_, index) => `const line${String(index + 1)} = "${"x".repeat(100)}";`).join("\n")}\n`,
-    );
+    const source = `function huge() {\n${Array.from({ length: 998 }, (_, index) => `const line${String(index + 2)} = "${"x".repeat(100)}";`).join("\n")}\n}\n`;
+    await writeFile(join(root, "huge-symbol.ts"), source);
     const service = new SignalGrepService({
       runRipgrep: createRipgrepRunner(),
-      structure: {
-        inspect: async () => ({
-          details: {
-            status: "available",
-            provider: "test-provider",
-            symbol: {
-              name: "huge",
-              kind: "function",
-              scope: [],
-              range: { startLine: 1, endLine: 1_000 },
-            },
-            range: { startLine: 1, endLine: 1_000 },
-          },
-        }),
-      },
     });
 
     const result = await service.search(
@@ -609,7 +608,55 @@ describe("SignalGrepService with ripgrep", () => {
     );
 
     expect(result.text).toContain("950: const line950");
-    expect(result.text).toContain("source range centered on target");
+    expect(result.details.structure).toMatchObject({
+      status: "available",
+      provider: "tree-sitter",
+      symbol: { name: "huge", range: { startLine: 1, endLine: 1_000 } },
+    });
+    expect(result.details.status).toBe("partial");
+    expect(result.details.source?.complete).toBe(false);
+    expect(result.text).toContain("missing byte ranges");
     expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16 * 1024);
+    expect(result.details.nextRequest?.sourceCursor).toBeDefined();
+    const fragments = [...(result.details.source?.fragments ?? [])];
+    let pages = 1;
+    async function readRemaining(current: SignalGrepResult): Promise<void> {
+      const next = current.details.nextRequest;
+      if (!next) {
+        expect(current.details.status).toBe("complete");
+        expect(current.details.source?.complete).toBe(true);
+        expect(current.details.source?.remainingRanges).toEqual([]);
+        return;
+      }
+      expect(next.sourceCursor).toBeDefined();
+      expect(pages).toBeLessThan(20);
+      pages += 1;
+      const continued = await service.search(next, root);
+      expect(Buffer.byteLength(continued.text)).toBeLessThanOrEqual(16 * 1024);
+      expect(continued.details.source?.reference).toEqual(result.details.source?.reference);
+      expect(continued.details.source?.fragments?.[0]?.start).toBe(
+        current.details.source?.remainingRanges?.[0]?.start,
+      );
+      expect(continued.details.source?.fragments?.length).toBeGreaterThan(0);
+      for (const fragment of continued.details.source?.fragments ?? []) {
+        expect(fragment.text).toBe(
+          Buffer.from(source).subarray(fragment.start, fragment.end).toString(),
+        );
+        expect(
+          fragments.some((prior) => fragment.start < prior.end && prior.start < fragment.end),
+        ).toBe(false);
+      }
+      fragments.push(...(continued.details.source?.fragments ?? []));
+      await readRemaining(continued);
+    }
+    await readRemaining(result);
+    fragments.sort((left, right) => left.start - right.start);
+    let end = 0;
+    for (const fragment of fragments) {
+      expect(fragment.start).toBe(end);
+      end = fragment.end;
+    }
+    expect(end).toBe(Buffer.byteLength(source) - 1);
+    expect(fragments.map((fragment) => fragment.text).join("")).toBe(source.slice(0, -1));
   });
 });

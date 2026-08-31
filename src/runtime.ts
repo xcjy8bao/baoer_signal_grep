@@ -1,3 +1,4 @@
+import { isEvidenceRequest } from "./evidence-service.js";
 import type { SignalGrepLocale } from "./config.js";
 import {
   METRICS_STATUS_KEY,
@@ -25,7 +26,7 @@ export class SignalGrepRuntime {
     contextBudget?: ContextBudget,
   ): Promise<SignalGrepResult> {
     const inputCursor = input.cursor;
-    const isInspection = input.mode === "inspect";
+    const isInspection = isEvidenceRequest(input);
     const searchOptions: SignalGrepSearchOptions = {
       includeNormalBaseline: this.#metrics.enabled && !inputCursor && !isInspection,
     };
@@ -71,6 +72,10 @@ export class SignalGrepRuntime {
 
   clear(): void {
     this.#service.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.#service.shutdown();
   }
 
   get snapshotCount(): number {

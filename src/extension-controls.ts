@@ -355,8 +355,8 @@ function registerLifecycle(options: SignalGrepControlsOptions): void {
     ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx, locale));
     ctx.ui.notify(message(locale, "overrideAndMetricsEnabled"), "info");
   });
-  pi.on("session_shutdown", (_event, ctx) => {
-    runtime.clear();
+  pi.on("session_shutdown", async (_event, ctx) => {
+    await runtime.shutdown();
     runtime.disableMetrics();
     ctx.ui.setStatus(METRICS_STATUS_KEY, undefined);
   });

@@ -1,6 +1,6 @@
 {
   "name": "pi-plugin-signal-grep",
-  "version": "0.5.6",
+  "version": "0.5.8",
   "description": "Context-efficient, correctness-first ripgrep search and bounded code inspection for the Pi coding agent",
   "keywords": [
     "ai-agent",
@@ -26,6 +26,7 @@
   },
   "files": [
     "src/**/*.ts",
+    "src/syntax-worker.toml",
     "docs/AI_PULL_REQUEST_GUIDE.md",
     "docs/ARCHITECTURE.md",
     "docs/QUALITY_GATES.md",
@@ -52,6 +53,10 @@
     "benchmark": "bun run scripts/benchmark.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run test:node && bun run benchmark",
     "pack:check": "bun pm pack --dry-run"
+  },
+  "dependencies": {
+    "@ast-grep/lang-go": "0.0.6",
+    "@ast-grep/napi": "0.45.2"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.3",
