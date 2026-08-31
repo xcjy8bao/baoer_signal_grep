@@ -254,7 +254,7 @@ export async function readWorkspaceDocument(
   return new SourceDocument(
     {
       // Source references are protocol paths, so keep them POSIX across host platforms.
-      path: relative(resolve(cwd), absolute).replaceAll("\\\\", "/"),
+      path: relative(resolve(cwd), absolute).replaceAll("\\", "/"),
       origin: { kind: "worktree", revision: after, contentHash: hash },
     },
     bytes,

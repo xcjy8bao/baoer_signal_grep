@@ -76,7 +76,7 @@ test("Windows-style source references retain direct test associations", async ()
   host.load = async (path, expected) => {
     const source = await load(path, expected);
     return new SourceDocument(
-      { ...source.reference, path: source.path.replaceAll("/", "\\\\") },
+      { ...source.reference, path: source.path.replaceAll("/", "\\") },
       source.bytes,
     );
   };
