@@ -68,18 +68,15 @@ beforeAll(async () => {
       ),
   );
   await writeFile(join(isolated, "package.json"), JSON.stringify({ type: "module" }));
+  const installedSource = join(isolated, "node_modules", "pi-plugin-signal-grep", "src");
+  await mkdir(installedSource, { recursive: true });
   await Promise.all(
-    [
-      "syntax-worker.ts",
-      "syntax-worker.toml",
-      "syntax-fields.ts",
-      "syntax-types.ts",
-      "analysis-limits.ts",
-      "types.ts",
-    ].map((asset) => cp(join(repository, "src", asset), join(isolated, asset))),
+    ["syntax-worker.mjs", "syntax-worker.toml"].map((asset) =>
+      cp(join(repository, "src", asset), join(installedSource, asset)),
+    ),
   );
-  worker = join(isolated, "syntax-worker.ts");
-  config = join(isolated, "syntax-worker.toml");
+  worker = join(installedSource, "syntax-worker.mjs");
+  config = join(installedSource, "syntax-worker.toml");
 }, 20_000);
 
 afterAll(async () => {
@@ -99,7 +96,10 @@ const fixtures = [
 
 describe("production parser assets", () => {
   test("Node runs all four grammars with only the actual installed production packages", async () => {
-    expect(await readdir(join(isolated, "node_modules"))).toEqual(["@ast-grep"]);
+    expect(await readdir(join(isolated, "node_modules"))).toEqual([
+      "@ast-grep",
+      "pi-plugin-signal-grep",
+    ]);
     await Promise.all(
       fixtures.map(async (fixture) => {
         const result = await execute("node", [worker], isolated, JSON.stringify(fixture));
@@ -202,9 +202,9 @@ describe("production parser assets", () => {
   }, 20_000);
 
   test("Bun cannot auto-install a parser when runtime dependencies are absent", async () => {
-    const modules = join(isolated, "node_modules");
-    const held = join(isolated, "node_modules-disabled");
-    await rename(modules, held);
+    const dependency = join(isolated, "node_modules", "@ast-grep");
+    const held = join(isolated, "ast-grep-disabled");
+    await rename(dependency, held);
     try {
       const result = await execute(
         process.execPath,
@@ -214,9 +214,9 @@ describe("production parser assets", () => {
       );
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain("@ast-grep/napi");
-      await assert.rejects(stat(modules), { code: "ENOENT" });
+      await assert.rejects(stat(dependency), { code: "ENOENT" });
     } finally {
-      await rename(held, modules);
+      await rename(held, dependency);
     }
   }, 20_000);
 });

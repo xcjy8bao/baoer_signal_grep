@@ -13,6 +13,14 @@ bun run pack:check
 
 `bun run check` executes the following gates in order.
 
+## Published syntax worker
+
+```bash
+bun run check:worker
+```
+
+Node does not execute TypeScript files located inside an installed `node_modules` package. The release therefore contains a Node-targeted JavaScript parser worker built from `src/syntax-worker.ts`. This gate rebuilds it in a temporary directory and requires an exact byte match with the published artifact. `bun run build:worker` is the only supported way to refresh that artifact.
+
 ## Oxfmt: deterministic code style
 
 ```bash

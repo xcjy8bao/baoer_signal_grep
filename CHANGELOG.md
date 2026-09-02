@@ -26,6 +26,7 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ### Correctness
 
+- The syntax parser now runs from a published JavaScript worker, so Node can execute parser-backed operations when the npm package is installed under `node_modules`. The release gate rebuilds the worker and fails if the published artifact differs from its TypeScript source.
 - Impact rejects ambiguous, unsupported, stale, anonymous, and anonymous-default targets before its workspace content scan. Same-spelling candidates explicitly do not prove binding; related tests remain `not-run` with assertion coverage `not-evaluated`.
 - Unsupported occurrence files remain visible as unclassified evidence. Supported parser failures retain exact occurrences, mark the result partial, and never become an empty success.
 - Impact storage retains exact target/occurrence evidence before derived test candidates, merged tests use stable case identity instead of stale page indices, and high-cardinality diagnostics remain within an explicit 64-reason/4 KiB bound.

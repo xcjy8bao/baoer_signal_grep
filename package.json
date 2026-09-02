@@ -26,6 +26,7 @@
   },
   "files": [
     "src/**/*.ts",
+    "src/syntax-worker.mjs",
     "src/syntax-worker.toml",
     "docs/AI_PULL_REQUEST_GUIDE.md",
     "docs/ARCHITECTURE.md",
@@ -44,6 +45,8 @@
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
+    "build:worker": "bun run scripts/build-syntax-worker.ts",
+    "check:worker": "bun run scripts/check-syntax-worker.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives .",
@@ -51,7 +54,7 @@
     "test": "bun test",
     "test:node": "bun run scripts/node-smoke.ts",
     "benchmark": "bun run scripts/benchmark.ts",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run test:node && bun run benchmark",
+    "check": "bun run format:check && bun run check:worker && bun run lint && bun run typecheck && bun test && bun run test:node && bun run benchmark",
     "pack:check": "bun pm pack --dry-run"
   },
   "dependencies": {

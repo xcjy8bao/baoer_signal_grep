@@ -12,5 +12,6 @@
   },
   "env": {
     "builtin": true
-  }
+  },
+  "ignorePatterns": ["src/syntax-worker.mjs"]
 }

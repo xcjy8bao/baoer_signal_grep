@@ -28,7 +28,7 @@ service.ts ── auto/summary/matches/inspect policy and response composition
 
 evidence-service.ts ── advanced-operation policy and analysis pagination
   ├─► source-access.ts ── one verified source read and serialized parser ownership per request
-  ├─► syntax.ts ───────── owned ast-grep worker; JS/TS/TSX/Go facts only live in the request
+  ├─► syntax.ts ───────── owned compiled ast-grep worker; JS/TS/TSX/Go facts only live in the request
   ├─► multi-term-search.ts / literal-search.ts ── exact any-of expansion and retained term counts
   ├─► impact-target.ts ── reliable JS/TS/TSX target selection and ambiguity failure
   ├─► impact-analysis.ts ── same-spelling classification, test merge, ordering and retained counts
@@ -63,6 +63,8 @@ The public tool name is constant. Signal Grep does not inspect installed package
 `evidence-service.ts` dispatches mutually exclusive advanced requests, creates one request-scoped `SourceAccess`, and stores the final analysis snapshot. It delegates facts instead of deriving them itself. `analysis-store.ts` applies the shared 50,000-item/32 MiB bound, recomputes operation summaries from the items actually admitted, pages at most 30 items within the 16 KiB response bound, and owns session-local cursor expiry and eviction.
 
 `multi-term-search.ts` validates 2–8 distinct single-line literals up to 256 UTF-8 bytes. `evidence-candidates.ts` runs one alternation candidate scan with the ordinary path/ignore/Git policy; the multi-term module then scans verified bytes independently per input term. This preserves different-term overlap and deterministic input-term/path/byte ordering without one content scan per term. Changed-line admission requires the exact occurrence to be wholly contained in the retained changed range.
+
+`syntax-worker.ts` is the TypeScript source of the isolated parser boundary. Release packages execute the checked-in `syntax-worker.mjs` bundle because Node deliberately refuses to strip TypeScript inside `node_modules`. `check:worker` rebuilds the bundle and compares its exact bytes before lint, type checking, tests, and publication, so the executable artifact cannot drift from its source. Only the pinned ast-grep runtime packages remain external to the bundle.
 
 `impact-target.ts` selects one reliable JS/TS/TSX source symbol before a workspace scan. A line chooses the smallest enclosing symbol; a symbol-only overload set chooses its sole implementation, otherwise ambiguity fails. Anonymous/default-export parser placeholders are not searched as source binding names.
 
