@@ -30,6 +30,7 @@ interface TuiCopy {
   files: string;
   finalPage: string;
   inspect: string;
+  impact: string;
   inspectBlocked: string;
   matches: string;
   matchesTitle: string;
@@ -75,6 +76,7 @@ const COPY = {
     files: "files",
     finalPage: "final page",
     inspect: "INSPECT",
+    impact: "IMPACT",
     inspectBlocked: "Current source was not mixed with retained evidence.",
     matches: "matches",
     matchesTitle: "MATCHES",
@@ -126,6 +128,7 @@ const COPY = {
     files: "个文件",
     finalPage: "最后一页",
     inspect: "源码检查",
+    impact: "影响证据",
     inspectBlocked: "未将当前源码与快照证据混合展示。",
     matches: "处匹配",
     matchesTitle: "匹配结果",
@@ -463,6 +466,18 @@ function inspectCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallV
   };
 }
 
+function impactCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView {
+  const target = input.cursor
+    ? `${copy.retainedMatch} #${String(input.matchIndex ?? "?")}`
+    : input.symbol
+      ? `${safeLabel(input.path ?? "?")} · ${safeLabel(input.symbol)}`
+      : `${safeLabel(input.path ?? "?")}:${String(input.line ?? "?")}`;
+  return {
+    primary: `${signalGrepTitle(theme)}  ${theme.fg("accent", copy.impact)} ${theme.fg("muted", target)}`,
+    secondary: [],
+  };
+}
+
 function renderInspectBatch(
   presentation: InspectBatchPresentation,
   copy: TuiCopy,
@@ -518,10 +533,17 @@ function continuationCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): 
 }
 
 function searchCall(input: SignalGrepInput, theme: Theme): CallView {
+  const terms = input.anyOf ?? input.allOf;
   const secondary = [
     safeLabel(input.path ?? "."),
     input.mode ?? "auto",
-    input.literal ? "literal" : "regex",
+    terms
+      ? input.anyOf
+        ? "any-of literals"
+        : "all-of literals"
+      : input.literal
+        ? "literal"
+        : "regex",
   ];
   if (input.ignoreCase === true) secondary.push("ignore-case");
   else if (input.ignoreCase === false) secondary.push("case-sensitive");
@@ -532,13 +554,17 @@ function searchCall(input: SignalGrepInput, theme: Theme): CallView {
   if (glob) secondary.push(`include ${glob}`);
   if (exclude) secondary.push(`exclude ${exclude}`);
   return {
-    primary: `${signalGrepTitle(theme)}  ${theme.fg("accent", quote(input.pattern ?? ""))}`,
+    primary: `${signalGrepTitle(theme)}  ${theme.fg(
+      "accent",
+      terms ? terms.map(quote).join(input.anyOf ? " | " : " & ") : quote(input.pattern ?? ""),
+    )}`,
     secondary,
   };
 }
 
 function callView(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView {
   if (input.mode === "inspect") return inspectCall(input, copy, theme);
+  if (input.mode === "impact") return impactCall(input, copy, theme);
   if (input.cursor) return continuationCall(input, copy, theme);
   return searchCall(input, theme);
 }

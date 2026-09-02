@@ -4,6 +4,36 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-02
+
+### Added
+
+- `anyOf` accepts 2–8 distinct, case-sensitive, single-line literals and returns every retained exact occurrence in one version-bound analysis snapshot. Different input terms may overlap; ordered per-term counts, changed-line containment, pagination, and executable inspection remain explicit.
+- `mode="impact"` selects one reliably parsed JS/TS/TSX symbol by direct source target or ordinary search match, returns it first, inventories every exact same-spelling workspace candidate by syntax role, and appends existing related-test evidence.
+
+### Changed
+
+- Analysis storage now derives `anyOf` and impact counts after applying the shared 50,000-item/32 MiB retention bound, so partial counts describe only pageable evidence.
+- Analysis call rendering identifies multi-term and impact requests while result rendering keeps the existing fail-open original-text boundary.
+- Tool registration is fixed to the independent `signal_grep` name. The extension no longer changes another search tool or exposes user commands.
+- The session status now reports returned queries, complete results, partial results, and automatic file organization in plain language. Cursor pages and source continuations do not inflate the query count.
+- Existing configuration files keep their interface locale; retired settings are ignored.
+
+### Removed
+
+- Removed token-comparison accounting and its normal-format baseline text.
+- Removed the health, snapshot-clear, tool-override, and metrics command surfaces. Snapshot and process cleanup remain automatic and session-bound.
+
+### Correctness
+
+- The syntax parser now runs from a published JavaScript worker, so Node can execute parser-backed operations when the npm package is installed under `node_modules`. The release gate rebuilds the worker and fails if the published artifact differs from its TypeScript source.
+- Impact rejects ambiguous, unsupported, stale, anonymous, and anonymous-default targets before its workspace content scan. Same-spelling candidates explicitly do not prove binding; related tests remain `not-run` with assertion coverage `not-evaluated`.
+- Unsupported occurrence files remain visible as unclassified evidence. Supported parser failures retain exact occurrences, mark the result partial, and never become an empty success.
+- Impact storage retains exact target/occurrence evidence before derived test candidates, merged tests use stable case identity instead of stale page indices, and high-cardinality diagnostics remain within an explicit 64-reason/4 KiB bound.
+- Workspace search targets are passed to ripgrep relative to the request cwd, so root-relative
+  include/exclude globs apply identically during candidate revision enumeration and content
+  matching instead of being defeated by an absolute search-root prefix.
+
 ## [0.5.8] - 2026-08-31
 
 ### Added
@@ -19,7 +49,7 @@ All notable changes will be documented in this file. The project follows [Semant
 ### Changed
 
 - Broad summaries now reserve file navigation first, then show bounded source preview windows: at most 30 file rows, five previewed files, two non-overlapping windows per file and seven lines per window.
-- Advanced analysis output uses its own units (`files`, `functions`, `symbols`, relationships or evidence items) and is excluded from the legacy search-text Metrics comparison.
+- Advanced analysis output uses its own units (`files`, `functions`, `symbols`, relationships or evidence items).
 - Runtime parsing uses installed, pinned ast-grep native packages in an owned short-lived process. Runtime configuration cannot preload code, load environment files, or install missing parsers.
 
 ### Fixed
@@ -47,13 +77,12 @@ All notable changes will be documented in this file. The project follows [Semant
 - Dense same-line matches retain their path, line and stable match marker within bounded output; displayed occurrence ranges are capped at 20 per line with explicit omitted-range counts, without deleting snapshot occurrences.
 - Search and inspection excerpts preserve distant matches in non-UTF-8 files. Inspection and context keep ripgrep's LF-based line numbers when source contains bare carriage returns.
 - Implicit auto mode returns a navigable summary when one matching line exceeds its estimated-token detail target; hard byte limits and execution failures remain explicit errors.
-- Opt-in Metrics reconstructs normal grep's original long-line prefix from scan-time evidence rather than reusing a match-centered excerpt, preserving the actual baseline text and byte count.
 
 ### Changed
 
 - Candidate source metadata is bounded to 50,000 files with 16 concurrent reads. The extra names-only traversal and metadata reads do not limit the matching set or imply a search-speed improvement.
 - Summary formatting has a dedicated module; detail formatting, process ownership, source verification, and batch composition each have explicit responsibilities.
-- Existing single-target request forms and configuration remain valid. Metrics still excludes inspection and does not represent task-total tokens or API cost; documentation no longer treats normal grep's explicit truncation notice as a false completeness claim.
+- Existing single-target request forms remain valid.
 - Tool guidance distinguishes ordinary auto searches from deliberate detail paging, explains when exact matching evidence is sufficient, and gives inspection-only selectors and corrective errors instead of leaving models to guess which search parameters must be omitted.
 
 Publisher: **宝儿**.
@@ -67,7 +96,7 @@ Publisher: **宝儿**.
 
 ### Changed
 
-- Human-facing rendering now fails open to the original result when details or text are not safely recognized, or when custom layout rendering fails; search text, structured details, cursors, Metrics, and non-TUI behavior remain unchanged.
+- Human-facing rendering now fails open to the original result when details or text are not safely recognized, or when custom layout rendering fails; search text, structured details, cursors, and non-TUI behavior remain unchanged.
 
 ## [0.5.1] - 2026-08-29
 
@@ -96,13 +125,11 @@ Publisher: **宝儿**.
 
 - Context-aware implicit `auto` detail budgets use Pi's reported context remainder: full (2,000 estimated tokens), tight (1,000), or critical (500). Compact complete results still return directly, while explicit limits, `matches`, inspection, and cursor pages retain the default budget.
 - Search details expose `budgetTier`, `contextRemainderPercent`, and `resultTokenBudget` when a context decision is available; tight and critical responses also attribute the adjustment in model-facing text.
-- Installations with `pi-hashline-edit-pro` receive one conditional prompt guideline to obtain hashline-served anchors before editing Signal Grep evidence, without repeating the hint in every result or pretending to share private plugin state.
-- Human-facing command descriptions, notifications, health output, and Metrics status/reports support the persisted `locale` values `en` and `zh-CN`; English remains the default for existing configs.
+- Human-facing interface text supports the persisted `locale` values `en` and `zh-CN`; English remains the default for existing configs.
 
 ### Fixed
 
-- Load-time conflict detection: when the built-in `grep` override is configured but a package that owns the public `grep` tool name is installed (for example `pi-hashline-edit-pro`), Signal Grep now degrades to additive `signal_grep` for that session with a visible notice instead of failing the whole extension set at startup. The config value is never rewritten, and removing the conflicting package restores the override on the next load.
-- `/signal-grep-metrics on` and the `startMetricsOnNextLoad` handoff no longer persist an override that cannot take effect: they refuse with a clear notice while a conflicting package is installed.
+- Tool-name conflicts fail visibly instead of changing the requested search behavior silently.
 
 ## [0.4.0] - 2026-08-28
 

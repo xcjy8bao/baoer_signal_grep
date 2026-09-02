@@ -12,7 +12,16 @@ export interface AnalysisItem {
 }
 
 export interface AnalysisDetails {
-  kind: "roles" | "file-and" | "function-and" | "changes" | "outline" | "imports" | "tests";
+  kind:
+    | "roles"
+    | "file-and"
+    | "function-and"
+    | "changes"
+    | "outline"
+    | "imports"
+    | "tests"
+    | "any-of"
+    | "impact";
   unit:
     | "occurrences"
     | "files"
@@ -20,7 +29,8 @@ export interface AnalysisDetails {
     | "symbols"
     | "relationships"
     | "test-candidates"
-    | "evidence-items";
+    | "evidence-items"
+    | "impact-candidates";
   totalItems: number;
   returnedItems: number;
   items: (AnalysisItem & { index: number; inspect?: SignalGrepInput })[];
@@ -28,6 +38,7 @@ export interface AnalysisDetails {
   filesRead?: number;
   bytesRead?: number;
   counts?: Record<string, number>;
+  termCounts?: { term: string; retainedOccurrences: number }[];
   changes?: { base: string; target: string; scope: string; side: string };
 }
 
@@ -40,5 +51,6 @@ export interface AnalysisResultSet {
   filesRead?: number;
   bytesRead?: number;
   counts?: Record<string, number>;
+  termCounts?: { term: string; retainedOccurrences: number }[];
   changes?: AnalysisDetails["changes"];
 }

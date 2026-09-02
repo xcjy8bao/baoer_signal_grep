@@ -4,12 +4,7 @@ import type { GitChangeRequest } from "./git-source.js";
 import type { SyntaxRoleName } from "./syntax.js";
 import { resolve } from "node:path";
 import { CursorError, SignalGrepError } from "./errors.js";
-import {
-  formatMatchPage,
-  formatNormalBaseline,
-  MatchPageSoftLimitError,
-  type MatchPageOptions,
-} from "./format.js";
+import { formatMatchPage, MatchPageSoftLimitError, type MatchPageOptions } from "./format.js";
 import { formatSummary } from "./summary.js";
 import { summarySourcePreviews } from "./summary-previews.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
@@ -39,6 +34,7 @@ export interface SignalGrepInput extends RawSearchInput {
   line?: number;
   sourceCursor?: string;
   allOf?: string[];
+  anyOf?: string[];
   within?: "file" | "function";
   roles?: SyntaxRoleName[];
   changes?: GitChangeRequest;
@@ -54,7 +50,6 @@ export interface SignalGrepServiceOptions {
 
 export interface SignalGrepSearchOptions {
   contextBudget?: ContextBudget;
-  includeNormalBaseline?: boolean;
 }
 interface PathSelection {
   labels: string[];
@@ -249,11 +244,6 @@ export class SignalGrepService {
     const scan = await this.#runRipgrep(request, cwd, signal);
     const snapshot = this.#snapshots.create(scan);
     try {
-      const normalText = options.includeNormalBaseline
-        ? await formatNormalBaseline(snapshot, cwd, signal)
-        : undefined;
-      const attachBaseline = (result: SignalGrepResult): SignalGrepResult =>
-        normalText === undefined ? result : { ...result, normalText };
       let result: SignalGrepResult;
 
       if (snapshot.totalMatches === 0) {
@@ -282,7 +272,7 @@ export class SignalGrepService {
       }
 
       const budgetedResult = attachContextBudget(result, contextBudget, snapshot.totalMatches);
-      return this.#finalize(snapshot, attachBaseline(budgetedResult));
+      return this.#finalize(snapshot, budgetedResult);
     } catch (error) {
       this.#snapshots.delete(snapshot);
       throw error;

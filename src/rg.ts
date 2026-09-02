@@ -7,7 +7,6 @@ import { assertExistingPathInsideCwd } from "./source.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
-  MAX_LINE_CHARACTERS,
   MAX_PROTOCOL_LINE_BYTES,
   MAX_SOURCE_REVISION_FILES,
   MAX_STORED_MATCHES,
@@ -213,7 +212,8 @@ export function buildRipgrepArguments(request: SearchRequest, cwd: string): stri
 
   const searchPath = resolve(cwd, request.path ?? ".");
   assertSearchPathInsideCwd(searchPath, cwd);
-  args.push("--", request.pattern, searchPath);
+  const searchTarget = relative(resolve(cwd), searchPath) || ".";
+  args.push("--", request.pattern, searchTarget);
   return args;
 }
 
@@ -241,6 +241,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
   ): Promise<SearchScan> {
     if (signal?.aborted) throw abortError();
     const searchPath = resolve(cwd, request.path ?? ".");
+    const searchTarget = relative(resolve(cwd), searchPath) || ".";
     const args = buildRipgrepArguments(request, cwd);
     await assertExistingPathInsideCwd(searchPath, cwd);
     await assertResolvedTargetOutsideGit(searchPath);
@@ -291,9 +292,6 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
           lineNumber: event.data.line_number,
           lineContent,
           lineTruncated,
-          ...(lineTruncated && matches.length < request.pageSize
-            ? { normalLinePrefix: normalizedContent.slice(0, MAX_LINE_CHARACTERS) }
-            : {}),
           occurrences,
         });
       }
@@ -302,7 +300,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     try {
       const before = await captureCandidateRevisions(
         executable,
-        ["--no-config", "--files", "--null", ...fileScopeArguments(request), "--", searchPath],
+        ["--no-config", "--files", "--null", ...fileScopeArguments(request), "--", searchTarget],
         cwd,
         maxSourceRevisionFiles,
         signal,

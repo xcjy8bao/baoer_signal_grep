@@ -149,7 +149,7 @@ export async function parseSyntax(
       diagnostics: [{ kind: "invalid-unicode", start: 0, end: text.length }],
     };
   }
-  const worker = fileURLToPath(new URL("./syntax-worker.ts", import.meta.url));
+  const worker = fileURLToPath(new URL("./syntax-worker.mjs", import.meta.url));
   const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
   const args = process.versions.bun
     ? [`--config=${config}`, "--no-env-file", "--no-macros", "--no-install", worker]

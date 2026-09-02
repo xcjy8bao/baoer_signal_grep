@@ -6,305 +6,103 @@
 
 简体中文 · [English](README.md)
 
-面向 [Pi 编码智能体](https://pi.dev) 的上下文高效、正确性优先的内容搜索和有界代码检查插件。Signal Grep 将宽泛的 `ripgrep` 输出组织为文件计数、真实命中样例和明确的后续调用，同时保留匹配证据并报告各项限制。
+Signal Grep 是给 [Pi 编码智能体](https://pi.dev) 使用的代码搜索插件。
 
-> **最新版本：** `0.5.8`。发布署名：**宝儿**。
+它像一个真正听懂你需求的男朋友或女朋友。你问一个简单问题，它直接告诉你答案；你问得很宽，它不会把一大堆杂乱内容丢给你，而是先把重点分好，再陪你一层层看下去。它记得刚才找到了什么，也知道什么时候旧答案已经不能继续相信。
 
-## 为什么需要 Signal Grep？
+## 它会怎样陪 AI 找代码
 
-宽泛搜索之后，常见的下一步是选出相关文件并查看代码。Signal Grep 直接支持这一过程：
+### 小问题，直接回答
 
-- **小规模搜索：** 能装下时，一次返回全部分组匹配。
-- **宽泛搜索：** 先返回精确文件计数，再给出有界、带标记的源码预览窗口。
-- **直接展开：** 从结果正文复制 cursor，即可选择文件或一次检查最多五个可见匹配编号。
-- **稳定证据：** cursor 页面读取保留快照；当前文件上下文和检查必须通过源码版本验证。
-- **明确边界：** 区分保留匹配、预览、缺失源码范围和部分保留状态。
+当结果不多时，它会一次把完整结果交给 AI，不故意拆成好几轮，也不让 AI 为了看完几行内容反复追问。
 
-## 0.5.8 证据操作
+### 大问题，先替你整理
 
-- `allOf: ["authorize", "persist"]` 要求每个字面量都出现在同一文件；加 `within: "function"` 后，JS/TS/TSX 只计算同一实现自身代码，嵌套回调、注释、静态字符串、正则和类型区域都不算。
-- `roles: ["declaration"]`、`roles: ["call"]` 按单个 occurrence 过滤 JS/TS/TSX/Go 语法角色。Go 的调用/转换和短变量声明歧义会明确标为候选。
-- `changes: { "base": "HEAD", "scope": "lines", "side": "new" }` 在固定 Git 对比的改动行中搜索；和 `allOf` 联用时，每个词都必须完整落在所选侧的改动行。历史源码始终绑定 commit/blob，不会悄悄切到工作区。
-- `mode: "outline"` 分页列出 JS/TS/TSX 符号；`mode: "imports"` 跟随有界的静态 ESM 命名/默认导入和具名重导出；`mode: "tests"` 返回直接、间接、弱相关测试候选，不宣称覆盖率或测试通过。
+当结果很多时，它会先告诉 AI：一共找到了多少处、分布在哪些文件、每个文件大概有多少，并附上真实的代码片段。就像你问“我们聊过旅行的事吗”，对方不会把几年聊天记录全部甩过来，而是先告诉你在哪几段对话里提过，再陪你打开其中一段。
 
-结果中的 `Next request:` 是完整可执行 JSON。`sourceCursor` 只续读同一源码版本缺失的原始字节范围；同一 token 可重放，过期、源码变化或被改写的 token 会明确失败。
+文件按照实际出现次数排列，不会假装知道哪个文件最重要。展示出来的片段只是原文中的一小段，也不会冒充整份文件。
 
-样例只是实际命中文本，不是相关性评分或文件完整内容。文件排序依据命中数，不推测哪个文件能解决任务。插件没有模糊兜底、后台索引、数据库、遥测或网络请求。
+### 你说了几个要求，它会一个个记住
 
-## 示例：选择文件，再检查代码
+你可以让它同时寻找几样东西。它会把每个词分别记账，不会查到其中一个就把其他要求忘掉。
 
-作为示意，一次宽泛的 `TODO` 查询可以在同一条模型可见响应中返回计数、有界源码预览和可用 cursor：
+如果你说“这些条件必须同时出现”，它只留下真正同时满足的文件；如果你进一步说“必须出现在同一个函数里”，它也不会拿散落在文件各处的内容来凑数。
+
+### 它分得清“名字一样”和“真的是同一个”
+
+代码里同一个名字可能是在定义、调用、导入、导出、注释或普通文字中出现。Signal Grep 会把这些用途分开，避免只看名字就下结论。
+
+当 AI 想围绕一个函数或类继续调查时，它会整理一份小档案：目标在哪里、同名内容各自是什么用途、哪些测试可能有关。它会把线索交出来，但不会把“名字相同”说成“一定是同一个东西”，也不会把“找到了测试文件”说成“已经测试过”或“肯定有覆盖”。
+
+### 它知道你是在问整个项目，还是只问这次改动
+
+你可以让它只看这次修改过的文件或行，也可以让它列出一个文件里的主要结构、顺着明确的导入关系继续找，或者整理可能相关的测试。它只报告自己真正看见的内容，不把猜测包装成事实。
+
+### 追问“刚才那个”，它不会从头再找
+
+一次搜索完成后，它会把当时的结果妥善保留。AI 可以继续打开某个文件、翻到下一页，或一次查看最多五个已找到的位置，不需要重新搜索。
+
+如果这期间源码变了，它不会拿旧位置配上新内容继续回答，而是明确告诉 AI 需要重新确认。过期、写错或不属于这次结果的继续请求也会直接失败，不会悄悄换成一次新的搜索。
+
+### 内容太多时，它会明确说没有展示完
+
+Signal Grep 会控制一次交给 AI 的内容量，避免一场搜索挤满整段对话。能完整交付时，它会说明结果完整；只能保留一部分时，它会说明只获得了部分结果以及原因。
+
+长代码不会因为显示空间不够就被假装成完整内容。AI 可以沿着它给出的下一步继续读取，直到拿到需要的原文。
+
+## 装好后不用照看它
+
+插件只为 Pi 增加一个名为 `signal_grep` 的工具，不会替换或重新配置其他搜索工具，也没有需要用户记忆的命令。AI 在适合的时候使用它，结果过期、内存整理、搜索进程结束和会话关闭时的清理都由插件自己完成。
+
+第一次查询完成后，Pi 会显示一条很短的会话记录：
 
 ```text
-N matches across M files (complete snapshot).
-Files 1-M of M, ordered by match count.
-
-broad.ts     200
-noise.ts      30
-README.md       1
-src/app.ts       1
-utils.ts       1
-
-Source previews are bounded, not relevance-ranked or exhaustive.
-broad.ts:1 {match #34} // TODO broad 0
-noise.ts:1 {match #4} // TODO fix 1
-README.md:1 {match #3} TODO readme
-src/app.ts:1 {match #1} // TODO app
-utils.ts:1 {match #2} // TODO utils
-
-Snapshot cursor="<returned-cursor>".
-Inspect samples: mode="inspect", cursor, matchIndices=[one or more visible match numbers, max 5].
-Retrieve matching lines: cursor with path or paths selecting exact files, no mode.
+Signal Grep：已处理 8 次查询，结果全部完整；3 次结果已自动按文件整理
 ```
 
-文档中的 cursor 使用 `<returned-cursor>` 代替。匹配编号属于这次快照，新搜索的编号可能不同。实际调用时请使用自己响应中的完整 cursor 和可见编号：
+它只记录本次会话里真实发生的三件事：处理了几次新查询、结果是否完整、多少次结果被自动按文件整理。翻页和继续读取不会重复计算，关闭会话后记录会清空，也不会为了这条记录再做一次搜索。
 
-```json
-{ "mode": "inspect", "cursor": "<returned-cursor>", "matchIndices": [1, 2] }
-```
+## 它不会把代码带出本机
 
-这会在一次有界调用中检查所选源码位置。如果只需要这两个文件里的匹配行：
+搜索、整理和读取都在本地完成。插件没有遥测，不会把查询、代码或统计发到网络，也不会在后台建立索引或下载模型。
 
-```json
-{ "cursor": "<returned-cursor>", "paths": ["src/app.ts", "utils.ts"] }
-```
-
-摘要按命中数降序排列，同数按路径排序。每页最多展示 30 个文件，也可能因文本预算展示更少文件；没有展示的样例会明确计数。使用返回的 cursor 加 `mode="summary"` 继续文件摘要页。原始摘要 cursor 可反复读取详情、选择单文件或最多 20 个精确 `paths`，不重新扫描。匹配 cursor 必须保持原有文件筛选集合。
-
-紧凑完整搜索直接返回详情，避免一次摘要和 cursor 往返。每条匹配行有稳定的 `{match #N}` 标记；摘要 cursor 加 `matchIndex=N` 仍是单目标检查形式。长匹配行与 cursor 检查会保留首个 occurrence 的可见性，其余摘录和 occurrence 范围有明确展示上限。
-
-没有显式 `limit` 的隐式 `auto` 搜索只对首次详情试装使用 Pi 上报的上下文余量：高于 40% 为 `full`，目标约 2,000 个估算结果文本 Token；12%–40% 为 `tight`，约 1,000；低于 12% 为 `critical`，约 500。用量未知时保持默认预算。显式 limit、`matches`、检查与 cursor 续页不会降档。
-
-## 便于人类阅读的 Pi TUI
-
-在 Pi 交互终端中，Signal Grep 会把同一份结果展示为响应式证据视图：摘要使用文件排名条，匹配页按文件呈现证据，`partial` 保留状态使用明确警告，源码检查展示有界范围和结构状态。收起视图会适配窄、中、宽终端；展开工具行后仍可查看完整原始结果。
-
-这是纯展示层边界。renderer 不会改变模型可见文本、结构化 `details`、cursor、搜索策略、Metrics 统计、JSON/RPC/print 输出或持久化状态。如果当前文本与 details 无法被安全识别，或自定义布局渲染失败，Pi 工具行会直接回退为原始结果文本。
-
-## 本地验证
-
-提交前运行：
-
-```bash
-bun run check
-bun run pack:check
-```
-
-这些命令验证行为契约和打包内容，不衡量模型性能、任务级 Token、费用、覆盖率或用户仓库中的测试是否通过。
-
-## 环境要求
-
-### 运行时
-
-- Pi 0.84.3 或更高版本
-- Node.js 22+ 或 Bun 1.4+
-- `PATH` 中可用的 [`ripgrep`](https://github.com/BurntSushi/ripgrep)（命令名 `rg`）
-- 可选的、支持 JSON 输出并位于 `PATH` 中的 [Universal Ctags](https://docs.ctags.io/)，用于符号级代码检查
-- 随插件安装的固定版本 `@ast-grep/napi` 与 `@ast-grep/lang-go`，用于 JS/TS/TSX/Go 语法；这些解析器不需要 Go 编译器、Ctags 或网络请求
-
-### 开发环境
-
-- Bun 1.4+
-- TypeScript 7+
-- Node.js 22+，用于兼容性验证
+它始终把搜索范围限制在当前工作目录，并排除 `.git` 内部文件；普通隐藏文件仍然可以找到。插件会直接调用本机已有的 `rg`，不会把搜索内容拼成 shell 命令。
 
 ## 安装
 
-从 npm 安装最新版本：
+从 npm 安装：
 
 ```bash
 pi install npm:pi-plugin-signal-grep
 ```
 
-也可以安装 GitHub 上的当前版本：
+也可以安装 GitHub 上的当前代码：
 
 ```bash
 pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
 ```
 
-然后重启 Pi。本地开发时：
+重启 Pi 后即可使用。
 
-```bash
-pi -e ./src/index.ts
-```
+使用前请确认：Pi 不低于 0.84.3；系统中可以运行 `rg`；运行环境为 Node.js 22.19+ 或 Bun 1.4+。插件已经带上 JS、TS、TSX 和 Go 所需的代码识别组件，不需要另外下载模型。Universal Ctags 只是其他语言需要更细代码范围时的可选帮手，插件不会自动下载它。
 
-## 可选覆盖内置 grep
+## 中文界面
 
-Signal Grep 默认使用附加模式，在 Pi 内置 `grep` 旁注册 `signal_grep`。如果希望所有普通 grep 调用都经过 Signal Grep，同时只向模型暴露一个公开搜索工具，执行：
-
-```text
-/signal-grep-override on
-```
-
-该命令会通过临时文件安全写入用户全局设置 `~/.pi/agent/signal-grep.json`，并自动重载 Pi 资源。覆盖模式将 Signal Grep 注册为 `grep`，兼容内置 grep 参数，在省略 `ignoreCase` 时保持内置 grep 的区分大小写行为，同时保留更丰富的 glob、排除、自适应摘要和 cursor 能力。`/signal-grep-health` 会显示当前 grep 的来源。持久化覆盖前，Signal Grep 会在其他扩展已拥有 `grep` 时拒绝切换且不修改配置；Pi 在加载扩展时也会拒绝重复注册。因此覆盖冲突会明确失败，不会静默分裂搜索所有权。使用以下命令关闭并恢复 Pi 内置实现：
-
-```text
-/signal-grep-override off
-```
-
-安装 `pi-hashline-edit-pro` 时，Signal Grep 会额外加入一条系统提示，要求模型在编辑 `signal_grep` 找到的位置前，先通过 hashline 的 `grep` 或 `read` 获取 served anchors。该提示不会在每次搜索响应中重复，不会影响 Metrics 计量，也不会声称 Signal Grep 能写入 hashline 的私有 served-state。
-使用 `/signal-grep-override status` 查看当前模式。覆盖功能必须主动开启，因为其他扩展也可能替换 `grep`；发生工具冲突时 Pi 会在启动阶段明确警告。
-
-## 界面语言
-
-面向用户的命令说明、通知、健康检查输出和 Metrics 状态/报告默认使用英文。如需简体中文，请在 `~/.pi/agent/signal-grep.json` 中设置 `locale`，然后重启 Pi：
+会话记录和交互式结果默认使用英文。如需简体中文，在 `~/.pi/agent/signal-grep.json` 中写入：
 
 ```json
 {
-  "overrideBuiltinGrep": false,
-  "startMetricsOnNextLoad": false,
   "locale": "zh-CN"
 }
 ```
 
-支持的值为 `"en"` 和 `"zh-CN"`。未包含 `locale` 的现有配置仍使用英文。Signal Grep 命令更新覆盖模式或 Metrics 重载交接状态时会保留完整配置。搜索证据、工具参数、cursor 详情和面向模型的提示保持语言中立或英文，因此本地化不会改变搜索语义或 Metrics 计量。
+然后重启 Pi。已有配置中的旧设置会被忽略，不影响搜索。
 
-## 工具接口
+## 想了解更多
 
-插件默认只注册 `signal_grep`；覆盖模式下只注册 `grep`。
-
-| 参数           | 类型                                                                   | 默认值     | 作用                                                            |
-| -------------- | ---------------------------------------------------------------------- | ---------- | --------------------------------------------------------------- |
-| `pattern`      | string                                                                 | —          | 正则或纯文本；新搜索必填                                        |
-| `path`         | string                                                                 | `.`        | 相对于工作目录的文件或目录；使用 cursor 时可选择一个保留文件    |
-| `paths`        | string[]                                                               | —          | 使用 cursor 一次选择 1–20 个精确保留文件                        |
-| `glob`         | string 或 string[]                                                     | `[]`       | 包含规则                                                        |
-| `exclude`      | string 或 string[]                                                     | `[]`       | 排除规则                                                        |
-| `literal`      | boolean                                                                | `false`    | 固定字符串匹配                                                  |
-| `ignoreCase`   | boolean                                                                | 随模式变化 | 强制忽略或区分大小写                                            |
-| `hidden`       | boolean                                                                | `true`     | 搜索隐藏文件；始终排除 `.git`                                   |
-| `context`      | number                                                                 | `0`        | 前后文行数，限制在 0–20                                         |
-| `limit`        | number                                                                 | 自适应     | 每页最大匹配数，限制在 1–100                                    |
-| `allOf`        | string[]                                                               | —          | 2–3 个不同、区分大小写的字面量词；不能与 `pattern`/`roles` 并用 |
-| `within`       | `file` 或 `function`                                                   | `file`     | `allOf` 的范围；函数只计算 JS/TS/TSX 实现自身代码               |
-| `roles`        | role[]                                                                 | —          | 单个普通 pattern 在 JS/TS/TSX/Go 中的语法角色过滤               |
-| `changes`      | Git 对比对象                                                           | —          | 固定 base/target、文件/行范围和新旧侧                           |
-| `mode`         | `auto`、`summary`、`matches`、`inspect`、`outline`、`imports`、`tests` | `auto`     | 搜索、源码检查或结构导航                                        |
-| `line`         | number                                                                 | —          | 单目标 `path` 检查使用的 1 起始行号                             |
-| `matchIndex`   | number                                                                 | —          | cursor 检查使用的稳定 1 起始匹配编号；替代 `path` 和 `line`     |
-| `matchIndices` | number[]                                                               | —          | 一次检查 1–5 个可见编号；要求 `cursor` 与 `mode="inspect"`      |
-| `targets`      | `{path: string, line: number}[]`                                       | —          | 使用 `mode="inspect"` 检查 1–5 个已知源码位置，不带 cursor      |
-| `cursor`       | string                                                                 | —          | 继续或选择稳定搜索快照中的结果                                  |
-| `sourceCursor` | string                                                                 | —          | 用 `mode="inspect"` 续读缺失源码范围                            |
-| `symbol`       | string                                                                 | —          | `imports` 或 `tests` 可选绑定名                                 |
-
-省略 `ignoreCase` 时，附加模式的 `signal_grep` 使用智能大小写；覆盖模式的 `grep` 保持 Pi 内置工具默认的区分大小写行为。
-
-### 模式
-
-- `auto`：隐式搜索按当前上下文档位进行首次详情试装，能装下时返回全部分组详情；显式提供 `limit` 时使用默认预算立即返回详情页；其他情况先返回文件摘要。
-- `summary`：返回按计数排序的文件页、有界首条保留匹配样例，以及正文中的 cursor；仍有文件时使用 `mode="summary"` 继续分页。
-- `matches`：立即按默认预算返回第一页详情。
-- `inspect`：检查单个 `path`/`line` 或 cursor 对应的 `matchIndex`；使用 `targets` 或 `matchIndices` 一次检查最多五个目标。没有结构 provider 时仍可返回有界源码，但不会虚构符号边界或接受未经验证的快照版本。
-- `cursor`：从原始快照继续，不重新搜索。摘要 cursor 从第 1 条匹配读取详情，可反复选择 `path`/`paths`，也可结合 `mode="summary"` 继续文件摘要页；匹配 cursor 必须保持相同文件筛选。
-
-当 Pi 为符合条件的 `auto` 搜索提供可用上下文数据时，结构化详情会包含 `budgetTier`、`contextRemainderPercent` 和 `resultTokenBudget`；`tight` 与 `critical` 响应也会在模型可见文本中给出同样的归因说明。这些目标沿用现有 metrics 的保守字符估算；源代码和路径仍可能包含 CJK，因此它们不是精确的模型分词保证。
-
-## 可选的累计 Token 对比
-
-Token 对比默认关闭；关闭时不会生成额外的基准文本。使用以下命令开启一个全新、仅限当前会话的统计区间：
-
-```text
-/signal-grep-metrics on
-```
-
-启动 Metrics 会清空现有 Signal Grep 快照，避免统计区间开始前生成的 cursor 在区间内成功执行却无法配对计量。如果尚未启用覆盖模式，这一条命令会持久化开启 Override、自动重载 Pi，并在重载后自动启动 Metrics，使后续可比较的 Pi 搜索进入统计；源码检查调用不计入。`/signal-grep-metrics off` 只结束统计区间；Override 会继续生效，直到执行 `/signal-grep-override off` 恢复 Pi 内置实现。
-
-Pi 会在内置 Footer 统计下方追加一条紧凑、分色的扩展状态，并在每次可对比搜索后更新。`SG` 卡片使用主题高亮色，`NORMAL` 使用浅灰色，差值卡片使用成功/错误颜色：
-
-```text
-[ SG 3.2k ]  [ NORMAL 11.8k ]  [ ↓ 8.6k · 72.9% ]
-```
-
-`SG` 是可比较的 Signal Grep **搜索结果文本**的累计估算 Token；单项与批量 `mode="inspect"` 均不计入。`normal` 基于完全相同的稳定匹配快照精确复现 Pi 普通 grep 的输出格式。cursor 页面只累加到 `SG`，不会重新执行或重复计算 normal 基准。如果完整分页比 normal 输出消耗更多，状态会如实显示 `↑1.3k (11.0%)` 之类的负收益。
-
-Token 使用 Pi 同样的保守“字符数除以四”启发式估算，不包括检查和 read 输出、工具 Schema、供应商序列化、搜索结果以外的模型输入输出，以及选择和读取证据所需的额外模型轮次。**Metrics 不是任务总 Token 或 API 费用，显示百分比也不是任务级节省比例。**最终报告同时保留精确的 UTF-8 字节数。Metrics 不增加内容搜索；空模式、空白敏感模式、多个 glob、排除规则和 `hidden=false` 等每次成功的 Pi `grep` 查询都会在两侧使用同一匹配集合。通过 `bash` 手写执行的 `rg` 以及其他扩展拥有的搜索工具不在本工具边界内，因此不会计入。
-
-使用以下命令结束统计区间、仅移除 Signal Grep 状态并显示最终累计报告：
-
-```text
-/signal-grep-metrics off
-```
-
-使用 `/signal-grep-metrics status` 可以查看当前区间而不关闭。指标只保存在内存中，下次开启时归零，不会持久化或传输。
-
-## 正确性契约
-
-1. `complete` 搜索快照保留 `rg` 发现的每一行匹配，不表示整个仓库经过一次原子读取。
-2. 匹配行跨页只出现一次，包括开启 context 且相邻多行均命中的情况。cursor 不重新搜索，也不静默改变已绑定的文件筛选集合。
-3. 按计数排序的文件页在正文和 `details` 都暴露 cursor。样例来自保留匹配；未展示的样例明确计数。
-4. 内容搜索前，先按相同路径、ignore、hidden 和 glob 规则枚举文件名，以有界并发为最多 50,000 个候选文件记录 revision。只有扫描前后 revision 一致的文件才能获得可信源码绑定；增加的是目录遍历和元数据读取，不是第二次内容搜索。
-5. 已变更、新出现、不可读或未缓存的源码 revision 保持未验证状态。匹配行和计数仍保留；正文与 `sourceUnverifiedFileCount` 说明当前上下文和快照检查为何不可用。搜索结束后的源码变化同样会被拒绝。
-6. 超过 50,000 行匹配保留上限时明确返回 `partial`。候选 revision 上限是另一项限制，不截断匹配集合。
-7. 详情页同时受匹配条数和 16 KiB 约束。每条匹配行最多展示 20 个 occurrence 范围，保留快照中的范围不因此删除；正文和 `occurrenceRangesOmitted`/`occurrenceMatchesTruncated` 报告展示省略。高密度命中行不能为了装入预算丢失路径或稳定匹配编号。
-8. 基于解析器的检查在有效 UTF-8 源码范围可以装下时返回完整内容；更大的范围用原始字节片段和绑定版本的可执行 `sourceCursor` 续读。非 UTF-8 内容会明确标为有损预览，不能续读。源码读取限制为 5 MiB。
-9. 单项与批量检查使用相同版本验证规则。整批共享 16 KiB 响应上限，逐项报告结果并去重源码范围；部分返回目标会附上完整 `sourceCursor` 后续请求。
-10. `.git` 排除优先于用户 glob，显式指向 Git 内部的搜索路径会被拒绝。其他有意义的隐藏文件默认可搜索。
-11. 无效 cursor、无效请求和运行时失败明确报错。取消或协议解析失败会终止并等待自有子进程关闭；清理失败是错误，不能表现为空搜索成功。
-
-所有权和生命周期设计见[架构说明](docs/ARCHITECTURE.md)。
-
-## 命令
-
-- `/signal-grep-health`：查看 ripgrep 可用性、经运行参数能力验证的 Universal Ctags 状态和快照使用情况。
-- `/signal-grep-clear`：清空快照并使现有 cursor 失效。
-- `/signal-grep-override on|off|status`：持久化或查看可选的内置 grep 覆盖模式。
-- `/signal-grep-metrics on|off|status`：控制或查看 Status Line 累计 Token 估算。
-
-## 代码证据与结构
-
-`mode="inspect"` 保留原有单目标形式：`path` 加 1 起始 `line`，或 cursor 加 1 起始 `matchIndex`。多个位置可以这样检查：
-
-```json
-{ "mode": "inspect", "cursor": "<returned-cursor>", "matchIndices": [1, 2, 3] }
-```
-
-```json
-{
-  "mode": "inspect",
-  "targets": [
-    { "path": "src/app.ts", "line": 1 },
-    { "path": "utils.ts", "line": 1 }
-  ]
-}
-```
-
-每次只使用一种形式。`matchIndices` 必须带 cursor；`targets` 不能带 cursor。批量字段不得混入单目标的 `path`、`line` 或 `matchIndex`。两种数组都允许 1–5 项，无需迁移既有配置。
-
-整批共享 16 KiB。`details.inspections` 的每项保留输入编号，并报告 `returned` 或 `error`；已返回项指向展示的源码块。同一文件、同一已验证 revision 的重叠范围只展示一次。有效 UTF-8 源码块放不下时，正文与详情会给出完整 `sourceCursor` 请求，精确续读缺失的原始字节范围。无效请求在读取源码前失败；取消和非预期运行错误使整次调用失败，不能伪装成成功项。
-
-批次的 `complete` 表示每个目标的所选源码范围都已返回。每项 `source` 说明已返回与待续读的字节范围，并在适用时给出完整下一请求。快照版本缺失或已变化时需要刷新搜索；直接使用当前 `path`/`line` 是另一次当前源码检查，不能替代快照版本验证。
-
-JS/TS/TSX 使用随插件安装的解析器确定实现范围，不依赖外部工具。Universal Ctags 对其他工作区语言仍是可选依赖，且不会自动下载。缺少解析器或 provider、解析失败、文件过大、源码不可用和源码变化都会使用不同状态。直接检查会在解析和读取后复核源码 revision。
-
-有效 UTF-8 文本的匹配列使用 UTF-16 位置；带 `b` 后缀的范围是非 UTF-8 数据的原始字节偏移。原始 ripgrep/Ctags 协议输出不会发送给模型。会话关闭时清理保留快照。
-
-## 安全与隐私
-
-- 搜索完全在本地运行。
-- 插件没有网络请求和遥测。
-- 使用参数数组直接启动 `rg`、解析器 worker 和可选的 Universal Ctags，不经过 shell。
-- 搜索和检查路径限制在工作目录内。
-- 始终排除 `.git` 内部文件。
-- Pi 扩展拥有用户进程的完整权限；安装第三方扩展前应审查源码。
-
-漏洞报告方式和受支持版本见 [SECURITY.md](SECURITY.md)。
-
-## 开发
-
-```bash
-bun install
-bun run check
-bun run pack:check
-```
-
-测试使用 Bun 原生测试运行器，并包含真实 ripgrep 集成测试。`bun run test:node` 会临时构建 Node 目标、使用 Node.js 导入，然后清理产物。
-
-所有变更（包括 AI 编写的变更）都必须通过 Pull Request：
-
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [AI Pull Request Guide](docs/AI_PULL_REQUEST_GUIDE.md)
-- [质量门禁](docs/QUALITY_GATES.md)
+- [安全与隐私](SECURITY.md)
+- [完整工作方式与边界](docs/ARCHITECTURE.md)
+- [参与开发](CONTRIBUTING.md)
 
 ## 许可证
 

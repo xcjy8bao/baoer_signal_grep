@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { estimateTextTokens } from "../src/metrics.js";
 import { createRipgrepRunner } from "../src/rg.js";
 import { SignalGrepService } from "../src/service.js";
 import type { SignalGrepResult } from "../src/types.js";
@@ -308,7 +307,7 @@ describe("SignalGrepService with ripgrep", () => {
     });
 
     const result = await service.search({ pattern: "TODO", mode: "summary" }, "/tmp");
-    expect(estimateTextTokens(result.text)).toBeLessThanOrEqual(2_200);
+    expect(result.text.length).toBeLessThanOrEqual(2_200 * 4);
     expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16 * 1024);
     expect(result.details.summaryFilesShown).toBeLessThan(30);
     expect(result.details.summaryFilesOmitted).toBeGreaterThan(0);

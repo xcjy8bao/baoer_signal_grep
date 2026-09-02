@@ -63,6 +63,12 @@ describe("Signal Grep TUI renderers", () => {
         theme,
       ),
       renderSignalGrepCall({ mode: "inspect", path: "src/auth.ts", line: 42 }, "en", theme),
+      renderSignalGrepCall({ anyOf: ["alpha", "beta"], path: "src" }, "en", theme),
+      renderSignalGrepCall(
+        { mode: "impact", path: "src/auth.ts", symbol: "authorize" },
+        "zh-CN",
+        theme,
+      ),
     ];
 
     for (const width of [30, 60, 100]) {
@@ -73,6 +79,9 @@ describe("Signal Grep TUI renderers", () => {
         expect(lines.join("\n")).not.toContain("\u001b[31m");
       }
     }
+    expect(calls[3]?.render(100).join(" ")).toContain('"alpha" | "beta"');
+    expect(calls[4]?.render(100).join(" ")).toContain("影响证据");
+    expect(calls[4]?.render(100).join(" ")).toContain("authorize");
   });
 
   test("renders complete summaries as responsive ranked evidence", () => {
