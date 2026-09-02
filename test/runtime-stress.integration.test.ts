@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { estimateTextTokens } from "../src/metrics.js";
 import { createRipgrepRunner } from "../src/rg.js";
 import { SignalGrepRuntime } from "../src/runtime.js";
 import { SignalGrepService } from "../src/service.js";
@@ -53,7 +52,7 @@ afterEach(async () => {
 });
 
 describe("medium-repository runtime stress", () => {
-  test("accounts for every successful grep while preserving exhaustive cursor accuracy", async () => {
+  test("summarizes new queries while preserving exhaustive cursor accuracy", async () => {
     const root = await createMediumFixture();
     let scans = 0;
     const runRipgrep = createRipgrepRunner();
@@ -65,8 +64,6 @@ describe("medium-repository runtime stress", () => {
         },
       }),
     );
-    runtime.enableMetrics();
-
     const first = await runtime.search({ pattern: "NEEDLE" }, root);
     expect(scans).toBe(1);
     expect(first.details).toMatchObject({
@@ -74,8 +71,11 @@ describe("medium-repository runtime stress", () => {
       totalMatches: 980,
       returnedMatches: 0,
     });
-    expect(first.normalText).toContain("100 matches limit reached");
-    expect(runtime.metricsSnapshot.searches).toBe(1);
+    expect(runtime.sessionSummary).toEqual({
+      queries: 1,
+      completeQueries: 1,
+      organizedQueries: 1,
+    });
 
     const pages: string[] = [];
     let cursor = first.details.cursor;
@@ -85,24 +85,20 @@ describe("medium-repository runtime stress", () => {
       const page = await runtime.search({ cursor }, root);
       pages.push(page.text);
       expect(Buffer.byteLength(page.text)).toBeLessThanOrEqual(16 * 1024);
-      expect(estimateTextTokens(page.text)).toBeLessThanOrEqual(2_200);
       cursor = page.details.cursor;
     }
 
     const ids = pages.flatMap(extractMatchIds);
     expect(ids).toHaveLength(980);
     expect(new Set(ids).size).toBe(980);
-    expect(runtime.metricsSnapshot.cursorPages).toBe(pages.length);
+    expect(runtime.sessionSummary.queries).toBe(1);
     expect(runtime.snapshotCount).toBe(1);
     expect(runtime.storedMatches).toBe(980);
     runtime.clear();
     expect(runtime.snapshotCount).toBe(0);
     expect(runtime.storedMatches).toBe(0);
-    expect(runtime.metricsSnapshot.signalTokens).toBeGreaterThan(0);
-    expect(runtime.metricsSnapshot.normalTokens).toBeGreaterThan(0);
-    expect(runtime.formatMetricsStatus()).not.toContain("⚠");
 
-    const beforeFailure = runtime.metricsSnapshot;
+    const beforeFailure = runtime.sessionSummary;
     let invalidCursorFailure: unknown;
     try {
       await runtime.search({ cursor: "invalid" }, root);
@@ -110,7 +106,7 @@ describe("medium-repository runtime stress", () => {
       invalidCursorFailure = error;
     }
     expect(invalidCursorFailure).toBeInstanceOf(Error);
-    expect(runtime.metricsSnapshot).toEqual(beforeFailure);
+    expect(runtime.sessionSummary).toEqual(beforeFailure);
 
     const controller = new AbortController();
     controller.abort();
@@ -121,21 +117,23 @@ describe("medium-repository runtime stress", () => {
       cancellationFailure = error;
     }
     expect(cancellationFailure).toMatchObject({ name: "AbortError" });
-    expect(runtime.metricsSnapshot).toEqual(beforeFailure);
+    expect(runtime.sessionSummary).toEqual(beforeFailure);
 
     const empty = await runtime.search({ pattern: "NO_SUCH_MATCH", literal: true }, root);
     expect(empty.details.totalMatches).toBe(0);
-    expect(runtime.metricsSnapshot.searches).toBe(2);
+    expect(runtime.sessionSummary).toEqual({
+      queries: 2,
+      completeQueries: 2,
+      organizedQueries: 1,
+    });
     expect(scans).toBe(3);
   }, 30_000);
 
-  test("handles parallel filtered searches without losing metrics or crossing snapshots", async () => {
+  test("handles parallel filtered searches without losing session facts or crossing snapshots", async () => {
     const root = await createMediumFixture();
     const runtime = new SignalGrepRuntime(
       new SignalGrepService({ runRipgrep: createRipgrepRunner() }),
     );
-    runtime.enableMetrics();
-
     const [groupOne, groupTwo, tsxOnly] = await Promise.all([
       runtime.search({ pattern: "group1", literal: true, exclude: ".hidden/**" }, root),
       runtime.search({ pattern: "group2", literal: true, hidden: false }, root),
@@ -145,8 +143,11 @@ describe("medium-repository runtime stress", () => {
     expect(groupOne.details.totalMatches).toBe(240);
     expect(groupTwo.details.totalMatches).toBe(240);
     expect(tsxOnly.details.totalMatches).toBe(160);
-    expect(runtime.metricsSnapshot.searches).toBe(3);
-    expect(runtime.formatMetricsStatus()).not.toContain("⚠");
+    expect(runtime.sessionSummary).toEqual({
+      queries: 3,
+      completeQueries: 3,
+      organizedQueries: 3,
+    });
 
     const cursors = [groupOne.details.cursor, groupTwo.details.cursor, tsxOnly.details.cursor];
     expect(cursors.every((cursor) => typeof cursor === "string")).toBe(true);
@@ -156,6 +157,6 @@ describe("medium-repository runtime stress", () => {
     expect(firstPages.map((page) => page.details.totalMatches).toSorted((a, b) => a - b)).toEqual([
       160, 240, 240,
     ]);
-    expect(runtime.metricsSnapshot.cursorPages).toBe(3);
+    expect(runtime.sessionSummary.queries).toBe(3);
   }, 30_000);
 });

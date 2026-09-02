@@ -7,6 +7,20 @@ import { collectEvidenceCandidates } from "./evidence-candidates.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
 import { navigateImports } from "./import-navigation.js";
 import { findRelatedTests } from "./test-navigation.js";
+import { selectImpactTarget } from "./impact-target.js";
+import {
+  classifyImpactOccurrences,
+  impactRetentionExhausted,
+  impactRetentionPriority,
+  mergeImpactItems,
+  retainedImpactCounts,
+} from "./impact-analysis.js";
+import { escapeRegexLiteral, literalOccurrences } from "./literal-search.js";
+import {
+  expandMultiTermCandidates,
+  retainedTermCounts,
+  validateAnyOf,
+} from "./multi-term-search.js";
 import { normalizeRequest } from "./request.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { SignalGrepInput } from "./service.js";
@@ -31,7 +45,9 @@ export function isEvidenceRequest(input: SignalGrepInput): boolean {
     input.mode === "outline" ||
     input.mode === "imports" ||
     input.mode === "tests" ||
+    input.mode === "impact" ||
     input.sourceCursor !== undefined ||
+    input.anyOf !== undefined ||
     input.allOf !== undefined ||
     input.within !== undefined ||
     input.roles !== undefined ||
@@ -54,6 +70,7 @@ function rejectFields(
 }
 const searchFields = [
   "pattern",
+  "anyOf",
   "allOf",
   "within",
   "roles",
@@ -99,28 +116,6 @@ function validateTerms(input: SignalGrepInput): string[] | undefined {
   if (input.within !== undefined && input.within !== "file" && input.within !== "function")
     throw new SignalGrepError("within must be file or function");
   return terms;
-}
-function regexLiteral(term: string): string {
-  return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function literalOccurrences(
-  document: SourceDocument,
-  term: string,
-  allowed?: ByteRange[],
-): ByteRange[] {
-  const needle = Buffer.from(term);
-  const found: ByteRange[] = [];
-  for (
-    let start = document.bytes.indexOf(needle);
-    start >= 0;
-    start = document.bytes.indexOf(needle, start + Math.max(1, needle.length))
-  ) {
-    const range = { start, end: start + needle.length };
-    if (!allowed || allowed.some((part) => part.start <= range.start && range.end <= part.end))
-      found.push(range);
-  }
-  return found;
 }
 function fileConjunction(
   document: SourceDocument,
@@ -212,6 +207,7 @@ export class EvidenceService {
       const targets = this.#inspectionTargets(input, cwd);
       return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
+    if (input.mode === "impact") return this.#impact(input, access);
     if (input.cursor?.includes(".analysis.") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       rejectFields(
         input,
@@ -229,6 +225,56 @@ export class EvidenceService {
       [...inspectFields, "line", "matchIndex", "symbol", "cursor"],
       "Evidence search",
     );
+    const anyOf = validateAnyOf(input.anyOf);
+    if (anyOf) {
+      if (
+        input.pattern !== undefined ||
+        input.allOf !== undefined ||
+        input.within !== undefined ||
+        input.roles !== undefined ||
+        input.literal !== undefined ||
+        input.ignoreCase !== undefined
+      )
+        throw new SignalGrepError(
+          "anyOf is an explicit case-sensitive literal union; omit pattern, allOf, within, roles, literal and ignoreCase",
+        );
+      if (input.mode !== undefined && input.mode !== "auto" && input.mode !== "matches")
+        throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
+      const request = normalizeRequest({
+        ...input,
+        pattern: anyOf.map(escapeRegexLiteral).join("|"),
+        literal: false,
+        ignoreCase: false,
+      });
+      const candidates = await collectEvidenceCandidates({
+        request,
+        ...(input.changes ? { changes: input.changes } : {}),
+        cwd,
+        ...(signal ? { signal } : {}),
+        access,
+        runRipgrep: this.#runner,
+      });
+      const expanded = expandMultiTermCandidates(
+        candidates.files,
+        anyOf,
+        input.changes?.scope === "lines",
+      );
+      const result: AnalysisResultSet = {
+        kind: "any-of",
+        unit: "occurrences",
+        items: expanded.items,
+        partial: candidates.partial || expanded.partial,
+        reasons: [...new Set([...candidates.reasons, ...expanded.reasons])],
+        filesRead: candidates.filesRead,
+        bytesRead: candidates.bytesRead,
+        ...(candidates.changes ? { changes: candidates.changes } : {}),
+      };
+      return this.#analyses.page(
+        this.#analyses.create(result, (items) => ({
+          termCounts: retainedTermCounts(anyOf, items),
+        })),
+      );
+    }
     const terms = validateTerms(input);
     if (
       input.roles !== undefined &&
@@ -253,7 +299,7 @@ export class EvidenceService {
       terms
         ? {
             ...input,
-            pattern: terms.map(regexLiteral).join("|"),
+            pattern: terms.map(escapeRegexLiteral).join("|"),
             literal: false,
             ignoreCase: false,
           }
@@ -372,7 +418,10 @@ export class EvidenceService {
       const item = this.#analyses.item(input.cursor, input.matchIndex);
       if (!item.source || !item.range)
         throw new CursorError("This analysis item has no verified source range");
-      const isStructural = item.details?.kind === "symbol" || item.details?.kind === "function";
+      const isStructural =
+        item.details?.kind === "symbol" ||
+        item.details?.kind === "function" ||
+        item.details?.kind === "impact-target";
       return {
         path: item.path,
         line: item.line,
@@ -384,6 +433,128 @@ export class EvidenceService {
       ...legacySourceTarget(resolveInspectionTarget(input, cwd, this.#snapshots)),
       ...(input.matchIndex !== undefined ? { matchIndex: input.matchIndex } : {}),
     };
+  }
+
+  async #impact(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {
+    rejectFields(input, [...searchFields, ...inspectFields], "mode=impact");
+    let path: string;
+    let line = input.line;
+    let document: SourceDocument;
+    if (input.cursor !== undefined) {
+      if (input.cursor.includes(".analysis."))
+        throw new CursorError(
+          "Impact requires an ordinary search snapshot, not an analysis cursor",
+        );
+      if (
+        input.matchIndex === undefined ||
+        input.path !== undefined ||
+        input.line !== undefined ||
+        input.symbol !== undefined
+      )
+        throw new SignalGrepError(
+          "Snapshot impact requires cursor+matchIndex instead of path, line, or symbol",
+        );
+      const selected = resolveInspectionTarget(input, access.cwd, this.#snapshots);
+      if (selected.unverified)
+        throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
+      path = selected.path;
+      line = selected.line;
+      document = await access.load(path);
+      if (
+        selected.expectedRevision &&
+        (document.reference.origin.kind !== "worktree" ||
+          !sameSourceRevision(selected.expectedRevision, document.reference.origin.revision))
+      )
+        throw new SignalGrepError("Source changed; refresh the search");
+    } else {
+      if (input.matchIndex !== undefined)
+        throw new SignalGrepError("matchIndex requires an ordinary search cursor");
+      if (!input.path || (input.line === undefined && input.symbol === undefined))
+        throw new SignalGrepError("Direct impact requires path and at least one of symbol or line");
+      path = input.path;
+      document = await access.load(path);
+    }
+    if (document.reference.origin.kind !== "worktree")
+      throw new SignalGrepError("Impact currently supports worktree sources only");
+
+    const targetSyntax = await access.syntax(document);
+    let target;
+    try {
+      target = selectImpactTarget(document, targetSyntax, {
+        ...(line !== undefined ? { line } : {}),
+        ...(input.symbol !== undefined ? { symbol: input.symbol } : {}),
+      });
+    } finally {
+      access.releaseSyntax(document);
+    }
+
+    const request = normalizeRequest({
+      pattern: target.symbol.name,
+      literal: true,
+      ignoreCase: false,
+    });
+    const candidates = await collectEvidenceCandidates({
+      request,
+      cwd: access.cwd,
+      ...(access.signal ? { signal: access.signal } : {}),
+      access,
+      runRipgrep: this.#runner,
+    });
+    const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
+    const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
+    let partial = candidates.partial || occurrences.partial;
+    let testItems: AnalysisItem[] = [];
+    const retainedBeforeTests = [target.item, ...occurrences.items];
+    if (!target.symbol.hasBody) {
+      reasons.add("Related-test augmentation skipped: selected target has no implementation body");
+    } else if (impactRetentionExhausted(retainedBeforeTests)) {
+      partial = true;
+      reasons.add(
+        "Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget",
+      );
+    } else {
+      const files = await listWorkspaceFiles(access.cwd, access.signal);
+      const allowed = new Set(files.paths.map((file) => resolve(access.cwd, file)));
+      const primaryPath = resolve(access.cwd, document.path);
+      const host = {
+        cwd: access.cwd,
+        ...(access.signal ? { signal: access.signal } : {}),
+        load: async (file: string, expected?: SourceReference) => {
+          const absolutePath = resolve(access.cwd, file);
+          if (!allowed.has(absolutePath))
+            throw new SignalGrepError("Navigation source is excluded by current ignore rules");
+          if (absolutePath === primaryPath && expected === undefined) return document;
+          return expected ? access.refresh(file, expected) : access.load(file);
+        },
+        syntax: (source: SourceDocument) => access.syntax(source),
+        releaseSyntax: (source: SourceDocument) => access.releaseSyntax(source),
+        listFiles: async () => files,
+      };
+      const tests = await findRelatedTests(host, {
+        path: document.path,
+        line: target.item.line,
+        symbol: target.symbol.name,
+      });
+      testItems = tests.items;
+      partial ||= tests.partial || files.partial;
+      for (const reason of [...tests.reasons, ...files.reasons]) reasons.add(reason);
+    }
+    const result: AnalysisResultSet = {
+      kind: "impact",
+      unit: "impact-candidates",
+      items: mergeImpactItems(target.item, occurrences.items, testItems),
+      partial,
+      reasons: [...reasons],
+      filesRead: access.filesRead,
+      bytesRead: access.bytesRead,
+    };
+    return this.#analyses.page(
+      this.#analyses.create(
+        result,
+        (items) => retainedImpactCounts(items),
+        impactRetentionPriority,
+      ),
+    );
   }
 
   async #navigate(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {

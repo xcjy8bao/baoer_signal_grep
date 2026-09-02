@@ -6,7 +6,6 @@ coverage/
 .env
 .env.*
 !.env.example
-
 # Local instructions, agent state, and editor preferences
 AGENTS.md
 AGENTS.*.md
@@ -49,19 +48,18 @@ APPEND_SYSTEM.md
 *.pfx
 
 # Local test reports, diagnostics, and evaluation material
+/scripts/agent-eval.ts
 test-results/
 test-reports/
-playwright-report/
-blob-report/
-benchmark-results/
 .nyc_output/
-*.log
-*.lcov
+blob-report/
 lcov.info
+*.lcov
+docs/
+*.log
 junit*.xml
 *.cpuprofile
 *.heapprofile
 *.heapsnapshot
-/docs/evaluation/
-/docs/EVALUATION_*.md
-/scripts/agent-eval.ts
+playwright-report/
+benchmark-results/

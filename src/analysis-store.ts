@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
   ANALYSIS_TTL_MS,
+  ANALYSIS_METADATA_RESERVE_BYTES,
+  MAX_ANALYSIS_REASON_BYTES,
+  MAX_ANALYSIS_REASONS,
   MAX_ANALYSIS_RESULTS,
   MAX_ANALYSIS_SNAPSHOTS,
   MAX_ANALYSIS_STORAGE_BYTES,
@@ -17,6 +20,44 @@ interface StoredAnalysis {
   touched: number;
 }
 
+export type RetainedAnalysisSummary = (
+  items: readonly AnalysisItem[],
+) => Pick<AnalysisResultSet, "counts" | "termCounts">;
+export type AnalysisRetentionPriority = (item: AnalysisItem) => number;
+
+function boundedReasons(reasons: readonly string[]): string[] {
+  const unique = [...new Set(reasons)];
+  const retained: string[] = [];
+  let bytes = 2;
+  let omitted = 0;
+  for (const reason of unique) {
+    const reasonBytes = Buffer.byteLength(JSON.stringify(reason)) + 1;
+    if (
+      retained.length >= MAX_ANALYSIS_REASONS ||
+      bytes + reasonBytes > MAX_ANALYSIS_REASON_BYTES
+    ) {
+      omitted += 1;
+      continue;
+    }
+    retained.push(reason);
+    bytes += reasonBytes;
+  }
+  if (omitted === 0) return retained;
+  let notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
+  while (
+    retained.length > 0 &&
+    bytes + Buffer.byteLength(JSON.stringify(notice)) + 1 > MAX_ANALYSIS_REASON_BYTES
+  ) {
+    const removed = retained.pop();
+    if (removed === undefined) break;
+    bytes -= Buffer.byteLength(JSON.stringify(removed)) + 1;
+    omitted += 1;
+    notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
+  }
+  retained.push(notice);
+  return retained;
+}
+
 /** Stores only bounded display evidence and version references, never syntax trees. */
 export class AnalysisStore {
   readonly #items = new Map<string, StoredAnalysis>();
@@ -28,24 +69,64 @@ export class AnalysisStore {
     this.#items.clear();
   }
 
-  create(result: AnalysisResultSet): string {
+  create(
+    result: AnalysisResultSet,
+    summarize?: RetainedAnalysisSummary,
+    retentionPriority?: AnalysisRetentionPriority,
+  ): string {
     this.#expire();
-    const bounded: AnalysisResultSet = { ...result, reasons: [...result.reasons], items: [] };
+    const bounded: AnalysisResultSet = {
+      ...result,
+      reasons: boundedReasons(result.reasons),
+      items: [],
+    };
     let bytes = Buffer.byteLength(JSON.stringify(bounded));
-    for (const item of result.items) {
+    const candidates = result.items
+      .map((item, index) => ({ item, index }))
+      .toSorted(
+        (left, right) =>
+          (retentionPriority?.(left.item) ?? 0) - (retentionPriority?.(right.item) ?? 0) ||
+          left.index - right.index,
+      );
+    const retainedIndices: number[] = [];
+    const rebuildItems = (): void => {
+      const retained = new Set(retainedIndices);
+      bounded.items = result.items
+        .filter((_item, index) => retained.has(index))
+        .map((item) => structuredClone(item));
+    };
+    for (const candidate of candidates) {
+      const { item } = candidate;
       const itemBytes = Buffer.byteLength(JSON.stringify(item)) + 1;
       if (
-        bounded.items.length >= MAX_ANALYSIS_RESULTS ||
-        bytes + itemBytes > MAX_ANALYSIS_STORAGE_BYTES - 1024
+        retainedIndices.length >= MAX_ANALYSIS_RESULTS ||
+        bytes + itemBytes > MAX_ANALYSIS_STORAGE_BYTES - ANALYSIS_METADATA_RESERVE_BYTES
       ) {
         bounded.partial = true;
         bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
         break;
       }
-      bounded.items.push(structuredClone(item));
+      retainedIndices.push(candidate.index);
       bytes += itemBytes;
     }
+    rebuildItems();
+    if (summarize) Object.assign(bounded, summarize(bounded.items));
     bytes = Buffer.byteLength(JSON.stringify(bounded));
+    while (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024 && bounded.items.length > 0) {
+      retainedIndices.pop();
+      rebuildItems();
+      bounded.partial = true;
+      if (
+        !bounded.reasons.includes("Analysis storage limit: 50,000 items / 32 MiB; narrow the query")
+      )
+        bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
+      if (summarize) Object.assign(bounded, summarize(bounded.items));
+      bytes = Buffer.byteLength(JSON.stringify(bounded));
+    }
+    bounded.reasons = boundedReasons(bounded.reasons);
+    bytes = Buffer.byteLength(JSON.stringify(bounded));
+    if (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024)
+      throw new SignalGrepError("Analysis metadata exceeds the storage budget");
     while (
       this.#items.size >= MAX_ANALYSIS_SNAPSHOTS ||
       this.#totalBytes() + bytes > MAX_ANALYSIS_STORAGE_BYTES ||
@@ -95,7 +176,7 @@ export class AnalysisStore {
     const { stored, offset } = this.resolve(cursor);
     const { result } = stored;
     const items: NonNullable<SignalGrepResult["details"]["analysis"]>["items"] = [];
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.`;
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${result.termCounts ? `Term counts: ${JSON.stringify(result.termCounts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.`;
     const notice = result.reasons.length
       ? `\n${result.reasons.map((reason) => `[${reason}]`).join("\n")}`
       : "";
@@ -137,7 +218,10 @@ export class AnalysisStore {
       details: {
         version: 1,
         mode:
-          result.kind === "outline" || result.kind === "imports" || result.kind === "tests"
+          result.kind === "outline" ||
+          result.kind === "imports" ||
+          result.kind === "tests" ||
+          result.kind === "impact"
             ? result.kind
             : "matches",
         status: result.partial ? "partial" : "complete",
@@ -159,6 +243,7 @@ export class AnalysisStore {
           ...(result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {}),
           ...(result.changes ? { changes: result.changes } : {}),
           ...(result.counts ? { counts: result.counts } : {}),
+          ...(result.termCounts ? { termCounts: result.termCounts } : {}),
         },
       },
     };

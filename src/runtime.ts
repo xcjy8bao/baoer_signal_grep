@@ -1,19 +1,11 @@
-import { isEvidenceRequest } from "./evidence-service.js";
 import type { SignalGrepLocale } from "./config.js";
-import {
-  METRICS_STATUS_KEY,
-  type MetricsSnapshot,
-  type MetricsStatusStyles,
-  SearchMetrics,
-} from "./metrics.js";
 import type { SignalGrepInput, SignalGrepSearchOptions, SignalGrepService } from "./service.js";
+import { type SessionSummarySnapshot, SessionSummary } from "./session-summary.js";
 import type { ContextBudget, SignalGrepResult } from "./types.js";
-
-export { METRICS_STATUS_KEY };
 
 export class SignalGrepRuntime {
   readonly #service: SignalGrepService;
-  readonly #metrics = new SearchMetrics();
+  readonly #summary = new SessionSummary();
 
   constructor(service: SignalGrepService) {
     this.#service = service;
@@ -25,49 +17,19 @@ export class SignalGrepRuntime {
     signal?: AbortSignal,
     contextBudget?: ContextBudget,
   ): Promise<SignalGrepResult> {
-    const inputCursor = input.cursor;
-    const isInspection = isEvidenceRequest(input);
-    const searchOptions: SignalGrepSearchOptions = {
-      includeNormalBaseline: this.#metrics.enabled && !inputCursor && !isInspection,
-    };
+    const searchOptions: SignalGrepSearchOptions = {};
     if (contextBudget) searchOptions.contextBudget = contextBudget;
     const result = await this.#service.search(input, cwd, signal, searchOptions);
-
-    if (!this.#metrics.enabled || isInspection) return result;
-    if (inputCursor) {
-      this.#metrics.recordCursorPage(result.text);
-      return result;
-    }
-    if (result.normalText === undefined) {
-      throw new Error("Signal Grep metrics baseline was not generated");
-    }
-    this.#metrics.recordComparison(result.text, result.normalText);
+    this.#summary.record(input, result);
     return result;
   }
 
-  enableMetrics(): MetricsSnapshot {
-    this.#service.clear();
-    return this.#metrics.enable();
+  get sessionSummary(): SessionSummarySnapshot {
+    return this.#summary.snapshot;
   }
 
-  disableMetrics(): MetricsSnapshot {
-    return this.#metrics.disable();
-  }
-
-  get metricsEnabled(): boolean {
-    return this.#metrics.enabled;
-  }
-
-  get metricsSnapshot(): MetricsSnapshot {
-    return this.#metrics.snapshot;
-  }
-
-  formatMetricsStatus(styles?: MetricsStatusStyles, locale: SignalGrepLocale = "en"): string {
-    return this.#metrics.formatStatus(styles, locale);
-  }
-
-  formatMetricsReport(locale: SignalGrepLocale = "en"): string {
-    return this.#metrics.formatReport(locale);
+  formatSessionStatus(locale: SignalGrepLocale): string | undefined {
+    return this.#summary.format(locale);
   }
 
   clear(): void {

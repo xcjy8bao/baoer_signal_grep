@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { buildRipgrepArguments, createRipgrepRunner } from "../src/rg.js";
 import type { SearchRequest } from "../src/types.js";
 import { createTodoFixture, removeFixture } from "./helpers.js";
@@ -21,7 +21,8 @@ describe("ripgrep runner", () => {
     expect(args).toContain("--hidden");
     expect(args).toContain("!.git/**");
     expect(args).toContain("!**/.git/**");
-    expect(args.slice(-3)).toEqual(["--", "TODO", resolve("/repo")]);
+    expect(args.slice(-3)).toEqual(["--", "TODO", "."]);
+    expect(buildRipgrepArguments({ ...request, path: "src" }, "/repo").slice(-1)).toEqual(["src"]);
   });
 
   test("counts every match while retaining only the configured bound", async () => {

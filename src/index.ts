@@ -1,58 +1,45 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  CONFLICT_DETECTION_FAILED,
-  detectGrepOwnerConflict,
-  HASHLINE_PACKAGE,
-} from "./conflicts.js";
-export { grepOverrideConflictSource } from "./conflicts.js";
 import { readSignalGrepConfig, type SignalGrepConfig } from "./config.js";
 import { resolveContextBudget } from "./context-budget.js";
-import { formatMetricsStatus, registerSignalGrepControls } from "./extension-controls.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
-import { METRICS_STATUS_KEY, SignalGrepRuntime } from "./runtime.js";
-import { type SignalGrepInput, SignalGrepService } from "./service.js";
+import { SignalGrepRuntime } from "./runtime.js";
+import { SESSION_STATUS_KEY } from "./session-summary.js";
+import { SignalGrepService } from "./service.js";
+import { MAX_ANY_OF_TERMS, MAX_LITERAL_TERM_BYTES, MIN_ANY_OF_TERMS } from "./analysis-limits.js";
 import { MAX_INSPECT_TARGETS, MAX_SELECTED_PATHS, type SignalGrepDetails } from "./types.js";
 import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js";
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
-  "Search code with bounded, verifiable evidence. For a new search, supply pattern and optional path; normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Partial evidence and source changes are explicit.";
+  "Search code with bounded, verifiable evidence. For an ordinary new search, supply pattern and optional path; use anyOf for an exact multi-term inventory or mode=impact for one symbol's same-spelling and related-test evidence. Normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Partial evidence and source changes are explicit.";
 
-export interface SignalGrepExtensionOptions {
-  /** Overrides the Pi agent directory used for package conflict detection and config writes (test seam). */
-  agentDir?: string;
-  /** Overrides conflict detection entirely (test seam). */
-  detectConflict?: () => Promise<string | undefined>;
-}
-
-export function signalGrepPromptGuidelines(
-  toolName: "grep" | "signal_grep",
-  grepOwnerPackage?: string,
-): string[] {
-  const guidelines = [
-    `Use ${toolName} for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
+export function signalGrepPromptGuidelines(): string[] {
+  return [
+    `Use signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
     `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
-    `Use the file samples in ${toolName} summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
-    `When source context is missing, use one ${toolName} batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
+    `Use the file samples in signal_grep summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
+    `When source context is missing, use one signal_grep batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
     `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
+    `Use anyOf:["term1","term2"] when every exact occurrence of several literals is needed in one version-bound result. It is case-sensitive and reports retained counts per input term.`,
     `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
     `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
+    `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Same spelling does not prove binding, and returned tests have not been run.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
-    `Treat ${toolName} status=partial as incomplete and narrow the query before drawing conclusions.`,
+    `Treat signal_grep status=partial as incomplete and narrow the query before drawing conclusions.`,
   ];
-  if (grepOwnerPackage === HASHLINE_PACKAGE) {
-    guidelines.push(
-      `Before editing a location found by ${toolName}, use ${HASHLINE_PACKAGE}'s grep or read tool to obtain served anchors; ${toolName} evidence is not imported into its edit state.`,
-    );
-  }
-  return guidelines;
 }
 
 const searchSchema = Type.Object({
+  anyOf: Type.Optional(
+    Type.Array(Type.String({ maxLength: MAX_LITERAL_TERM_BYTES }), {
+      minItems: MIN_ANY_OF_TERMS,
+      maxItems: MAX_ANY_OF_TERMS,
+      description: `Exact literal union: ${String(MIN_ANY_OF_TERMS)}-${String(MAX_ANY_OF_TERMS)} distinct case-sensitive single-line terms, at most ${String(MAX_LITERAL_TERM_BYTES)} UTF-8 bytes each. Returns every retained occurrence attributed to its term. Omit pattern, allOf, within, roles, literal and ignoreCase.`,
+    }),
+  ),
   allOf: Type.Optional(
     Type.Array(Type.String(), {
       minItems: 2,
@@ -119,13 +106,13 @@ const searchSchema = Type.Object({
   symbol: Type.Optional(
     Type.String({
       description:
-        "Optional binding name for imports or tests navigation; never a whole-program call graph.",
+        "Optional binding name for imports or tests navigation, or an exact impact target name; never a whole-program call graph.",
     }),
   ),
   pattern: Type.Optional(
     Type.String({
       description:
-        "New search only: regex, or plain text with literal=true. Required for ordinary search; use allOf instead for explicit AND. Omit for inspect, outline, imports, tests and cursor continuation.",
+        "New search only: regex, or plain text with literal=true. Required for ordinary search; use allOf for explicit AND or anyOf for an exact literal union. Omit for inspect, outline, imports, tests, impact and cursor continuation.",
     }),
   ),
   path: Type.Optional(
@@ -154,8 +141,7 @@ const searchSchema = Type.Object({
   literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text." })),
   ignoreCase: Type.Optional(
     Type.Boolean({
-      description:
-        "true for insensitive, false for sensitive; omitted uses smart-case in additive mode and built-in case-sensitive behavior in override mode.",
+      description: "true for insensitive, false for sensitive; omitted uses smart-case.",
     }),
   ),
   hidden: Type.Optional(
@@ -174,15 +160,18 @@ const searchSchema = Type.Object({
     }),
   ),
   mode: Type.Optional(
-    StringEnum(["auto", "summary", "matches", "inspect", "outline", "imports", "tests"] as const, {
-      description:
-        "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never pattern/context/limit. outline lists JS/TS/TSX symbols; imports follows static ESM binding links; tests finds related test candidates. These three use path, optional line/symbol, or cursor+matchIndex, without search options.",
-    }),
+    StringEnum(
+      ["auto", "summary", "matches", "inspect", "outline", "imports", "tests", "impact"] as const,
+      {
+        description:
+          "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never pattern/context/limit. outline lists JS/TS/TSX symbols; imports follows static ESM binding links; tests finds related test candidates. impact selects one JS/TS/TSX symbol and inventories exact same-spelling candidates plus related-test evidence without claiming binding. Navigation and impact use path with optional line/symbol, or cursor+matchIndex, without search options.",
+      },
+    ),
   ),
   line: Type.Optional(
     Type.Number({
       description:
-        "1-indexed source line for path+line inspection only. Omit with matchIndex, matchIndices or targets.",
+        "1-indexed source line for path inspection/navigation/impact. Omit with matchIndex, matchIndices or targets.",
     }),
   ),
   matchIndex: Type.Optional(
@@ -212,63 +201,9 @@ const searchSchema = Type.Object({
   ),
 });
 
-type OverrideConfig = Pick<SignalGrepConfig, "overrideBuiltinGrep">;
-
-export function signalGrepToolName(config: OverrideConfig): "grep" | "signal_grep" {
-  return config.overrideBuiltinGrep ? "grep" : "signal_grep";
-}
-
-export function effectiveSignalGrepInput(
-  input: SignalGrepInput,
-  config: OverrideConfig,
-  overrideActive: boolean = config.overrideBuiltinGrep,
-): SignalGrepInput {
-  if (
-    !overrideActive ||
-    input.mode === "inspect" ||
-    input.mode === "outline" ||
-    input.mode === "imports" ||
-    input.mode === "tests" ||
-    input.allOf !== undefined ||
-    input.cursor ||
-    input.ignoreCase !== undefined
-  )
-    return input;
-  return { ...input, ignoreCase: false };
-}
-
-/**
- * Resolve whether Signal Grep override mode can actually own "grep" in this
- * session. Config intent alone is not enough: when a package from the known
- * conflict table is installed, Pi's loader would reject the duplicate "grep"
- * registration and refuse to start the whole extension set, so the override
- * degrades to additive "signal_grep" with a visible notice instead. The config
- * value is never rewritten: removing the conflicting package restores the
- * override on the next load.
- * Detection also runs in additive mode so prompt guidance can describe an
- * installed grep-owner handoff without changing the effective tool mode.
- */
-export async function resolveOverrideActive(
-  config: OverrideConfig,
-  options: SignalGrepExtensionOptions = {},
-): Promise<{ overrideActive: boolean; conflict: string | undefined }> {
-  const fallbackDetect = (): Promise<string | undefined> =>
-    detectGrepOwnerConflict(options.agentDir ?? getAgentDir());
-  const detect = options.detectConflict ?? fallbackDetect;
-  try {
-    const conflict = await detect();
-    return { overrideActive: config.overrideBuiltinGrep && conflict === undefined, conflict };
-  } catch {
-    // Fail safe: additive mode always loads cleanly, and the notice names the
-    // detection failure instead of pretending no conflict exists.
-    return { overrideActive: false, conflict: CONFLICT_DETECTION_FAILED };
-  }
-}
-
 export async function registerSignalGrepExtension(
   pi: ExtensionAPI,
   config: SignalGrepConfig,
-  options: SignalGrepExtensionOptions = {},
 ): Promise<void> {
   const runtime = new SignalGrepRuntime(
     new SignalGrepService({
@@ -276,18 +211,14 @@ export async function registerSignalGrepExtension(
       structure: createCtagsStructureProvider(),
     }),
   );
-  const agentDir = options.agentDir ?? getAgentDir();
-  const { overrideActive, conflict } = await resolveOverrideActive(config, options);
-  const degradedOverride = config.overrideBuiltinGrep && !overrideActive;
-  const toolName = overrideActive ? "grep" : "signal_grep";
   const { locale } = config;
 
   pi.registerTool<typeof searchSchema, SignalGrepDetails>({
-    name: toolName,
+    name: "signal_grep",
     label: SIGNAL_GREP_LABEL,
     description: SIGNAL_GREP_DESCRIPTION,
     promptSnippet: "Search file contents without flooding context",
-    promptGuidelines: signalGrepPromptGuidelines(toolName, conflict),
+    promptGuidelines: signalGrepPromptGuidelines(),
     parameters: searchSchema,
 
     renderCall(params, theme) {
@@ -305,14 +236,12 @@ export async function registerSignalGrepExtension(
 
     async execute(...[_toolCallId, params, signal, _onUpdate, ctx]) {
       const result = await runtime.search(
-        effectiveSignalGrepInput(params, config, overrideActive),
+        params,
         ctx.cwd,
         signal,
         resolveContextBudget(ctx.getContextUsage()),
       );
-      if (runtime.metricsEnabled) {
-        ctx.ui.setStatus(METRICS_STATUS_KEY, formatMetricsStatus(runtime, ctx, locale));
-      }
+      ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale));
 
       return {
         content: [{ type: "text", text: result.text }],
@@ -321,14 +250,9 @@ export async function registerSignalGrepExtension(
     },
   });
 
-  registerSignalGrepControls({
-    pi,
-    runtime,
-    config,
-    agentDir,
-    overrideActive,
-    degradedOverride,
-    conflict,
+  pi.on("session_shutdown", async (_event, ctx) => {
+    await runtime.shutdown();
+    ctx.ui.setStatus(SESSION_STATUS_KEY, undefined);
   });
 }
 

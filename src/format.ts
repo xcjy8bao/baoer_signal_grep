@@ -1,11 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
-import { basename, relative, resolve } from "node:path";
-import {
-  DEFAULT_MAX_BYTES,
-  formatSize,
-  truncateHead,
-  truncateLine,
-} from "@earendil-works/pi-coding-agent";
+import { readFile } from "node:fs/promises";
 import { abortError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
 import { getSourceRevision, sameSourceRevision } from "./source.js";
@@ -14,7 +7,6 @@ import {
   ESTIMATED_CHARACTERS_PER_TOKEN,
   MAX_CONTEXT_LINES,
   MAX_DISPLAYED_OCCURRENCES,
-  MAX_LINE_CHARACTERS,
   MAX_RESULT_BYTES,
   MAX_SOURCE_FILE_BYTES,
 } from "./types.js";
@@ -332,148 +324,4 @@ export async function formatMatchPage(
   if (firstMatchIndex !== undefined) page.firstMatchIndex = firstMatchIndex;
   if (lastMatchIndex !== undefined) page.lastMatchIndex = lastMatchIndex;
   return page;
-}
-
-interface NormalBlock {
-  lines: string[];
-  linesTruncated: boolean;
-}
-
-async function loadNormalContextLines(
-  match: MatchRecord,
-  cache: Map<string, string[] | null>,
-  signal?: AbortSignal,
-): Promise<string[] | null> {
-  if (cache.has(match.absolutePath)) return cache.get(match.absolutePath) ?? null;
-
-  try {
-    if (signal?.aborted) throw abortError();
-    const content = await readFile(match.absolutePath, { encoding: "utf8", signal });
-    const lines = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
-    cache.set(match.absolutePath, lines);
-    return lines;
-  } catch (error) {
-    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw abortError();
-    }
-    cache.set(match.absolutePath, null);
-    return null;
-  }
-}
-
-async function formatNormalBlock(
-  match: MatchRecord,
-  displayPath: string,
-  context: number,
-  cache: Map<string, string[] | null>,
-  signal?: AbortSignal,
-): Promise<NormalBlock> {
-  if (context === 0) {
-    if (match.lineTruncated && match.normalLinePrefix === undefined) {
-      throw new Error("Normal grep baseline requires the original truncated line prefix");
-    }
-    const content = match.lineTruncated
-      ? `${match.normalLinePrefix}... [truncated]`
-      : match.lineContent;
-    return {
-      lines: [`${displayPath}:${match.lineNumber}: ${content}`],
-      linesTruncated: match.lineTruncated,
-    };
-  }
-
-  const lines = await loadNormalContextLines(match, cache, signal);
-  if (!lines) {
-    return {
-      lines: [`${displayPath}:${match.lineNumber}: (unable to read file)`],
-      linesTruncated: false,
-    };
-  }
-
-  const start = Math.max(1, match.lineNumber - context);
-  const end = Math.min(lines.length, match.lineNumber + context);
-  const output: string[] = [];
-  let linesTruncated = false;
-  for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    const isMatch = lineNumber === match.lineNumber;
-    const marker = isMatch ? ":" : "-";
-    const rawContent = (lines[lineNumber - 1] ?? "").replaceAll("\r", "");
-    const truncated = truncateLine(rawContent, MAX_LINE_CHARACTERS);
-    linesTruncated ||= truncated.wasTruncated;
-    output.push(`${displayPath}${marker}${lineNumber}${marker} ${truncated.text}`);
-  }
-  return { lines: output, linesTruncated };
-}
-
-async function createNormalPathFormatter(snapshot: SearchSnapshot, cwd: string) {
-  const searchPath = resolve(cwd, snapshot.request.path ?? ".");
-  let searchPathIsDirectory = false;
-  try {
-    const searchPathStats = await stat(searchPath);
-    searchPathIsDirectory = searchPathStats.isDirectory();
-  } catch {
-    // The scan already succeeded. If the root disappears before formatting, basename behavior is
-    // the only deterministic fallback and matches normal grep's file-root formatting.
-  }
-
-  return (match: MatchRecord): string => {
-    if (searchPathIsDirectory) {
-      const localPath = relative(searchPath, match.absolutePath);
-      if (
-        localPath.length > 0 &&
-        localPath !== ".." &&
-        !localPath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
-      ) {
-        return localPath.replaceAll("\\", "/");
-      }
-    }
-    return basename(match.absolutePath);
-  };
-}
-
-export async function formatNormalBaseline(
-  snapshot: SearchSnapshot,
-  cwd: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  if (snapshot.totalMatches === 0) return "No matches found";
-
-  const cache = new Map<string, string[] | null>();
-  const formatPath = await createNormalPathFormatter(snapshot, cwd);
-  const normalMatchLimit = snapshot.request.pageSize;
-  const output: string[] = [];
-  let linesTruncated = false;
-  for (const match of snapshot.matches.slice(0, normalMatchLimit)) {
-    if (signal?.aborted) throw abortError();
-    // The normal baseline is ordered and bounded exactly like a single grep result.
-    // oxlint-disable-next-line no-await-in-loop
-    const block = await formatNormalBlock(
-      match,
-      formatPath(match),
-      snapshot.request.context,
-      cache,
-      signal,
-    );
-    output.push(...block.lines);
-    linesTruncated ||= block.linesTruncated;
-  }
-
-  const truncation = truncateHead(output.join("\n"), {
-    maxLines: Number.MAX_SAFE_INTEGER,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-  let text = truncation.content;
-  const notices: string[] = [];
-  if (snapshot.totalMatches >= normalMatchLimit) {
-    notices.push(
-      `${normalMatchLimit} matches limit reached. Use limit=${normalMatchLimit * 2} for more, or refine pattern`,
-    );
-  }
-  if (truncation.truncated) notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-  if (linesTruncated) {
-    notices.push(
-      `Some lines truncated to ${MAX_LINE_CHARACTERS} chars. Use read tool to see full lines`,
-    );
-  }
-  if (notices.length > 0) text += `\n\n[${notices.join(". ")}]`;
-  return text;
 }

@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -8,14 +7,10 @@ const CONFIG_FILE = "signal-grep.json";
 export type SignalGrepLocale = "en" | "zh-CN";
 
 export interface SignalGrepConfig {
-  overrideBuiltinGrep: boolean;
-  startMetricsOnNextLoad: boolean;
   locale: SignalGrepLocale;
 }
 
 export const DEFAULT_SIGNAL_GREP_CONFIG: Readonly<SignalGrepConfig> = {
-  overrideBuiltinGrep: false,
-  startMetricsOnNextLoad: false,
   locale: "en",
 };
 
@@ -28,8 +23,6 @@ function isMissingFile(error: unknown): boolean {
 }
 
 interface RawSignalGrepConfig {
-  overrideBuiltinGrep?: unknown;
-  startMetricsOnNextLoad?: unknown;
   locale?: unknown;
 }
 
@@ -41,32 +34,13 @@ function parseConfig(value: unknown, path: string): SignalGrepConfig {
   if (!isRawSignalGrepConfig(value)) {
     throw new Error(`Invalid Signal Grep config at ${path}: expected a JSON object`);
   }
-  const { overrideBuiltinGrep } = value;
-  if (overrideBuiltinGrep !== undefined && typeof overrideBuiltinGrep !== "boolean") {
-    throw new Error(`Invalid Signal Grep config at ${path}: overrideBuiltinGrep must be boolean`);
-  }
-  const { startMetricsOnNextLoad } = value;
-  if (startMetricsOnNextLoad !== undefined && typeof startMetricsOnNextLoad !== "boolean") {
-    throw new Error(
-      `Invalid Signal Grep config at ${path}: startMetricsOnNextLoad must be boolean`,
-    );
-  }
   const { locale } = value;
   if (locale !== undefined && locale !== "en" && locale !== "zh-CN") {
     throw new Error(`Invalid Signal Grep config at ${path}: locale must be "en" or "zh-CN"`);
   }
-  const parsed = {
-    overrideBuiltinGrep: overrideBuiltinGrep ?? DEFAULT_SIGNAL_GREP_CONFIG.overrideBuiltinGrep,
-    startMetricsOnNextLoad:
-      startMetricsOnNextLoad ?? DEFAULT_SIGNAL_GREP_CONFIG.startMetricsOnNextLoad,
+  return {
     locale: locale ?? DEFAULT_SIGNAL_GREP_CONFIG.locale,
   };
-  if (parsed.startMetricsOnNextLoad && !parsed.overrideBuiltinGrep) {
-    throw new Error(
-      `Invalid Signal Grep config at ${path}: startMetricsOnNextLoad requires overrideBuiltinGrep`,
-    );
-  }
-  return parsed;
 }
 
 export function signalGrepConfigPath(agentDir = getAgentDir()): string {
@@ -83,33 +57,6 @@ export async function readSignalGrepConfig(agentDir = getAgentDir()): Promise<Si
     if (error instanceof SyntaxError) {
       throw new Error(`Invalid Signal Grep config at ${path}: ${error.message}`, { cause: error });
     }
-    throw error;
-  }
-}
-
-export async function writeSignalGrepConfig(
-  config: SignalGrepConfig,
-  agentDir = getAgentDir(),
-): Promise<void> {
-  const path = signalGrepConfigPath(agentDir);
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await mkdir(agentDir, { recursive: true });
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    try {
-      await rename(temporaryPath, path);
-    } catch (error) {
-      if (!hasErrorCode(error, ["EEXIST", "EPERM"])) throw error;
-      // Windows cannot atomically replace an existing destination with rename().
-      // The staged file still prevents a partially written JSON document.
-      await rm(path, { force: true });
-      await rename(temporaryPath, path);
-    }
-  } catch (error) {
-    await rm(temporaryPath, { force: true });
     throw error;
   }
 }

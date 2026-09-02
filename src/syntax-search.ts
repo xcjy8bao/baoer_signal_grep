@@ -1,9 +1,9 @@
 import { MAX_ANALYSIS_RESULTS } from "./analysis-limits.js";
+import { sourceEvidence } from "./analysis-evidence.js";
 import type { AnalysisItem } from "./analysis-types.js";
 import { SignalGrepError } from "./errors.js";
 import type { ByteRange, SourceDocument } from "./source-document.js";
 import type { SyntaxAnalysis, SyntaxRole, SyntaxRoleName, SyntaxSymbol } from "./syntax.js";
-import { MAX_LINE_CHARACTERS } from "./types.js";
 
 export interface SyntaxSearchResult {
   items: AnalysisItem[];
@@ -83,32 +83,6 @@ function roleProofs(indices: readonly RoleIndex[], start: number, end: number): 
   return proofs;
 }
 
-function evidence(document: SourceDocument, range: ByteRange) {
-  const line = document.lineAt(range.start);
-  const lineRange = document.lineRange(line);
-  const lineStart = document.toCharacterOffset(lineRange.start);
-  const lineEnd = document.toCharacterOffset(lineRange.end);
-  const focus = document.toCharacterOffset(range.start);
-  const focusEnd = document.toCharacterOffset(range.end);
-  let start = Math.max(
-    lineStart,
-    focus - Math.floor(Math.max(0, MAX_LINE_CHARACTERS - (focusEnd - focus)) / 2),
-  );
-  let end = Math.min(lineEnd, start + MAX_LINE_CHARACTERS);
-  const startCode = document.text.charCodeAt(start);
-  const endCode = document.text.charCodeAt(end);
-  if (startCode >= 0xdc00 && startCode <= 0xdfff) start--;
-  if (endCode >= 0xdc00 && endCode <= 0xdfff) end--;
-  const excerptRange = { start: document.toByteOffset(start), end: document.toByteOffset(end) };
-  return {
-    range: { ...range },
-    line,
-    excerpt: `${start > lineStart ? "…" : ""}${document.text.slice(start, end)}${end < lineEnd ? "…" : ""}`,
-    excerptRange,
-    excerptTruncated: start > lineStart || end < lineEnd,
-  };
-}
-
 /** Role union applies to whole occurrences and never duplicates an occurrence. */
 export function filterRoleOccurrences(
   document: SourceDocument,
@@ -144,7 +118,7 @@ export function filterRoleOccurrences(
       );
       break;
     }
-    const match = evidence(document, range);
+    const match = sourceEvidence(document, range);
     items.push({
       path: document.path,
       line: match.line,
@@ -306,7 +280,12 @@ function termEvidence(document: SourceDocument, ranges: readonly ByteRange[], te
     }
   }
   return first
-    ? { term, count, evidence: evidence(document, first), omittedOccurrenceEvidence: count - 1 }
+    ? {
+        term,
+        count,
+        evidence: sourceEvidence(document, first),
+        omittedOccurrenceEvidence: count - 1,
+      }
     : undefined;
 }
 

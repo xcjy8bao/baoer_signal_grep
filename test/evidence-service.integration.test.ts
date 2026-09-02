@@ -65,6 +65,409 @@ test("public AND counts files separately and function AND excludes nested/commen
   await search.shutdown();
 }, 10000);
 
+test("anyOf retains exact overlapping terms with one candidate scan and stable term counts", async () => {
+  const root = await fixture({
+    "a.ts": "const foobar = 'λ+'; // foo FOOBAR λ+\n",
+    "b.ts": "export const foo = 'foobar';\n",
+  });
+  const runner = createRipgrepRunner();
+  let scans = 0;
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      scans++;
+      return runner(...args);
+    },
+  });
+  const found = await search.search({ anyOf: ["foo", "foobar", "λ+"] }, root);
+  expect(scans).toBe(1);
+  expect(found.details.analysis?.kind).toBe("any-of");
+  expect(found.details.analysis?.unit).toBe("occurrences");
+  expect(found.details.analysis?.termCounts).toEqual([
+    { term: "foo", retainedOccurrences: 4 },
+    { term: "foobar", retainedOccurrences: 2 },
+    { term: "λ+", retainedOccurrences: 2 },
+  ]);
+  expect(found.details.analysis?.items.map((item) => item.details?.term)).toEqual([
+    "foo",
+    "foo",
+    "foo",
+    "foo",
+    "foobar",
+    "foobar",
+    "λ+",
+    "λ+",
+  ]);
+  expect(found.text).not.toContain('"term":"FOOBAR"');
+  const inspect = found.details.analysis?.items.find(
+    (item) => item.details?.term === "λ+",
+  )?.inspect;
+  if (!inspect) throw new Error("Missing anyOf inspection request");
+  expect((await search.search(inspect, root)).text).toContain("λ+");
+  await writeFile(join(root, "a.ts"), "const changed = true;\n");
+  expect((await search.search(inspect, root)).details.structure?.status).toBe("source-changed");
+  await search.shutdown();
+}, 10000);
+
+test("anyOf validates its exclusive literal contract", async () => {
+  const root = await fixture({ "a.txt": "alpha beta\n" });
+  const search = service();
+  await expectFailure(search.search({ anyOf: ["alpha"] }, root), "2–8");
+  await expectFailure(search.search({ anyOf: ["alpha", "alpha"] }, root), "distinct");
+  await expectFailure(search.search({ anyOf: ["alpha", "line\nbreak"] }, root), "single-line");
+  await expectFailure(search.search({ anyOf: ["alpha", "\uD800"] }, root), "well-formed");
+  await expectFailure(search.search({ anyOf: ["alpha", "é".repeat(129)] }, root), "256");
+  await expectFailure(search.search({ anyOf: ["alpha", "beta"], pattern: "alpha" }, root), "omit");
+  await expectFailure(search.search({ anyOf: ["alpha", "beta"], mode: "summary" }, root), "mode");
+  await search.shutdown();
+}, 10000);
+
+test("anyOf preserves a nonempty whitespace-only literal exactly", async () => {
+  const root = await fixture({ "a.txt": "alpha beta\n" });
+  const search = service();
+  const found = await search.search({ anyOf: [" ", "beta"] }, root);
+  expect(found.details.analysis?.termCounts).toEqual([
+    { term: " ", retainedOccurrences: 1 },
+    { term: "beta", retainedOccurrences: 1 },
+  ]);
+  expect(found.details.analysis?.items.map((item) => item.details?.term)).toEqual([" ", "beta"]);
+  await search.shutdown();
+}, 10000);
+
+test("anyOf preserves hidden and ignore policy while exclusions still narrow candidates", async () => {
+  const root = await fixture({
+    ".git/hooks/sample": "alpha beta\n",
+    ".gitignore": "ignored.ts\n",
+    ".hidden.ts": "alpha beta\n",
+    "dist/generated.ts": "alpha beta\n",
+    "ignored.ts": "alpha beta\n",
+    "src/keep.ts": "alpha beta\n",
+  });
+  const search = service();
+  const visible = await search.search({ anyOf: ["alpha", "beta"], exclude: "dist/**" }, root);
+  expect(visible.details.analysis?.items.map((item) => item.path)).toEqual([
+    ".hidden.ts",
+    "src/keep.ts",
+    ".hidden.ts",
+    "src/keep.ts",
+  ]);
+  const withoutHidden = await search.search(
+    { anyOf: ["alpha", "beta"], exclude: "dist/**", hidden: false },
+    root,
+  );
+  expect(withoutHidden.details.analysis?.items.map((item) => item.path)).toEqual([
+    "src/keep.ts",
+    "src/keep.ts",
+  ]);
+  await search.shutdown();
+}, 10000);
+
+test("anyOf rejects cancellation observed after an empty candidate scan", async () => {
+  const root = await fixture({ "a.txt": "unrelated\n" });
+  const controller = new AbortController();
+  const search = new SignalGrepService({
+    runRipgrep: async (request) => {
+      controller.abort();
+      return {
+        request,
+        matches: [],
+        totalMatches: 0,
+        fileCounts: new Map(),
+        sourceRevisions: new Map(),
+        snapshotComplete: true,
+        truncatedLines: 0,
+      };
+    },
+  });
+  const failure: unknown = await search
+    .search({ anyOf: ["alpha", "beta"] }, root, controller.signal)
+    .catch((error: unknown) => error);
+  expect(failure).toMatchObject({ name: "AbortError", message: "Operation aborted" });
+  await search.shutdown();
+}, 10000);
+
+test("anyOf changed-line scope retains only wholly contained exact terms", async () => {
+  const root = await fixture({ "a.txt": "alpha\nbeta\nstable\n" });
+  await git(root, "init", "-q");
+  await git(root, "add", ".");
+  await git(root, "commit", "-qm", "base");
+  await writeFile(join(root, "a.txt"), "alpha changed\nbeta\nstable\n");
+  const search = service();
+  const found = await search.search(
+    { anyOf: ["alpha", "beta"], changes: { scope: "lines", side: "new" } },
+    root,
+  );
+  expect(found.details.analysis?.termCounts).toEqual([
+    { term: "alpha", retainedOccurrences: 1 },
+    { term: "beta", retainedOccurrences: 0 },
+  ]);
+  expect(found.details.analysis?.totalItems).toBe(1);
+  await search.shutdown();
+}, 15000);
+
+test("anyOf pages retained evidence without changing snapshot counts", async () => {
+  const root = await fixture({
+    "many.txt": Array.from({ length: 40 }, (_, index) =>
+      index % 2 === 0 ? `alpha ${index}` : `beta ${index}`,
+    ).join("\n"),
+  });
+  const search = service();
+  const first = await search.search({ anyOf: ["alpha", "beta"] }, root);
+  const next = first.details.nextRequest;
+  if (!next) throw new Error("Missing anyOf continuation");
+  const second = await search.search(next, root);
+  expect(second.details.analysis?.termCounts).toEqual(first.details.analysis?.termCounts);
+  expect(
+    new Set([
+      ...(first.details.analysis?.items.map((item) => item.index) ?? []),
+      ...(second.details.analysis?.items.map((item) => item.index) ?? []),
+    ]).size,
+  ).toBe(40);
+  await search.shutdown();
+}, 10000);
+
+test("impact selects one target and merges exact role candidates with related-test evidence", async () => {
+  const root = await fixture({
+    "src/core.ts":
+      "export function calculate(value:number){ return value + 1; }\ncalculate(1);\nconst reference = calculate;\nexport { calculate as compute };\nconst text = 'calculate'; // calculate\nconst expression = /calculate/;\n",
+    "src/client.ts": "import { calculate } from './core';\nexport const result = calculate(2);\n",
+    "src/view.tsx": "export const View = () => <div>calculate</div>;\n",
+    "src/notes.md": "calculate is documented here\n",
+    "src/use.go": "package sample\nfunc use(){ calculate() }\n",
+    "test/core.test.ts":
+      "import {test} from 'node:test';\nimport {calculate} from '../src/core';\ntest('calculates',()=>{ calculate(1); });\n",
+  });
+  const search = service();
+  const found = await search.search(
+    { mode: "impact", path: "src/core.ts", symbol: "calculate" },
+    root,
+  );
+  expect(found.details.mode).toBe("impact");
+  expect(found.details.analysis?.kind).toBe("impact");
+  expect(found.details.analysis?.unit).toBe("impact-candidates");
+  expect(found.details.analysis?.items[0]?.details?.kind).toBe("impact-target");
+  expect(found.details.analysis?.items[0]?.details?.scope).toBe("<module>");
+  expect(found.details.analysis?.counts?.targets).toBe(1);
+  expect(found.details.analysis?.counts?.retainedExactOccurrences).toBeGreaterThanOrEqual(10);
+  for (const category of [
+    "declaration",
+    "import",
+    "export",
+    "call",
+    "code",
+    "comment",
+    "string",
+    "jsx-text",
+    "unknown",
+    "unclassified",
+  ])
+    expect(found.details.analysis?.counts?.[category]).toBeGreaterThan(0);
+  const categories = [
+    "declaration",
+    "import",
+    "export",
+    "call",
+    "code",
+    "comment",
+    "string",
+    "jsx-text",
+    "unknown",
+    "unclassified",
+  ];
+  const retainedExactOccurrences = found.details.analysis?.counts?.retainedExactOccurrences;
+  if (retainedExactOccurrences === undefined) throw new Error("Missing retained impact count");
+  expect(
+    categories.reduce(
+      (total, category) => total + (found.details.analysis?.counts?.[category] ?? 0),
+      0,
+    ),
+  ).toBe(retainedExactOccurrences);
+  expect(found.details.analysis?.counts?.testUses).toBeGreaterThan(0);
+  expect(found.details.analysis?.counts?.testCases).toBeGreaterThan(0);
+  expect(found.details.analysis?.counts?.testRelations).toBeGreaterThan(0);
+  expect(found.text).toContain("binding unproven");
+  expect(found.text).toContain('"execution":"not-run"');
+  expect(found.text).toContain('"assertionCoverage":"not-evaluated"');
+  expect(
+    found.details.analysis?.items.some(
+      (item) =>
+        item.path === "src/use.go" &&
+        Array.isArray(item.details?.roles) &&
+        item.details.roles.some(
+          (role) =>
+            typeof role === "object" &&
+            role !== null &&
+            "certainty" in role &&
+            role.certainty === "candidate",
+        ),
+    ),
+  ).toBe(true);
+  const targetInspect = found.details.analysis?.items[0]?.inspect;
+  if (!targetInspect) throw new Error("Missing impact target inspection");
+  const inspected = await search.search(targetInspect, root);
+  expect(inspected.text).toContain("function calculate");
+  expect(inspected.text).toContain("return value + 1");
+  await writeFile(join(root, "src/core.ts"), "export function changed(){ return 0; }\n");
+  expect((await search.search(targetInspect, root)).details.structure?.status).toBe(
+    "source-changed",
+  );
+  await search.shutdown();
+}, 20000);
+
+test("impact resolves an ordinary snapshot match and rejects analysis cursors", async () => {
+  const root = await fixture({
+    "src/core.ts": "export function calculate(){\n  return 42;\n}\n",
+  });
+  const search = service();
+  const ordinary = await search.search({ pattern: "return 42", mode: "summary" }, root);
+  const cursor = ordinary.details.cursor;
+  if (!cursor) throw new Error("Missing ordinary snapshot cursor");
+  const impact = await search.search({ mode: "impact", cursor, matchIndex: 1 }, root);
+  expect(impact.details.analysis?.items[0]?.details?.name).toBe("calculate");
+  const analysisCursor = impact.details.cursor;
+  if (!analysisCursor) throw new Error("Missing impact analysis cursor");
+  await expectFailure(
+    search.search({ mode: "impact", cursor: analysisCursor, matchIndex: 1 }, root),
+    "ordinary search snapshot",
+  );
+  await search.shutdown();
+}, 15000);
+
+test("impact rejects invalid target shapes and anonymous placeholders before scanning", async () => {
+  const root = await fixture({
+    "named.ts": "export function named(){ return 1; }\n",
+    "anonymous.ts": "export default () => 1;\n",
+  });
+  const runner = createRipgrepRunner();
+  let scans = 0;
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      scans++;
+      return runner(...args);
+    },
+  });
+  await expectFailure(search.search({ mode: "impact", path: "named.ts" }, root), "at least one");
+  await expectFailure(
+    search.search({ mode: "impact", path: "named.ts", symbol: "named", pattern: "named" }, root),
+    "does not accept",
+  );
+  await expectFailure(
+    search.search({ mode: "impact", path: "named.ts", line: 99 }, root),
+    "does not identify",
+  );
+  await expectFailure(
+    search.search({ mode: "impact", path: "anonymous.ts", line: 1 }, root),
+    "stable source binding name",
+  );
+  expect(scans).toBe(0);
+  await search.shutdown();
+}, 10000);
+
+test("impact pagination preserves target-first order, counts, and unique item indices", async () => {
+  const root = await fixture({
+    "many.ts": `export function calculate(){ return 1; }\n${Array.from(
+      { length: 45 },
+      (_, index) => `const value${index} = calculate();`,
+    ).join("\n")}\n`,
+  });
+  const search = service();
+  const first = await search.search({ mode: "impact", path: "many.ts", symbol: "calculate" }, root);
+  expect(first.details.analysis?.items[0]?.details?.kind).toBe("impact-target");
+  const next = first.details.nextRequest;
+  if (!next) throw new Error("Missing impact continuation");
+  const second = await search.search(next, root);
+  expect(second.details.analysis?.counts).toEqual(first.details.analysis?.counts);
+  const indices = [
+    ...(first.details.analysis?.items.map((item) => item.index) ?? []),
+    ...(second.details.analysis?.items.map((item) => item.index) ?? []),
+  ];
+  const totalItems = first.details.analysis?.totalItems;
+  if (totalItems === undefined) throw new Error("Missing impact total");
+  expect(new Set(indices).size).toBe(totalItems);
+  await search.shutdown();
+}, 15000);
+
+test("impact prefers one implemented overload and fails unresolved target ambiguity before scanning", async () => {
+  const root = await fixture({
+    "overload.ts":
+      "export function select(value:string):string;\nexport function select(value:number):number;\nexport function select(value:unknown){ return value; }\n",
+    "method-overload.ts":
+      "class API { select(value:string):string; select(value:unknown){ return String(value); } }\n",
+    "ambiguous.ts":
+      "function duplicate(){ return 1; }\nfunction duplicate(value:number){ return value; }\n",
+    "unrelated.ts":
+      "interface API { select(value:string): string }\nfunction select(value:unknown){ return String(value); }\n",
+    "scope-collision.ts":
+      "interface API { select(value:string): string }\nclass API { select(value:unknown){ return String(value); } }\n",
+    "kind-collision.ts": "interface select {}\nfunction select(){ return 1; }\n",
+    "unsupported.go": "package sample\nfunc Select() {}\n",
+  });
+  const runner = createRipgrepRunner();
+  let scans = 0;
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      scans++;
+      return runner(...args);
+    },
+  });
+  const selected = await search.search(
+    { mode: "impact", path: "overload.ts", symbol: "select" },
+    root,
+  );
+  expect(selected.details.analysis?.items[0]?.details?.hasBody).toBe(true);
+  expect(scans).toBe(1);
+  const selectedMethod = await search.search(
+    { mode: "impact", path: "method-overload.ts", symbol: "select" },
+    root,
+  );
+  expect(selectedMethod.details.analysis?.items[0]?.details).toMatchObject({
+    hasBody: true,
+    scope: "API",
+  });
+  expect(scans).toBe(2);
+  await expectFailure(
+    search.search({ mode: "impact", path: "ambiguous.ts", symbol: "duplicate" }, root),
+    "ambiguous",
+  );
+  expect(scans).toBe(2);
+  await expectFailure(
+    search.search({ mode: "impact", path: "unrelated.ts", symbol: "select" }, root),
+    "ambiguous",
+  );
+  expect(scans).toBe(2);
+  await expectFailure(
+    search.search({ mode: "impact", path: "scope-collision.ts", symbol: "select" }, root),
+    "ambiguous",
+  );
+  expect(scans).toBe(2);
+  await expectFailure(
+    search.search({ mode: "impact", path: "kind-collision.ts", symbol: "select" }, root),
+    "ambiguous",
+  );
+  expect(scans).toBe(2);
+  await expectFailure(
+    search.search({ mode: "impact", path: "unsupported.go", symbol: "Select" }, root),
+    "JS/TS/TSX",
+  );
+  expect(scans).toBe(2);
+  await search.shutdown();
+}, 15000);
+
+test("impact line targeting chooses the smallest enclosing symbol and bodyless targets skip tests", async () => {
+  const root = await fixture({
+    "nested.ts":
+      "export function outer(){\n  function inner(){\n    return 1;\n  }\n  return inner();\n}\ninterface API { read(value:string): void }\n",
+  });
+  const search = service();
+  const nested = await search.search({ mode: "impact", path: "nested.ts", line: 3 }, root);
+  expect(nested.details.analysis?.items[0]?.details?.name).toBe("inner");
+  const bodyless = await search.search({ mode: "impact", path: "nested.ts", symbol: "read" }, root);
+  expect(bodyless.details.status).toBe("complete");
+  expect(bodyless.details.analysis?.items[0]?.details?.hasBody).toBe(false);
+  expect(bodyless.details.analysis?.reasons.join(" ")).toContain("no implementation body");
+  expect(bodyless.details.analysis?.counts?.testCases).toBe(0);
+  await search.shutdown();
+}, 15000);
+
 test("public role filter is per occurrence for JS and Go", async () => {
   const root = await fixture({
     "a.ts": "function run(){}; run(); const text='run'; // run\n",
@@ -214,13 +617,15 @@ test("public static imports preserve aliases and tests report candidates without
   await search.shutdown();
 }, 15000);
 
-test("new operations are excluded from ordinary output-byte Metrics", async () => {
+test("new operations contribute only complete session facts", async () => {
   const root = await fixture({ "a.ts": "export function a(){ first(); second(); }\n" });
   const runtime = new SignalGrepRuntime(service());
-  runtime.enableMetrics();
-  const before = runtime.metricsSnapshot;
   await runtime.search({ allOf: ["first", "second"] }, root);
   await runtime.search({ mode: "outline", path: "a.ts" }, root);
-  expect(runtime.metricsSnapshot).toEqual(before);
+  expect(runtime.sessionSummary).toEqual({
+    queries: 2,
+    completeQueries: 2,
+    organizedQueries: 0,
+  });
   await runtime.shutdown();
 }, 10000);

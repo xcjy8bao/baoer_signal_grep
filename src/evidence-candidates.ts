@@ -179,6 +179,7 @@ async function searchRawSource(
 /* oxlint-disable no-await-in-loop -- retained files share one source and occurrence budget. */
 async function ordinaryCandidates(options: EvidenceCandidateOptions): Promise<EvidenceCandidates> {
   const scan = await options.runRipgrep(options.request, options.cwd, options.signal);
+  if (options.signal?.aborted) throw abortError();
   const reasons = new Set<string>();
   if (!scan.snapshotComplete)
     reasons.add("Search retention is partial; only retained matching files can be analyzed");
@@ -281,6 +282,7 @@ export async function collectEvidenceCandidates(
       return { paths: selected.paths, bytesRead: selected.ignoreBytesRead };
     },
   });
+  if (options.signal?.aborted) throw abortError();
   for (const reason of result.reasons) reasons.add(reason);
   const files: EvidenceCandidateFile[] = [];
   const budget: MatchBudget = { retained: 0, protocolBytes: 0 };

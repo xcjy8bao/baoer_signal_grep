@@ -36,7 +36,8 @@ export type SearchMode =
   | "inspect"
   | "outline"
   | "imports"
-  | "tests";
+  | "tests"
+  | "impact";
 
 export type ContextBudgetTier = keyof typeof CONTEXT_BUDGET_POLICY.resultTokenBudgets;
 
@@ -157,8 +158,6 @@ export interface MatchRecord {
   lineNumber: number;
   lineContent: string;
   lineTruncated: boolean;
-  /** Original line head for truncated matches within the normal grep result limit. */
-  normalLinePrefix?: string;
   occurrences: MatchOccurrence[];
 }
 
@@ -215,5 +214,4 @@ export interface SignalGrepDetails {
 export interface SignalGrepResult {
   text: string;
   details: SignalGrepDetails;
-  normalText?: string;
 }

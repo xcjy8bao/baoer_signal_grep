@@ -59,7 +59,7 @@ async function runReference(
   input: RawSearchInput,
   flags: string[],
 ): Promise<ReferenceMatch[]> {
-  const searchPath = resolve(root, input.path ?? ".");
+  const searchPath = input.path ?? ".";
   const process = Bun.spawn(
     [
       "rg",
