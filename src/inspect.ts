@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { abortError, CursorError, SignalGrepError } from "./errors.js";
+import { SearchPathPolicy } from "./path-policy.js";
 import type { CodeStructureProvider, StructureInspection } from "./structure.js";
 import {
-  assertExistingPathInsideCwd,
+  assertExistingSearchPath,
   getSourceRevision,
-  isPathInsideCwd,
   readSourceRange,
   sameSourceRevision,
   SourceBudgetTooSmallError,
@@ -82,9 +82,7 @@ export function resolveInspectionTarget(
     throw new SignalGrepError("line must be a positive integer when mode=inspect");
   }
   const absolutePath = retainedMatch?.absolutePath ?? resolve(cwd, path);
-  if (!isPathInsideCwd(absolutePath, cwd)) {
-    throw new SignalGrepError("Inspect path must stay within the working directory");
-  }
+  new SearchPathPolicy(cwd).assertPath(absolutePath);
   let expectedRevision: SourceRevision | undefined;
   if (input.cursor) {
     const { snapshot } = snapshots.resolve(input.cursor);
@@ -158,7 +156,7 @@ export async function inspectSourceEvidence(
 ): Promise<InspectionEvidence> {
   if (signal?.aborted) throw abortError();
   try {
-    await assertExistingPathInsideCwd(target.absolutePath, cwd);
+    await assertExistingSearchPath(target.absolutePath, cwd);
   } catch (error) {
     if (signal?.aborted) throw abortError();
     if (isUnavailableSourceError(error)) return unavailableEvidence(target, "source-unavailable");

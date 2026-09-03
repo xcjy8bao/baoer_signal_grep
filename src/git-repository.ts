@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { decodeGitPath, runGitRead, splitGitRecords } from "./git-process.js";
 import {
@@ -90,6 +90,32 @@ export async function resolveGitCommit(
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit))
     throw new SignalGrepError("Git returned an invalid commit identity");
   return commit;
+}
+
+export async function resolveGitRepository(cwd: string, signal?: AbortSignal): Promise<string> {
+  const { output } = await runGitRead(
+    cwd,
+    "rev-parse",
+    ["--show-toplevel"],
+    signal ? { signal, maxBytes: 4096 } : { maxBytes: 4096 },
+  );
+  const root = decodeGitPath(output).replace(/\r?\n$/, "");
+  if (!isAbsolute(root)) throw new SignalGrepError("Git returned an invalid repository root");
+  return resolve(root);
+}
+
+export async function findGitRepository(
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  try {
+    return await resolveGitRepository(cwd, signal);
+  } catch (error) {
+    if (error instanceof SignalGrepError && error.message.includes("not a git repository")) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 export async function readGitTree(

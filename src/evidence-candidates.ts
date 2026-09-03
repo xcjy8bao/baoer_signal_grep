@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   MAX_ANALYSIS_RESULTS,
   MAX_STRUCTURE_BYTES,
@@ -8,6 +9,7 @@ import { abortError, SignalGrepError } from "./errors.js";
 import { readGitChanges, type GitChangeRequest } from "./git-source.js";
 import { filterHistoricalPaths } from "./historical-paths.js";
 import { runOwnedProcess } from "./owned-process.js";
+import { isPathInsideCwd } from "./path-policy.js";
 import { patternArguments, type RipgrepRunner } from "./rg.js";
 import { sameSourceRevision } from "./source.js";
 import { SourceBudgetError } from "./source-access.js";
@@ -269,6 +271,14 @@ export async function collectEvidenceCandidates(
   options: EvidenceCandidateOptions,
 ): Promise<EvidenceCandidates> {
   if (!options.changes) return ordinaryCandidates(options);
+  if (
+    options.request.path &&
+    !isPathInsideCwd(resolve(options.cwd, options.request.path), options.cwd)
+  ) {
+    throw new SignalGrepError(
+      "Git changes for paths outside cwd are not supported; relaunch Pi from that repository or a common parent",
+    );
+  }
   const reasons = new Set<string>();
   const result = await readGitChanges(options.cwd, options.changes, options.signal, {
     filterPaths: async (paths) => {

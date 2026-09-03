@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { buildRipgrepArguments, createRipgrepRunner } from "../src/rg.js";
 import type { SearchRequest } from "../src/types.js";
 import { createTodoFixture, removeFixture } from "./helpers.js";
@@ -110,14 +110,90 @@ describe("ripgrep runner", () => {
     }
   });
 
-  test("rejects search paths outside the working directory", () => {
-    expect(() => buildRipgrepArguments({ ...request, path: ".." }, "/repo/project")).toThrow(
-      "Search path must stay within the working directory",
+  test("allows explicit search paths outside the working directory", () => {
+    const cwd = resolve("/repo/project");
+    expect(buildRipgrepArguments({ ...request, path: ".." }, cwd).at(-1)).toBe(resolve(cwd, ".."));
+    expect(buildRipgrepArguments({ ...request, path: "../outside" }, cwd).at(-1)).toBe(
+      resolve(cwd, "../outside"),
     );
-    expect(() =>
-      buildRipgrepArguments({ ...request, path: "../outside" }, "/repo/project"),
-    ).toThrow("Search path must stay within the working directory");
   });
+
+  test("searches a parent selected by traversal", async () => {
+    const root = await createTodoFixture();
+    const canonicalRoot = await realpath(root);
+    const cwd = join(root, "project");
+    await mkdir(cwd);
+    const credentialDirectory =
+      process.platform === "darwin" || process.platform === "win32" ? ".SSH" : ".ssh";
+    await mkdir(join(root, credentialDirectory));
+    await writeFile(join(root, credentialDirectory, "id_ed25519"), "TODO protected-secret\n");
+    await mkdir(join(root, ".GIT"));
+    await writeFile(join(root, ".GIT", "config"), "TODO protected-git\n");
+    try {
+      const scan = await createRipgrepRunner()({ ...request, path: ".." }, cwd);
+      expect(scan.totalMatches).toBe(33);
+      expect(scan.matches.every((match) => match.displayPath.startsWith(canonicalRoot))).toBe(true);
+      expect(scan.matches.some((match) => match.lineContent.includes("protected-secret"))).toBe(
+        false,
+      );
+      expect(scan.matches.some((match) => match.lineContent.includes("protected-git"))).toBe(false);
+    } finally {
+      await removeFixture(root);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "applies external protections after resolving a broad symlink target",
+    async () => {
+      const root = await createTodoFixture();
+      const cwd = join(root, "project");
+      await mkdir(cwd);
+      await mkdir(join(root, ".ssh"));
+      await writeFile(join(root, ".ssh", "id_ed25519"), "TODO protected-secret\n");
+      await symlink("..", join(cwd, "external"));
+      try {
+        const scan = await createRipgrepRunner()({ ...request, path: "external" }, cwd);
+        expect(scan.totalMatches).toBe(33);
+        expect(scan.matches.some((match) => match.lineContent.includes("protected-secret"))).toBe(
+          false,
+        );
+      } finally {
+        await removeFixture(root);
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "rejects an external search root replaced after candidate enumeration",
+    async () => {
+      const root = await createTodoFixture();
+      const cwd = join(root, "project");
+      const target = join(root, "safe");
+      const protectedTarget = join(root, ".ssh");
+      const executable = join(root, "swap-target.mjs");
+      await mkdir(cwd);
+      await mkdir(target);
+      await mkdir(protectedTarget);
+      await writeFile(join(target, "safe.txt"), "TODO safe\n");
+      await writeFile(join(protectedTarget, "id_ed25519"), "TODO protected-secret\n");
+      await writeFile(
+        executable,
+        `#!/usr/bin/env node\nimport { renameSync, symlinkSync } from "node:fs";\nif (process.argv.includes("--files")) { renameSync(${JSON.stringify(target)}, ${JSON.stringify(`${target}.old`)}); symlinkSync(${JSON.stringify(protectedTarget)}, ${JSON.stringify(target)}); }\n`,
+      );
+      await chmod(executable, 0o755);
+      try {
+        const failure: unknown = await createRipgrepRunner({ executable })(
+          { ...request, path: target },
+          cwd,
+        ).catch((error: unknown) => error);
+        expect(failure).toMatchObject({
+          message: expect.stringContaining("protected credential or system area"),
+        });
+      } finally {
+        await removeFixture(root);
+      }
+    },
+  );
 
   test("rejects explicit Git internals even though ripgrep would bypass file globs", () => {
     for (const path of [".git", ".git/config", "nested/.git/HEAD"]) {

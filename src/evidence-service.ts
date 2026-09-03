@@ -1,10 +1,12 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { AnalysisStore } from "./analysis-store.js";
 import type { AnalysisItem, AnalysisResultSet } from "./analysis-types.js";
 import { abortError, CursorError, SignalGrepError } from "./errors.js";
+import { findGitRepository } from "./git-repository.js";
+import { isPathInsideCwd } from "./path-policy.js";
 import { resolveInspectionTarget } from "./inspect.js";
 import { collectEvidenceCandidates } from "./evidence-candidates.js";
-import { listWorkspaceFiles } from "./workspace-files.js";
+import { listWorkspaceFiles, workspaceRelativePath } from "./workspace-files.js";
 import { navigateImports } from "./import-navigation.js";
 import { findRelatedTests } from "./test-navigation.js";
 import { selectImpactTarget } from "./impact-target.js";
@@ -150,6 +152,12 @@ function fileConjunction(
       unit: "files",
     },
   };
+}
+
+async function navigationRoot(cwd: string, path: string, signal?: AbortSignal): Promise<string> {
+  const absolute = resolve(cwd, path);
+  if (isPathInsideCwd(absolute, cwd)) return resolve(cwd);
+  return (await findGitRepository(dirname(absolute), signal)) ?? dirname(absolute);
 }
 
 export class EvidenceService {
@@ -476,6 +484,7 @@ export class EvidenceService {
     }
     if (document.reference.origin.kind !== "worktree")
       throw new SignalGrepError("Impact currently supports worktree sources only");
+    const root = await navigationRoot(access.cwd, document.path, access.signal);
 
     const targetSyntax = await access.syntax(document);
     let target;
@@ -490,6 +499,7 @@ export class EvidenceService {
 
     const request = normalizeRequest({
       pattern: target.symbol.name,
+      path: root,
       literal: true,
       ignoreCase: false,
     });
@@ -513,12 +523,13 @@ export class EvidenceService {
         "Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget",
       );
     } else {
-      const files = await listWorkspaceFiles(access.cwd, access.signal);
+      const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
       const allowed = new Set(files.paths.map((file) => resolve(access.cwd, file)));
       const primaryPath = resolve(access.cwd, document.path);
       const host = {
         cwd: access.cwd,
         ...(access.signal ? { signal: access.signal } : {}),
+        normalizePath: (file: string) => workspaceRelativePath(access.cwd, file),
         load: async (file: string, expected?: SourceReference) => {
           const absolutePath = resolve(access.cwd, file);
           if (!allowed.has(absolutePath))
@@ -649,12 +660,14 @@ export class EvidenceService {
           ],
         }),
       );
-    const files = await listWorkspaceFiles(access.cwd, access.signal);
+    const root = await navigationRoot(access.cwd, document.path, access.signal);
+    const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
     const allowed = new Set(files.paths.map((file) => resolve(access.cwd, file)));
     const primaryPath = resolve(access.cwd, document.path);
     const host = {
       cwd: access.cwd,
       ...(access.signal ? { signal: access.signal } : {}),
+      normalizePath: (file: string) => workspaceRelativePath(access.cwd, file),
       load: async (file: string, expected?: SourceReference) => {
         const absolutePath = resolve(access.cwd, file);
         if (!allowed.has(absolutePath))

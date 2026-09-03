@@ -20,6 +20,8 @@ You should receive an acknowledgement within seven days. Remediation timing depe
 
 ## Security model
 
-Signal Grep runs with the same local permissions as Pi. It starts `rg` and optional Universal Ctags directly without a shell, reads source files only for requested context or inspection, stores bounded snapshots in process memory, confines search and inspection paths to the working directory, makes no network requests, and persists no search data. Universal Ctags is optional and is never downloaded automatically.
+Signal Grep runs with the same local permissions as Pi. It starts `rg` and optional Universal Ctags directly without a shell, reads source files only for requested context or inspection, stores bounded snapshots in process memory, makes no network requests, and persists no search data. Universal Ctags is optional and is never downloaded automatically.
 
-The extension does not sandbox Pi, ripgrep, or Universal Ctags. Users remain responsible for the repositories and executables available to their Pi process.
+An omitted path is scoped to the working directory. An explicit absolute path or `..` traversal can select a search or inspection target outside it for that request; this records tool-request intent, not a separate human permission or sandbox grant. `.git` internals, portable credential directories such as `.ssh` and `.gnupg`, platform credential/browser stores, and special system trees such as `/dev`, `/proc`, and `/sys` are rejected outside the working directory; canonical-path checks prevent symbolic-link bypass. Descendant protected roots are also excluded from broad external searches. Ordinary Git change comparison remains working-directory-scoped.
+
+These protected-path rules are defense in depth and cannot identify every renamed, copied, or custom-location secret. Do not use external-path access to seek credentials or unrelated private data. The extension does not sandbox Pi, ripgrep, or Universal Ctags, and its restrictions do not constrain other Pi tools. Users remain responsible for the paths, repositories, and executables available to their Pi process.

@@ -13,6 +13,7 @@ import type { SyntaxAnalysis } from "./syntax-types.js";
 export interface NavigationHost {
   cwd: string;
   signal?: AbortSignal;
+  normalizePath?(this: void, path: string): string;
   load(this: void, path: string, expected?: SourceReference): Promise<SourceDocument>;
   syntax(document: SourceDocument): Promise<SyntaxAnalysis>;
   releaseSyntax?(document: SourceDocument): void;
@@ -461,18 +462,23 @@ export class NavigationContext {
   checkAbort(): void {
     if (this.host.signal?.aborted) throw abortError();
   }
+  normalizePath(path: string): string {
+    return this.host.normalizePath?.(path) ?? navigationPath(path);
+  }
   async files(): Promise<Set<string>> {
     this.checkAbort();
     if (this.#files) return this.#files;
     const listed = await this.host.listFiles();
     if (!Array.isArray(listed) && listed.partial)
       for (const reason of listed.reasons) this.reasons.add(reason);
-    this.#files = new Set((Array.isArray(listed) ? listed : listed.paths).map(navigationPath));
+    this.#files = new Set(
+      (Array.isArray(listed) ? listed : listed.paths).map((path) => this.normalizePath(path)),
+    );
     return this.#files;
   }
   async module(path: string, retainSyntax = false): Promise<ModuleFacts> {
     this.checkAbort();
-    path = navigationPath(path);
+    path = this.normalizePath(path);
     const cached = this.modules.get(path);
     if (cached) {
       if (retainSyntax && cached.syntax.nodes.length === 0) {

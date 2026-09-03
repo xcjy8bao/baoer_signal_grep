@@ -54,7 +54,7 @@ describe("Signal Grep extension registration", () => {
     expect(testHarness.toolNames).toEqual(["signal_grep"]);
     expect(testHarness.commands).toEqual([]);
     expect(testHarness.guidelines).toEqual([signalGrepPromptGuidelines()]);
-    expect(testHarness.guidelines.flat()).toHaveLength(11);
+    expect(testHarness.guidelines.flat()).toHaveLength(13);
     expect(testHarness.lifecycle.has("session_shutdown")).toBe(true);
   });
 

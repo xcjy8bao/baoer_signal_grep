@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -616,6 +616,48 @@ test("public static imports preserve aliases and tests report candidates without
   expect(tests.details.analysis?.unit).toBe("evidence-items");
   await search.shutdown();
 }, 15000);
+
+test("external repository paths support import, test, and impact navigation", async () => {
+  const root = await fixture({
+    "src/core.ts": "export function calculate(){return 2;}\n",
+    "src/client.ts":
+      "import {calculate} from './core';\nexport function invoke(){return calculate();}\n",
+    "tests/core.test.ts":
+      "import {test} from 'node:test';\nimport {calculate} from '../src/core';\ntest('calculates',()=>{calculate();});\n",
+  });
+  await git(root, "init", "-q");
+  const canonicalRoot = await realpath(root);
+  const cwd = join(root, "workspace");
+  await mkdir(cwd);
+  await symlink("../src/client.ts", join(cwd, "client-link.ts"));
+  await symlink("../src/core.ts", join(cwd, "core-link.ts"));
+  const search = service();
+  const imports = await search.search(
+    { mode: "imports", path: "client-link.ts", symbol: "calculate" },
+    cwd,
+  );
+  expect(imports.details.status).toBe("complete");
+  expect(imports.text).toContain(join(canonicalRoot, "src/core.ts"));
+  const tests = await search.search(
+    { mode: "tests", path: "core-link.ts", symbol: "calculate" },
+    cwd,
+  );
+  expect(tests.text).toContain("calculates");
+  const impact = await search.search(
+    { mode: "impact", path: "core-link.ts", symbol: "calculate" },
+    cwd,
+  );
+  expect(impact.details.analysis?.kind).toBe("impact");
+  expect(impact.text).toContain(join(canonicalRoot, "tests/core.test.ts"));
+  await expectFailure(
+    search.search(
+      { pattern: "calculate", path: "../src", changes: { scope: "files", side: "new" } },
+      cwd,
+    ),
+    "Git changes for paths outside cwd are not supported",
+  );
+  await search.shutdown();
+}, 15_000);
 
 test("new operations contribute only complete session facts", async () => {
   const root = await fixture({ "a.ts": "export function a(){ first(); second(); }\n" });

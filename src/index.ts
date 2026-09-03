@@ -14,11 +14,13 @@ import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js
 
 const SIGNAL_GREP_LABEL = "Signal Grep";
 const SIGNAL_GREP_DESCRIPTION =
-  "Search code with bounded, verifiable evidence. For an ordinary new search, supply pattern and optional path; use anyOf for an exact multi-term inventory or mode=impact for one symbol's same-spelling and related-test evidence. Normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Partial evidence and source changes are explicit.";
+  "Search code with bounded, verifiable evidence. For an ordinary new search, supply pattern and optional path; use anyOf for an exact multi-term inventory or mode=impact for one symbol's same-spelling and related-test evidence. Normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. Explicit absolute paths and .. traversal may target locations outside cwd, except protected credential/system areas and .git internals; ordinary Git changes search remains cwd-scoped. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Partial evidence and source changes are explicit.";
 
 export function signalGrepPromptGuidelines(): string[] {
   return [
     `Use signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
+    `An omitted path searches cwd. Explicit absolute paths and .. traversal can search outside cwd, but protected credential/system areas and .git internals are rejected; do not use external paths to seek secrets. Git changes mode remains cwd-scoped.`,
+    `For external source navigation, imports/tests/impact use the containing Git repository when one is detected, otherwise the target file's directory.`,
     `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
     `Use the file samples in signal_grep summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
     `When source context is missing, use one signal_grep batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
@@ -117,7 +119,8 @@ const searchSchema = Type.Object({
   ),
   path: Type.Optional(
     Type.String({
-      description: "Working-directory-relative search root, or the file to inspect with line.",
+      description:
+        "Search root or inspection file. Absolute paths and .. traversal may resolve outside cwd, except protected credential/system areas and .git internals; Git changes mode remains cwd-scoped.",
     }),
   ),
   paths: Type.Optional(

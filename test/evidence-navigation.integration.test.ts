@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -78,6 +78,18 @@ describe("model-visible evidence navigation", () => {
     expect(scans).toBe(1);
   }, 10_000);
 
+  test("keeps external search evidence usable through cursor inspection", async () => {
+    const root = await fixture();
+    const cwd = join(root, "workspace");
+    await mkdir(cwd);
+    const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
+    const summary = await service.search({ pattern: "NEEDLE", path: "..", mode: "summary" }, cwd);
+    const cursor = visibleCursor(summary.text);
+    expect(summary.text).toContain(join(root, "app.ts"));
+    const inspected = await service.search({ mode: "inspect", cursor, matchIndex: 1 }, cwd);
+    expect(inspected.details.source?.reference?.path.startsWith(await realpath(root))).toBe(true);
+    expect(inspected.details.status).toBe("complete");
+  }, 10_000);
   test("real summary and batch results enter localized responsive TUI views", async () => {
     const root = await fixture();
     const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });

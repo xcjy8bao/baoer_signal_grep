@@ -1,12 +1,12 @@
 import { posix } from "node:path";
 import { MAX_IMPORT_FILES, MAX_IMPORT_HOPS } from "./analysis-limits.js";
+import { SignalGrepError } from "./errors.js";
 import type { SourceReference } from "./source-document.js";
 import {
   NavigationContext,
   NavigationFailure,
   moduleRange,
   navigationError,
-  navigationPath,
   nodeLine,
   nodeText,
   type ExportBinding,
@@ -59,21 +59,26 @@ export async function resolveStaticModule(
 ): Promise<Resolution> {
   context.checkAbort();
   // Navigation hosts can return native relative paths; resolution is always POSIX-based.
-  from = navigationPath(from);
+  from = context.normalizePath(from);
   if (specifier === undefined) return { reason: "nonliteral-module-specifier" };
   if (!specifier.startsWith("./") && !specifier.startsWith("../"))
     return { reason: "external-package-or-path-alias-unsupported" };
   if (specifier.includes("\\") || specifier.includes("\0") || /[?#]/.test(specifier))
     return { reason: "module-specifier-unsupported" };
-  const path = posix.normalize(posix.join(posix.dirname(from), specifier));
-  if (path === ".." || path.startsWith("../") || posix.isAbsolute(path))
-    return { reason: "outside-workspace" };
-  const candidates = new Set([navigationPath(path)]);
+  const joined = posix.normalize(posix.join(posix.dirname(from), specifier));
+  let path: string;
+  try {
+    path = context.normalizePath(joined);
+  } catch (error) {
+    if (error instanceof SignalGrepError) return { reason: "outside-workspace" };
+    throw error;
+  }
+  const candidates = new Set([path]);
   const extension = posix.extname(path);
   if (!extension) {
     for (const suffix of EXTENSIONS) {
-      candidates.add(`${path}${suffix}`);
-      candidates.add(posix.join(path, `index${suffix}`));
+      candidates.add(context.normalizePath(`${path}${suffix}`));
+      candidates.add(context.normalizePath(posix.join(path, `index${suffix}`)));
     }
   } else {
     const mappings: Record<string, string[]> = {
@@ -83,7 +88,7 @@ export async function resolveStaticModule(
       ".cjs": [".cts"],
     };
     for (const suffix of mappings[extension] ?? [])
-      candidates.add(path.slice(0, -extension.length) + suffix);
+      candidates.add(context.normalizePath(path.slice(0, -extension.length) + suffix));
   }
   const files = await context.files();
   const existing = [...candidates].filter((candidate) => files.has(candidate)).toSorted();

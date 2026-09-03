@@ -51,7 +51,7 @@ describe("verified source documents", () => {
       readWorkspaceDocument("example.ts", root, undefined, first.reference.origin),
       "changed",
     );
-    await expectFailure(readWorkspaceDocument("../outside.ts", root), "stay in cwd");
+    await expectFailure(readWorkspaceDocument("../outside.ts", root), "Source is unavailable");
     const aborted: unknown = await readWorkspaceDocument(
       "example.ts",
       root,

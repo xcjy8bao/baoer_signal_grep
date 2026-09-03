@@ -1,12 +1,12 @@
-import { realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
 import { consumeCappedLines } from "./capped-lines.js";
-import { assertExistingPathInsideCwd } from "./source.js";
+import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
+  MAX_SOURCE_REVISION_CONCURRENCY,
   MAX_PROTOCOL_LINE_BYTES,
   MAX_SOURCE_REVISION_FILES,
   MAX_STORED_MATCHES,
@@ -106,29 +106,27 @@ function displayPath(rawPath: string, cwd: string): { absolutePath: string; disp
   };
 }
 
-function assertOutsideGit(searchPath: string): void {
-  if (searchPath.split(sep).includes(".git")) {
-    throw new SignalGrepError("Git internals are excluded from search");
+async function assertSearchTargetIdentity(
+  policy: SearchPathPolicy,
+  path: string,
+  expectedCanonical: string | undefined,
+): Promise<void> {
+  const currentCanonical = await policy.resolveExistingPath(path);
+  if (currentCanonical !== expectedCanonical) {
+    throw new SignalGrepError("Search target changed during validation; retry the search");
   }
 }
 
-function assertSearchPathInsideCwd(searchPath: string, cwd: string): void {
-  const localPath = relative(resolve(cwd), searchPath);
-  if (localPath === ".." || localPath.startsWith(`..${sep}`) || isAbsolute(localPath)) {
-    throw new SignalGrepError("Search path must stay within the working directory");
-  }
-  assertOutsideGit(searchPath);
-}
-
-async function assertResolvedTargetOutsideGit(searchPath: string): Promise<void> {
-  try {
-    // Explicit file arguments bypass rg's globs. Resolve both symbolic links
-    // and filesystem case aliases before allowing that target to be searched.
-    assertOutsideGit(await realpath(searchPath));
-  } catch (error) {
-    // Leave missing-path diagnostics to the search process, as with workspace validation.
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-    throw error;
+async function assertRetainedPathsAllowed(
+  policy: SearchPathPolicy,
+  paths: readonly string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  for (let offset = 0; offset < paths.length; offset += MAX_SOURCE_REVISION_CONCURRENCY) {
+    if (signal?.aborted) throw abortError();
+    const batch = paths.slice(offset, offset + MAX_SOURCE_REVISION_CONCURRENCY);
+    // oxlint-disable-next-line no-await-in-loop -- bounded batches avoid unbounded filesystem work.
+    await Promise.all(batch.map((path) => policy.resolveExistingPath(path)));
   }
 }
 
@@ -194,11 +192,18 @@ export function fileScopeArguments(
     args.push("--glob", normalized);
   }
   // Ripgrep gives the last matching glob priority, so this invariant must come last.
-  args.push("--glob", "!.git", "--glob", "!.git/**", "--glob", "!**/.git/**");
+  args.push("--iglob", "!.git", "--iglob", "!.git/**", "--iglob", "!**/.git/**");
   return args;
 }
 
-export function buildRipgrepArguments(request: SearchRequest, cwd: string): string[] {
+export function buildRipgrepArguments(
+  request: SearchRequest,
+  cwd: string,
+  validatedSearchPath?: string,
+): string[] {
+  const searchPath = validatedSearchPath ?? resolve(cwd, request.path ?? ".");
+  const policy = new SearchPathPolicy(cwd);
+  policy.assertPath(searchPath);
   const args = [
     "--no-config",
     "--json",
@@ -206,13 +211,14 @@ export function buildRipgrepArguments(request: SearchRequest, cwd: string): stri
     "--color=never",
     "--no-heading",
     ...fileScopeArguments(request),
+    ...policy.ripgrepGlobArguments(searchPath),
   ];
 
   args.push(...patternArguments(request));
 
-  const searchPath = resolve(cwd, request.path ?? ".");
-  assertSearchPathInsideCwd(searchPath, cwd);
-  const searchTarget = relative(resolve(cwd), searchPath) || ".";
+  const searchTarget = isPathInsideCwd(searchPath, cwd)
+    ? relative(resolve(cwd), searchPath) || "."
+    : searchPath;
   args.push("--", request.pattern, searchTarget);
   return args;
 }
@@ -241,10 +247,13 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
   ): Promise<SearchScan> {
     if (signal?.aborted) throw abortError();
     const searchPath = resolve(cwd, request.path ?? ".");
-    const searchTarget = relative(resolve(cwd), searchPath) || ".";
-    const args = buildRipgrepArguments(request, cwd);
-    await assertExistingPathInsideCwd(searchPath, cwd);
-    await assertResolvedTargetOutsideGit(searchPath);
+    const policy = new SearchPathPolicy(cwd);
+    const validatedSearchPath = await policy.resolveSearchTarget(searchPath);
+    const expectedSearchTarget = await policy.resolveExistingPath(validatedSearchPath);
+    const searchTarget = isPathInsideCwd(validatedSearchPath, cwd)
+      ? relative(resolve(cwd), validatedSearchPath) || "."
+      : validatedSearchPath;
+    const args = buildRipgrepArguments(request, cwd, validatedSearchPath);
     if (signal?.aborted) throw abortError();
 
     const matches: MatchRecord[] = [];
@@ -300,11 +309,20 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     try {
       const before = await captureCandidateRevisions(
         executable,
-        ["--no-config", "--files", "--null", ...fileScopeArguments(request), "--", searchTarget],
+        [
+          "--no-config",
+          "--files",
+          "--null",
+          ...fileScopeArguments(request),
+          ...policy.ripgrepGlobArguments(validatedSearchPath),
+          "--",
+          searchTarget,
+        ],
         cwd,
         maxSourceRevisionFiles,
         signal,
       );
+      await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess(
         { executable, args, cwd, ...(signal ? { signal } : {}) },
         (stdout) => consumeCappedLines(stdout, onLine, { maxLineBytes: maxEventBytes }),
@@ -312,9 +330,11 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       if (code !== 0 && code !== 1) {
         throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);
       }
+      await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const retainedPaths = new Set(
         matches.map((match) => match.absolutePath).filter((path) => !lossyPaths.has(path)),
       );
+      await assertRetainedPathsAllowed(policy, [...retainedPaths], signal);
       const sourceRevisions = await retainStableSourceRevisions(retainedPaths, before, signal);
       if (signal?.aborted) throw abortError();
       return {

@@ -55,6 +55,9 @@ export async function filterHistoricalPaths(
   request: Pick<SearchRequest, "path" | "glob" | "exclude" | "hidden">,
   signal?: AbortSignal,
 ): Promise<HistoricalPathSelection> {
+  if (!isPathInsideCwd(resolve(cwd, request.path ?? "."), cwd)) {
+    throw new SignalGrepError("Historical path filtering requires a path inside cwd");
+  }
   const selectedPath = workspaceRelativePath(cwd, request.path ?? ".");
   const candidates = paths.filter(
     (path) =>
