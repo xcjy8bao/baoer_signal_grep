@@ -4,6 +4,32 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-03
+
+### Added
+
+- A Node-compatible Streamable HTTP MCP server exposes the complete `signal_grep` search,
+  pagination, source inspection, and structural-analysis contract through `/mcp`.
+- MCP sessions have a documented global count bound and proactive idle expiry while retaining
+  independent cursor state for active clients.
+
+### Security
+
+- Streamable HTTP rejects unconfigured browser origins to prevent DNS rebinding. Standard MCP
+  clients without an `Origin` header are unaffected, and explicitly allowed browser origins
+  receive the CORS preflight and exposed session headers required for direct access.
+
+### Correctness
+
+- Malformed request targets and invalid UTF-8 fail as bounded HTTP errors instead of terminating
+  the server or silently changing search input.
+- Initialization requests rejected before session registration release their service immediately
+  and continue to count against the session bound until cleanup completes.
+- MCP shutdown reports protocol or service cleanup failures, and the published Node artifact has
+  an executable startup, real-search, and shutdown smoke test.
+- Pi host packages are optional peers, so installing the standalone MCP server does not pull in a
+  Pi runtime that it never executes.
+
 ## [0.6.6] - 2026-09-03
 
 ### Added

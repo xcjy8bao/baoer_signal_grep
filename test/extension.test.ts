@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_SIGNAL_GREP_CONFIG } from "../src/config.js";
 import { registerSignalGrepExtension, signalGrepPromptGuidelines } from "../src/index.js";
+import { signalGrepSchema } from "../src/tool-schema.js";
 
 type ToolExecute = (
   toolCallId: string,
@@ -47,6 +48,28 @@ afterEach(async () => {
 });
 
 describe("Signal Grep extension registration", () => {
+  test("keeps public enums compatible with providers that reject anyOf/const", () => {
+    expect(signalGrepSchema.properties.mode).toMatchObject({
+      type: "string",
+      enum: ["auto", "summary", "matches", "inspect", "outline", "imports", "tests", "impact"],
+    });
+    expect(signalGrepSchema.properties.mode).not.toHaveProperty("anyOf");
+    expect(signalGrepSchema.properties.roles.items).toMatchObject({
+      type: "string",
+      enum: [
+        "declaration",
+        "call",
+        "import",
+        "export",
+        "comment",
+        "string",
+        "jsx-text",
+        "code",
+        "unknown",
+      ],
+    });
+  });
+
   test("registers one independent tool without public commands", async () => {
     const testHarness = harness();
     await registerSignalGrepExtension(testHarness.pi, DEFAULT_SIGNAL_GREP_CONFIG);

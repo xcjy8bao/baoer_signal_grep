@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of project evidence, not ripgrep itself. Version 0.6.6 adds project-wide zero-result recovery, parallel exact multi-term evidence, candidate-prefiltered structural analysis, bounded content-addressed syntax reuse, and dimension-specific coverage. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of project evidence, not ripgrep itself. Version 0.7.0 adds a remote MCP transport around the existing evidence contract; version 0.6.6 added project-wide zero-result recovery, parallel exact multi-term evidence, candidate-prefiltered structural analysis, bounded content-addressed syntax reuse, and dimension-specific coverage. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
 
 ## Data flow
 
@@ -38,11 +38,15 @@ evidence-service.ts ── advanced-operation policy and analysis pagination
 
 runtime.ts ── session lifecycle, cancellation and query-summary coordination
   └─► session-summary.ts ── plain-language session facts
+mcp.ts ── MCP tool protocol adapter, remote result shaping and session service ownership
+mcp-server.ts ── executable environment configuration and graceful shutdown
 index.ts ── Pi schema, stable tool registration and lifecycle hooks
   └─► tui/ ── responsive human-only presentation of existing text/details
 ```
 
 `index.ts` registers exactly one Signal Grep tool named `signal_grep`; it does not register commands or replace another tool. `runtime.ts` owns session coordination rather than search algorithms. Model-facing evidence remains language-neutral or English, while the passive session status follows the configured interface locale.
+
+`mcp.ts` exposes the same tool contract through the MCP protocol. It validates remote arguments against the shared TypeBox schema, invokes a service rooted at the server's configured working directory, and returns the existing model-facing text together with structured details. Each stateful remote MCP session owns its service and snapshot store, so cursors and source continuations do not cross session boundaries. The HTTP owner applies a global session-count bound, proactive idle expiry, exact configured browser-origin admission with its CORS preflight/response headers, fatal UTF-8 decoding, and observable cleanup. `mcp-server.ts` owns executable environment configuration and graceful shutdown; authentication and external routing remain deployment concerns.
 
 The tool schema retains the single-target inspection forms and adds `matchIndices` or `targets` arrays of 1–5 entries. These are mutually exclusive request forms, not aliases or a persisted-format migration. `service.ts` dispatches to single or batch inspection; inspection modules validate their own target combinations before source access.
 
