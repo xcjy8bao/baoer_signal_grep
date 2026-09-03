@@ -109,7 +109,8 @@ function defaultSensitiveRoots(): string[] {
 const DEFAULT_SENSITIVE_ROOTS = defaultSensitiveRoots();
 
 function escapeGlobPath(path: string): string {
-  return path.replaceAll("\\", "/").replaceAll(/([*?[\]{}])/g, "\\$1");
+  const normalized = path.split(sep).join("/");
+  return normalized.replaceAll("\\", "\\\\").replaceAll(/([*?[\]{}])/g, "\\$1");
 }
 
 function blockedPathMessage(path: string): string {

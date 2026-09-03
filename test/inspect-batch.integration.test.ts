@@ -304,7 +304,9 @@ describe("source inspection evidence", () => {
     await writeFile(join(root, "outside.ts"), "export const externalEvidence = true;\n");
     const result = await service().search({ mode: "inspect", path: "../outside.ts", line: 1 }, cwd);
     expect(result.text).toContain("externalEvidence");
-    expect(result.details.source?.reference?.path).toBe(await realpath(join(root, "outside.ts")));
+    expect(result.details.source?.reference?.path).toBe(
+      (await realpath(join(root, "outside.ts"))).replaceAll("\\", "/"),
+    );
     expect(result.details.status).toBe("complete");
   });
   test("rejects ambiguous requests and propagates unexpected provider failures", async () => {

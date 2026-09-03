@@ -626,7 +626,7 @@ test("external repository paths support import, test, and impact navigation", as
       "import {test} from 'node:test';\nimport {calculate} from '../src/core';\ntest('calculates',()=>{calculate();});\n",
   });
   await git(root, "init", "-q");
-  const canonicalRoot = await realpath(root);
+  const canonicalRoot = (await realpath(root)).replaceAll("\\", "/");
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   await symlink("../src/client.ts", join(cwd, "client-link.ts"));
@@ -637,7 +637,7 @@ test("external repository paths support import, test, and impact navigation", as
     cwd,
   );
   expect(imports.details.status).toBe("complete");
-  expect(imports.text).toContain(join(canonicalRoot, "src/core.ts"));
+  expect(imports.text).toContain(join(canonicalRoot, "src/core.ts").replaceAll("\\", "/"));
   const tests = await search.search(
     { mode: "tests", path: "core-link.ts", symbol: "calculate" },
     cwd,
@@ -648,7 +648,7 @@ test("external repository paths support import, test, and impact navigation", as
     cwd,
   );
   expect(impact.details.analysis?.kind).toBe("impact");
-  expect(impact.text).toContain(join(canonicalRoot, "tests/core.test.ts"));
+  expect(impact.text).toContain(join(canonicalRoot, "tests/core.test.ts").replaceAll("\\", "/"));
   await expectFailure(
     search.search(
       { pattern: "calculate", path: "../src", changes: { scope: "files", side: "new" } },

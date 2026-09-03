@@ -85,9 +85,13 @@ describe("model-visible evidence navigation", () => {
     const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });
     const summary = await service.search({ pattern: "NEEDLE", path: "..", mode: "summary" }, cwd);
     const cursor = visibleCursor(summary.text);
-    expect(summary.text).toContain(join(root, "app.ts"));
+    expect(summary.text).toContain(join(root, "app.ts").replaceAll("\\", "/"));
     const inspected = await service.search({ mode: "inspect", cursor, matchIndex: 1 }, cwd);
-    expect(inspected.details.source?.reference?.path.startsWith(await realpath(root))).toBe(true);
+    expect(
+      inspected.details.source?.reference?.path.startsWith(
+        (await realpath(root)).replaceAll("\\", "/"),
+      ),
+    ).toBe(true);
     expect(inspected.details.status).toBe("complete");
   }, 10_000);
   test("real summary and batch results enter localized responsive TUI views", async () => {
