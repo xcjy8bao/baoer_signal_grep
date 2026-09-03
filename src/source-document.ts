@@ -3,12 +3,8 @@ import { createHash } from "node:crypto";
 import { open, realpath } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
-import {
-  getSourceRevision,
-  isPathInsideCwd,
-  sameSourceRevision,
-  sourceRevisionFromStats,
-} from "./source.js";
+import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
+import { getSourceRevision, sameSourceRevision, sourceRevisionFromStats } from "./source.js";
 import { MAX_SOURCE_FILE_BYTES, type SourceRevision } from "./types.js";
 
 export type SourceOrigin =
@@ -201,9 +197,11 @@ export async function readWorkspaceDocument(
     throw new SignalGrepError("A Git source reference cannot be read from the worktree");
   }
   const absolute = resolve(cwd, path);
-  if (!isPathInsideCwd(absolute, cwd)) throw new SignalGrepError("Source path must stay in cwd");
-  const [root, canonical] = await Promise.all([realpath(cwd), realpath(absolute)]);
-  if (!isPathInsideCwd(canonical, root)) throw new SignalGrepError("Source path must stay in cwd");
+  const [canonical, canonicalCwd] = await Promise.all([
+    new SearchPathPolicy(cwd).resolveExistingPath(absolute),
+    realpath(cwd),
+  ]);
+  if (!canonical) throw new SourceDocumentError("source-unavailable", "Source is unavailable");
   const before = await getSourceRevision(absolute);
   if (!before) throw new SourceDocumentError("source-unavailable", "Source is unavailable");
   if (expected && !sameSourceRevision(before, expected.revision)) {
@@ -254,7 +252,9 @@ export async function readWorkspaceDocument(
   return new SourceDocument(
     {
       // Source references are protocol paths, so keep them POSIX across host platforms.
-      path: relative(resolve(cwd), absolute).replaceAll("\\", "/"),
+      path: isPathInsideCwd(canonical, canonicalCwd)
+        ? relative(canonicalCwd, canonical).replaceAll("\\", "/")
+        : canonical.replaceAll("\\", "/"),
       origin: { kind: "worktree", revision: after, contentHash: hash },
     },
     bytes,

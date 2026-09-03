@@ -5,7 +5,6 @@ import {
   NavigationContext,
   moduleRange,
   navigationError,
-  navigationPath,
   nodeLine,
   nodeText,
   type ImportBinding,
@@ -108,6 +107,7 @@ function targetSymbol(facts: ModuleFacts, input: NavigationInput): TestTargetSym
 }
 
 function traceTargetsSymbol(
+  context: NavigationContext,
   trace: ImportTrace,
   target: ModuleFacts,
   symbol: TestTargetSymbol | undefined,
@@ -117,7 +117,7 @@ function traceTargetsSymbol(
   if (
     trace.status !== "resolved" ||
     !destination ||
-    navigationPath(destination.source.path) !== navigationPath(target.document.path)
+    context.normalizePath(destination.source.path) !== context.normalizePath(target.document.path)
   )
     return false;
   const start = target.document.toByteOffset(symbol.start);
@@ -142,7 +142,7 @@ async function relations(
     if (!binding.source?.startsWith(".")) continue;
     // oxlint-disable-next-line no-await-in-loop -- resolution and tracing share one source/read budget.
     const resolved = await resolveStaticModule(context, test.document.path, binding.source);
-    const targetPath = navigationPath(target.document.path);
+    const targetPath = context.normalizePath(target.document.path);
     const direct = resolved.path === targetPath;
     // oxlint-disable-next-line no-await-in-loop -- dependencies are parsed serially within the bounded request.
     const trace = await traceImport(context, test, binding);
@@ -150,7 +150,7 @@ async function relations(
       context.reasons.add(trace.reason);
       break;
     }
-    const paths = tracePaths(trace).map(navigationPath);
+    const paths = tracePaths(trace).map((path) => context.normalizePath(path));
     const indirect = !direct && paths.includes(targetPath) && trace.status !== "unresolved";
     if (!direct && !indirect) {
       if (
@@ -172,8 +172,8 @@ async function relations(
       binding,
       trace,
       reason: direct ? "static-import-target-module" : "static-import-re-export-path-to-target",
-      targetBinding: !binding.typeOnly && traceTargetsSymbol(trace, target, symbol),
-      paths: [...new Set([navigationPath(test.document.path), targetPath, ...paths])],
+      targetBinding: !binding.typeOnly && traceTargetsSymbol(context, trace, target, symbol),
+      paths: [...new Set([context.normalizePath(test.document.path), targetPath, ...paths])],
     });
   }
   if (output.length) return output;
@@ -187,7 +187,10 @@ async function relations(
       association: "weak",
       reason: nameSimilar ? "filename-similarity-only" : "source-text-similarity-only",
       targetBinding: false,
-      paths: [navigationPath(test.document.path), navigationPath(target.document.path)],
+      paths: [
+        context.normalizePath(test.document.path),
+        context.normalizePath(target.document.path),
+      ],
     });
   return output;
 }
@@ -298,7 +301,9 @@ export async function findRelatedTests(
     context.release(target);
   }
   const files = [...(await context.files())]
-    .filter((path) => path !== navigationPath(target.document.path) && SOURCE_EXTENSION.test(path))
+    .filter(
+      (path) => path !== context.normalizePath(target.document.path) && SOURCE_EXTENSION.test(path),
+    )
     .toSorted(
       (a, b) => Number(TEST_FILENAME.test(b)) - Number(TEST_FILENAME.test(a)) || a.localeCompare(b),
     );

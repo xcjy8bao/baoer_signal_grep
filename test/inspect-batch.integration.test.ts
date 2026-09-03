@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { abortError } from "../src/errors.js";
@@ -297,6 +297,18 @@ describe("source inspection evidence", () => {
     },
   );
 
+  test("inspects an explicitly selected file outside cwd", async () => {
+    const root = await fixture();
+    const cwd = join(root, "workspace");
+    await mkdir(cwd);
+    await writeFile(join(root, "outside.ts"), "export const externalEvidence = true;\n");
+    const result = await service().search({ mode: "inspect", path: "../outside.ts", line: 1 }, cwd);
+    expect(result.text).toContain("externalEvidence");
+    expect(result.details.source?.reference?.path).toBe(
+      (await realpath(join(root, "outside.ts"))).replaceAll("\\", "/"),
+    );
+    expect(result.details.status).toBe("complete");
+  });
   test("rejects ambiguous requests and propagates unexpected provider failures", async () => {
     const root = await fixture();
     await writeFile(join(root, "valid.txt"), "evidence\n");
@@ -325,10 +337,6 @@ describe("source inspection evidence", () => {
     await expectFailure(
       search.search({ mode: "inspect", matchIndices: [1] }, root),
       "requires a cursor",
-    );
-    await expectFailure(
-      search.search({ mode: "inspect", targets: [{ path: "../outside.ts", line: 1 }] }, root),
-      "within the working directory",
     );
     const broken = service({
       inspect: async () => {

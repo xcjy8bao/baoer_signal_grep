@@ -1,8 +1,8 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
+import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { fileScopeArguments } from "./rg.js";
-import { assertExistingPathInsideCwd } from "./source.js";
 import { MAX_PROTOCOL_LINE_BYTES, MAX_SOURCE_REVISION_FILES } from "./types.js";
 
 export interface WorkspaceFileOptions {
@@ -24,13 +24,19 @@ export interface WorkspaceFileList {
 
 class EnumerationLimit extends Error {}
 
-export function workspaceRelativePath(cwd: string, path: string): string {
-  const local = relative(resolve(cwd), resolve(cwd, path));
-  if (local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local))
-    throw new SignalGrepError("Path must stay within the working directory");
+export function workspaceRelativePath(
+  cwd: string,
+  path: string,
+  policy = new SearchPathPolicy(cwd),
+): string {
+  const absolute = resolve(cwd, path);
+  policy.assertPath(absolute);
+  const local = relative(resolve(cwd), absolute);
   if (local.split(sep).some((part) => part.toLowerCase() === ".git"))
     throw new SignalGrepError("Git internals are excluded from source candidates");
-  return local.split(sep).join("/");
+  return isPathInsideCwd(absolute, cwd)
+    ? local.split(sep).join("/")
+    : absolute.replaceAll("\\", "/");
 }
 
 /** Names-only enumeration with the same ripgrep include/exclude and ignore rules as search. */
@@ -39,8 +45,9 @@ export async function listWorkspaceFiles(
   signal?: AbortSignal,
   options: WorkspaceFileOptions = {},
 ): Promise<WorkspaceFileList> {
-  const path = workspaceRelativePath(cwd, options.path ?? ".");
-  await assertExistingPathInsideCwd(resolve(cwd, path), cwd);
+  const absolutePath = resolve(cwd, options.path ?? ".");
+  const policy = new SearchPathPolicy(cwd);
+  const searchPath = await policy.resolveSearchTarget(absolutePath);
   const maxFiles = options.maxFiles ?? MAX_SOURCE_REVISION_FILES;
   if (!Number.isSafeInteger(maxFiles) || maxFiles < 1)
     throw new SignalGrepError("Candidate file limit must be a positive integer");
@@ -62,8 +69,9 @@ export async function listWorkspaceFiles(
             glob: options.glob ?? [],
             exclude: options.exclude ?? [],
           }),
+          ...policy.ripgrepGlobArguments(searchPath),
           "--",
-          resolve(cwd, path),
+          searchPath,
         ],
         cwd,
         ...(signal ? { signal } : {}),
@@ -85,7 +93,7 @@ export async function listWorkspaceFiles(
             if (!Buffer.from(decoded).equals(raw))
               reasons.add("Some candidate paths are not valid UTF-8");
             else {
-              const local = workspaceRelativePath(cwd, decoded);
+              const local = workspaceRelativePath(cwd, decoded, policy);
               if (!paths.has(local) && paths.size >= maxFiles)
                 throw new EnumerationLimit(
                   `Candidate enumeration reached the ${String(maxFiles)} file limit`,

@@ -4,6 +4,10 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+### Changed
+
+- Explicit absolute paths and `..` traversal can now search and inspect outside the current working directory. The default remains cwd-scoped, ordinary Git change comparison remains cwd-scoped, and `.git` internals plus known external credential and special-system areas are rejected with canonical-path checks.
+
 ## [0.6.0] - 2026-09-02
 
 ### Added

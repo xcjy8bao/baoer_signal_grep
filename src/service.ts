@@ -10,7 +10,7 @@ import { summarySourcePreviews } from "./summary-previews.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
-import { isPathInsideCwd } from "./source.js";
+import { SearchPathPolicy } from "./path-policy.js";
 import { SnapshotStore } from "./snapshot-store.js";
 import {
   DEFAULT_SUMMARY_FILE_LIMIT,
@@ -74,13 +74,12 @@ function cursorPathSelection(input: SignalGrepInput, cwd: string): PathSelection
 
   const labels: string[] = [];
   const absolutePaths = new Set<string>();
+  const policy = new SearchPathPolicy(cwd);
   for (const rawPath of rawPaths) {
     const label = rawPath.replace(/^@/, "");
     if (label.length === 0) throw new SignalGrepError("Cursor paths cannot be empty");
     const absolutePath = resolve(cwd, label);
-    if (!isPathInsideCwd(absolutePath, cwd)) {
-      throw new SignalGrepError("Cursor paths must stay within the working directory");
-    }
+    policy.assertPath(absolutePath);
     if (absolutePaths.has(absolutePath)) continue;
     absolutePaths.add(absolutePath);
     labels.push(label);

@@ -66,7 +66,7 @@ It records only three things that actually happened in the current session: how 
 
 Searching, organizing, and reading happen locally. The plugin has no telemetry and does not send queries, code, or session figures over the network. It builds no background index and downloads no model.
 
-Search stays inside the current working directory and always excludes `.git` internals, while ordinary hidden files remain searchable. Signal Grep calls the installed `rg` program directly and never builds a shell command from the search text.
+When no path is given, search stays inside the current working directory. An explicit absolute path or `..` traversal may search or inspect outside it, but `.git` internals, known credential stores, and special system areas are rejected; these protections are defense in depth, not a promise to identify every sensitive file. Ordinary Git change comparisons remain scoped to the current working directory. Hidden files otherwise remain searchable. Signal Grep calls the installed `rg` program directly and never builds a shell command from the search text.
 
 ## Installation
 

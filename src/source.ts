@@ -1,14 +1,16 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
+import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import {
   MAX_RESULT_BYTES,
   MAX_SOURCE_FILE_BYTES,
   type MatchOccurrence,
   type SourceRevision,
 } from "./types.js";
+
+export { isPathInsideCwd } from "./path-policy.js";
 
 const SOURCE_RANGE_METADATA_RESERVE_BYTES = 1024;
 const MAX_SOURCE_RANGE_BYTES = MAX_RESULT_BYTES - SOURCE_RANGE_METADATA_RESERVE_BYTES;
@@ -42,24 +44,17 @@ export function sameSourceRevision(left: SourceRevision, right: SourceRevision):
   );
 }
 
-export function isPathInsideCwd(path: string, cwd: string): boolean {
-  const localPath = relative(resolve(cwd), resolve(path));
-  return localPath !== ".." && !localPath.startsWith(`..${sep}`) && !isAbsolute(localPath);
+export async function assertExistingSearchPath(path: string, cwd: string): Promise<void> {
+  await new SearchPathPolicy(cwd).assertExistingPath(path);
 }
 
 export async function assertExistingPathInsideCwd(path: string, cwd: string): Promise<void> {
   if (!isPathInsideCwd(path, cwd)) {
     throw new SignalGrepError("Path must stay within the working directory");
   }
-  try {
-    const [realCwd, realPath] = await Promise.all([realpath(cwd), realpath(path)]);
-    if (!isPathInsideCwd(realPath, realCwd)) {
-      throw new SignalGrepError("Path must stay within the working directory");
-    }
-  } catch (error) {
-    if (error instanceof SignalGrepError) throw error;
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-    throw error;
+  const canonical = await new SearchPathPolicy(cwd).resolveExistingPath(path);
+  if (canonical && !isPathInsideCwd(canonical, await realpath(cwd))) {
+    throw new SignalGrepError("Path must stay within the working directory");
   }
 }
 
