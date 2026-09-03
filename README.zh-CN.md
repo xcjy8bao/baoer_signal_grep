@@ -64,11 +64,48 @@ Signal Grep：已处理 8 次查询，结果全部完整；3 次结果已自动�
 
 ## 它不会把代码带出本机
 
-搜索、整理和读取都在本地完成。插件没有遥测，不会把查询、代码或统计发到网络，也不会在后台建立索引或下载模型。
+作为本地 Pi 插件使用时，搜索、整理和读取都在本机完成。插件没有遥测，不会把查询、代码或统计发到网络，也不会在后台建立索引或下载模型。使用可选的远程 MCP 服务时，请求和返回的证据会通过部署者配置的 MCP 连接传输。
 
 未提供路径时，搜索仍限制在当前工作目录。显式绝对路径或 `..` 路径可以搜索、检查工作目录外的位置，但 `.git` 内部、已知凭据存储目录和特殊系统区域会被拒绝；这些限制只是纵深防护，并不保证识别所有敏感文件。普通 Git 变更比较仍限制在当前工作目录。除此之外，普通隐藏文件仍然可以找到。插件会直接调用本机已有的 `rg`，不会把搜索内容拼成 shell 命令。
 
-## 安装
+## 远端 MCP 服务
+
+本包也可以通过 MCP 服务，把同一个 `signal_grep` 能力提供给远端 Agent。服务读取它所在机器的文件，不会通过 SSH 跳到其他机器，也不会执行调用方传来的任意 shell 命令。
+
+在远程机器安装独立服务；这种模式不需要 Pi 或 Bun：
+
+```bash
+npm install --global pi-plugin-signal-grep
+```
+
+MCP 可执行程序需要 Node.js 22.19+，并且 `PATH` 中能够找到 `rg`。本包为 x64 和 ARM64 的 Linux、macOS、Windows 带有预编译的 JS、TS、TSX 识别组件；Go 识别组件覆盖三种系统的 x64，以及 Linux、macOS 的 ARM64。Windows ARM64 上普通搜索仍可使用，但 Go 结构分析需要本机具备可构建的 Go 解析器。Universal Ctags 仍然只是可选能力。
+
+开发时可构建随包提供的 Node 兼容服务产物：
+
+```bash
+bun run build:mcp
+```
+
+在 Linux 或 macOS 上，让服务指向远程项目并启动：
+
+```bash
+SIGNAL_GREP_MCP_CWD=/path/to/project signal-grep-mcp
+```
+
+在 Windows PowerShell 上：
+
+```powershell
+$env:SIGNAL_GREP_MCP_CWD = "C:\path\to\project"
+signal-grep-mcp
+```
+
+服务端点是 `/mcp`，默认监听 `127.0.0.1:3000`。服务本身不内置鉴权；没有经过鉴权的网关时，不要把它绑定到公开网卡。部署网关可以把它暴露给经过鉴权的远端客户端。如需其他配置，可设置 `SIGNAL_GREP_MCP_HOST`、`SIGNAL_GREP_MCP_PORT` 和 `SIGNAL_GREP_MCP_CWD`。
+
+标准 MCP 客户端不会发送浏览器 `Origin` 头，不需要额外配置。浏览器客户端需要通过逗号分隔的 `SIGNAL_GREP_MCP_ALLOWED_ORIGINS` 显式放行；服务会为已放行来源返回直接访问所需的预检和可见 session 响应头。服务默认最多保留 100 个 session，并主动回收空闲超过 10 分钟的 session；部署可通过 `SIGNAL_GREP_MCP_MAX_SESSIONS` 和 `SIGNAL_GREP_MCP_SESSION_IDLE_MS` 调整这两个运行边界。单个请求体上限为 16 MiB。
+
+远端调用保持本地工具契约，包括结果限流、游标、源码检查、静态分析线索、显示脱敏和保护路径校验。默认搜索在配置的工作目录中进行；显式绝对路径和 `..` 路径可以访问服务进程有读权限的其他非保护路径。Git 变更检索仍限制在当前仓库。
+
+## 安装到 Pi
 
 从 npm 安装：
 
@@ -84,7 +121,7 @@ pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
 
 重启 Pi 后即可使用。
 
-使用前请确认：Pi 不低于 0.84.3；系统中可以运行 `rg`；运行环境为 Node.js 22.19+ 或 Bun 1.4+。插件已经带上 JS、TS、TSX 和 Go 所需的代码识别组件，不需要另外下载模型。Universal Ctags 只是其他语言需要更细代码范围时的可选帮手，插件不会自动下载它。
+在 Pi 中使用时，请确认：Pi 不低于 0.84.3；系统中可以运行 `rg`；运行环境为 Node.js 22.19+ 或 Bun 1.4+。插件已经带上 JS、TS、TSX 和 Go 所需的代码识别组件，不需要另外下载模型。Universal Ctags 只是其他语言需要更细代码范围时的可选帮手，插件不会自动下载它。
 
 ## 中文界面
 

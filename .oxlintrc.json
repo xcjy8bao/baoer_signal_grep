@@ -13,5 +13,5 @@
   "env": {
     "builtin": true
   },
-  "ignorePatterns": ["src/syntax-worker.mjs"]
+  "ignorePatterns": ["src/syntax-worker.mjs", "src/mcp-server.mjs"]
 }

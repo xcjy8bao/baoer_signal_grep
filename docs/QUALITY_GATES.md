@@ -21,6 +21,14 @@ bun run check:worker
 
 Node does not execute TypeScript files located inside an installed `node_modules` package. The release therefore contains a Node-targeted JavaScript parser worker built from `src/syntax-worker.ts`. This gate rebuilds it in a temporary directory and requires an exact byte match with the published artifact. `bun run build:worker` is the only supported way to refresh that artifact.
 
+## Published MCP server
+
+```bash
+bun run check:mcp
+```
+
+`check:mcp` rebuilds the Node-compatible remote MCP server in a temporary directory and compares it byte-for-byte with the checked-in `src/mcp-server.mjs` artifact. Run `bun run build:mcp` only when the source entrypoint changes.
+
 ## Oxfmt: deterministic code style
 
 ```bash
@@ -105,7 +113,7 @@ Controlled process wrappers make the scan-mutation timing deterministic and invo
 bun run test:node
 ```
 
-The smoke test builds a temporary Node-targeted bundle, imports it with the configured Node.js executable, and removes the artifact. It verifies that Bun-first development does not introduce Bun-only runtime behavior into the Pi extension.
+The smoke test builds a temporary Node-targeted extension bundle and imports it with the configured Node.js executable. It also starts the checked-in `src/mcp-server.mjs` artifact with Node, initializes a real Streamable HTTP session, verifies the advertised release version, searches a temporary fixture through `signal_grep`, and exercises graceful signal shutdown on POSIX (Windows signal termination is only required to reap the child process). Temporary output is removed afterward. This verifies that Bun-first development does not introduce Bun-only runtime behavior into either published entrypoint.
 
 ## Context-shape benchmark
 

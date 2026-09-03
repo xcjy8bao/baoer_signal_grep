@@ -64,11 +64,48 @@ It records only three things that actually happened in the current session: how 
 
 ## Your code stays on your machine
 
-Searching, organizing, and reading happen locally. The plugin has no telemetry and does not send queries, code, or session figures over the network. It builds no background index and downloads no model.
+When used as a local Pi extension, searching, organizing, and reading happen locally. The extension has no telemetry and does not send queries, code, or session figures over the network. It builds no background index and downloads no model. When the optional MCP server is used remotely, requests and returned evidence travel over the MCP connection configured by the deployment.
 
 When no path is given, search stays inside the current working directory. An explicit absolute path or `..` traversal may search or inspect outside it, but `.git` internals, known credential stores, and special system areas are rejected; these protections are defense in depth, not a promise to identify every sensitive file. Ordinary Git change comparisons remain scoped to the current working directory. Hidden files otherwise remain searchable. Signal Grep calls the installed `rg` program directly and never builds a shell command from the search text.
 
-## Installation
+## Remote MCP server
+
+The package can expose the same `signal_grep` capability to a remote agent through an MCP server. The server reads the filesystem where it runs; it does not SSH into another machine or execute caller-supplied shell commands.
+
+Install the standalone server on the remote host; Pi and Bun are not required for this mode:
+
+```bash
+npm install --global pi-plugin-signal-grep
+```
+
+The MCP executable requires Node.js 22.19+ and `rg` in `PATH`. Prebuilt JS, TS, and TSX recognition is included for x64 and ARM64 Linux, macOS, and Windows. Prebuilt Go recognition is included for x64 on all three systems and ARM64 on Linux and macOS; on Windows ARM64, ordinary search still works but Go structure-aware modes need a locally buildable Go parser. Universal Ctags remains optional.
+
+Build the checked-in Node-compatible server artifact during development:
+
+```bash
+bun run build:mcp
+```
+
+On Linux or macOS, run the server against the remote project:
+
+```bash
+SIGNAL_GREP_MCP_CWD=/path/to/project signal-grep-mcp
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:SIGNAL_GREP_MCP_CWD = "C:\path\to\project"
+signal-grep-mcp
+```
+
+The endpoint is `/mcp` and listens on `127.0.0.1:3000` by default. The server has no built-in authentication; do not bind it to a public interface without an authenticated gateway. A deployment gateway may expose it to authenticated remote clients. Set `SIGNAL_GREP_MCP_HOST`, `SIGNAL_GREP_MCP_PORT`, and `SIGNAL_GREP_MCP_CWD` when the host requires different values.
+
+Standard MCP clients do not send a browser `Origin` header and need no additional configuration. Browser-based clients must be allowed explicitly with a comma-separated `SIGNAL_GREP_MCP_ALLOWED_ORIGINS` list; an allowed origin receives the preflight and exposed session headers needed for direct browser access. The server keeps at most 100 sessions and expires an idle session after 10 minutes by default; deployments can tune these operational bounds with `SIGNAL_GREP_MCP_MAX_SESSIONS` and `SIGNAL_GREP_MCP_SESSION_IDLE_MS`. Each request body is limited to 16 MiB.
+
+Remote calls preserve the local tool contract, including bounded results, cursors, source inspection, static analysis clues, display redaction, and protected-path checks. The default search root is the configured working directory; explicit absolute and `..` paths can reach other non-protected paths readable by the server process. Git change searches remain scoped to the current repository.
+
+## Pi installation
 
 Install from npm:
 
@@ -84,7 +121,7 @@ pi install git:github.com/xcjy8bao/pi-plugin-signal-grep
 
 Restart Pi after installation.
 
-Before using it, make sure Pi is 0.84.3 or newer, `rg` is available on the system, and the runtime is Node.js 22.19+ or Bun 1.4+. The plugin already includes the code-recognition components it needs for JS, TS, TSX, and Go, so there is no separate model download. Universal Ctags is optional when finer code ranges are wanted for other languages, and Signal Grep never downloads it automatically.
+For Pi usage, make sure Pi is 0.84.3 or newer, `rg` is available on the system, and the runtime is Node.js 22.19+ or Bun 1.4+. The plugin already includes the code-recognition components it needs for JS, TS, TSX, and Go, so there is no separate model download. Universal Ctags is optional when finer code ranges are wanted for other languages, and Signal Grep never downloads it automatically.
 
 ## Simplified Chinese interface
 
