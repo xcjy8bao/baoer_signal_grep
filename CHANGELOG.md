@@ -4,6 +4,31 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-09-03
+
+### Added
+
+- A zero-result search scoped to a subpath automatically retries from the project root. Project-wide matches are returned as ordinary evidence, while a project-wide zero result states the effective scope and retained filters.
+- Analysis responses expose independent coverage for exact occurrences, syntax classification, related tests, navigation, and retained storage. Structural operations also report enumerated, parsed, skipped, cached, timed, and budget-exhaustion statistics.
+- `redact=true` optionally masks credential-like values and private-key bodies in text and structured output. It is disabled by default, never changes search admission or counts, and survives ordinary and analysis cursor pagination.
+- Cursor failures expose stable `E_CURSOR_*` categories for malformed, missing, expired, wrong-kind, conflicting-option, and invalid-offset requests.
+- Structural analysis accepts a strictly validated `maxFilesToParse` from 1 through 2,000; the default remains 200 and never limits the preceding full candidate search.
+
+### Changed
+
+- Analysis modes now set top-level `totalMatches`, `storedMatches`, and `returnedMatches` from their actual analysis items instead of returning a misleading zero.
+- Related-test discovery uses a fast full-scope ripgrep prefilter and parses only likely test entries. Parsed syntax facts are cached by language and content hash within bounded service memory, with automatic invalidation after content changes.
+- `anyOf` accepts 2–64 literals. Requests above eight terms run as bounded parallel eight-term chunks and merge into one ordered, version-checked, pageable result.
+- Code-only analysis on an entirely unsupported source set fails explicitly. Mixed repositories retain supported evidence and collapse repeated unsupported-language diagnostics into one bounded summary.
+- Numeric input outside the declared `limit`, `context`, and structural parse bounds is rejected rather than silently clamped.
+- Git capability detection is cached per executable environment. Git 2.45+ uses `--no-lazy-fetch`; older Git works for full repositories and gives a focused capability error for partial/promisor clones.
+
+### Fixed
+
+- Exact occurrence counts no longer become untrustworthy merely because syntax classification, related-test augmentation, display paging, or storage retention has a different coverage status.
+- Invalid cursors are validated before continuation-only parameter checks, so forged cursors no longer receive a misleading mode or option error.
+- High-cardinality unsupported-language diagnostics no longer consume the response with one repeated reason per file.
+
 ## [0.6.2] - 2026-09-03
 
 ### Changed

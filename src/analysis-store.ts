@@ -26,7 +26,18 @@ export type RetainedAnalysisSummary = (
 export type AnalysisRetentionPriority = (item: AnalysisItem) => number;
 
 function boundedReasons(reasons: readonly string[]): string[] {
-  const unique = [...new Set(reasons)];
+  const unsupportedSuffix = ": syntax unsupported; this source remains unclassified";
+  const unsupported = reasons
+    .filter((reason) => reason.endsWith(unsupportedSuffix))
+    .map((reason) => reason.slice(0, -unsupportedSuffix.length));
+  const unique = [
+    ...new Set(reasons.filter((reason) => !reason.endsWith(unsupportedSuffix))),
+    ...(unsupported.length
+      ? [
+          `${String(unsupported.length)} matching file(s) skipped because syntax is unsupported${unsupported.length ? `; examples: ${unsupported.slice(0, 3).join(", ")}` : ""}`,
+        ]
+      : []),
+  ];
   const retained: string[] = [];
   let bytes = 2;
   let omitted = 0;
@@ -61,11 +72,13 @@ function boundedReasons(reasons: readonly string[]): string[] {
 /** Stores only bounded display evidence and version references, never syntax trees. */
 export class AnalysisStore {
   readonly #items = new Map<string, StoredAnalysis>();
+  readonly #expired = new Set<string>();
   readonly #now: () => number;
   constructor(now: () => number = Date.now) {
     this.#now = now;
   }
   clear(): void {
+    for (const id of this.#items.keys()) this.#rememberExpired(id);
     this.#items.clear();
   }
 
@@ -79,6 +92,7 @@ export class AnalysisStore {
       ...result,
       reasons: boundedReasons(result.reasons),
       items: [],
+      coverage: { ...result.coverage, retention: "complete" },
     };
     let bytes = Buffer.byteLength(JSON.stringify(bounded));
     const candidates = result.items
@@ -103,6 +117,7 @@ export class AnalysisStore {
         bytes + itemBytes > MAX_ANALYSIS_STORAGE_BYTES - ANALYSIS_METADATA_RESERVE_BYTES
       ) {
         bounded.partial = true;
+        if (bounded.coverage) bounded.coverage.retention = "partial";
         bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
         break;
       }
@@ -116,6 +131,7 @@ export class AnalysisStore {
       retainedIndices.pop();
       rebuildItems();
       bounded.partial = true;
+      if (bounded.coverage) bounded.coverage.retention = "partial";
       if (
         !bounded.reasons.includes("Analysis storage limit: 50,000 items / 32 MiB; narrow the query")
       )
@@ -135,6 +151,7 @@ export class AnalysisStore {
       const oldest = [...this.#items.values()].toSorted((a, b) => a.touched - b.touched)[0];
       if (!oldest) throw new SignalGrepError("Analysis metadata exceeds the storage budget");
       this.#items.delete(oldest.id);
+      this.#rememberExpired(oldest.id);
     }
     const id = randomUUID();
     this.#items.set(id, { id, result: bounded, bytes, touched: this.#now() });
@@ -151,14 +168,19 @@ export class AnalysisStore {
     const offset = Number.parseInt(rawOffset, 36);
     const stored = this.#items.get(id);
     if (!stored)
-      throw new CursorError("Analysis cursor expired or was evicted; run the query again");
+      throw new CursorError(
+        this.#expired.has(id)
+          ? "Analysis cursor expired or was evicted; run the query again"
+          : "Analysis cursor was not found; run the query again",
+        this.#expired.has(id) ? "E_CURSOR_EXPIRED" : "E_CURSOR_NOT_FOUND",
+      );
     if (
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       offset.toString(36) !== rawOffset ||
       offset > stored.result.items.length
     )
-      throw new CursorError("Invalid analysis offset");
+      throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
     stored.touched = this.#now();
     return { stored, offset };
   }
@@ -176,7 +198,12 @@ export class AnalysisStore {
     const { stored, offset } = this.resolve(cursor);
     const { result } = stored;
     const items: NonNullable<SignalGrepResult["details"]["analysis"]>["items"] = [];
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${result.termCounts ? `Term counts: ${JSON.stringify(result.termCounts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.`;
+    const scope = result.scope
+      ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.`
+      : "";
+    const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
+    const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${result.termCounts ? `Term counts: ${JSON.stringify(result.termCounts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
     const notice = result.reasons.length
       ? `\n${result.reasons.map((reason) => `[${reason}]`).join("\n")}`
       : "";
@@ -188,7 +215,12 @@ export class AnalysisStore {
       if (!item) throw new Error("Analysis item unavailable");
       const inspect =
         item.source && item.range
-          ? { mode: "inspect" as const, cursor: `${stored.id}.analysis.0`, matchIndex: index + 1 }
+          ? {
+              mode: "inspect" as const,
+              cursor: `${stored.id}.analysis.0`,
+              matchIndex: index + 1,
+              ...(result.redact ? { redact: true } : {}),
+            }
           : undefined;
       const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `\n${item.excerpt}` : ""}${item.details ? `\nEvidence: ${JSON.stringify(item.details)}` : ""}${inspect ? `\nInspect: ${JSON.stringify(inspect)}` : ""}`;
       const rowBytes = Buffer.byteLength(row) + 2;
@@ -204,7 +236,10 @@ export class AnalysisStore {
     }
     const nextRequest =
       next < result.items.length
-        ? { cursor: `${stored.id}.analysis.${next.toString(36)}` }
+        ? {
+            cursor: `${stored.id}.analysis.${next.toString(36)}`,
+            ...(result.redact ? { redact: true } : {}),
+          }
         : undefined;
     const text = [
       header + notice,
@@ -226,9 +261,9 @@ export class AnalysisStore {
             : "matches",
         status: result.partial ? "partial" : "complete",
         snapshotComplete: !result.partial,
-        totalMatches: 0,
-        storedMatches: 0,
-        returnedMatches: 0,
+        totalMatches: result.items.length,
+        storedMatches: result.items.length,
+        returnedMatches: items.length,
         totalFiles: new Set(result.items.map((item) => item.path)).size,
         cursor: nextRequest?.cursor ?? `${stored.id}.analysis.0`,
         ...(nextRequest ? { nextRequest } : {}),
@@ -244,19 +279,36 @@ export class AnalysisStore {
           ...(result.changes ? { changes: result.changes } : {}),
           ...(result.counts ? { counts: result.counts } : {}),
           ...(result.termCounts ? { termCounts: result.termCounts } : {}),
+          ...(result.scope ? { scope: result.scope } : {}),
+          ...(result.chunks !== undefined ? { chunks: result.chunks } : {}),
+          ...(result.coverage ? { coverage: result.coverage } : {}),
+          ...(result.stats ? { stats: result.stats } : {}),
         },
+        ...(result.scope ? { scope: result.scope } : {}),
+        ...(result.redact ? { redactionRequested: true } : {}),
       },
     };
   }
 
   #expire(): void {
     for (const [id, item] of this.#items)
-      if (this.#now() - item.touched >= ANALYSIS_TTL_MS) this.#items.delete(id);
+      if (this.#now() - item.touched >= ANALYSIS_TTL_MS) {
+        this.#items.delete(id);
+        this.#rememberExpired(id);
+      }
   }
   #totalBytes(): number {
     return [...this.#items.values()].reduce((n, item) => n + item.bytes, 0);
   }
   #totalItems(): number {
     return [...this.#items.values()].reduce((n, item) => n + item.result.items.length, 0);
+  }
+  #rememberExpired(id: string): void {
+    this.#expired.add(id);
+    while (this.#expired.size > MAX_ANALYSIS_SNAPSHOTS * 4) {
+      const oldest = this.#expired.values().next().value;
+      if (oldest === undefined) break;
+      this.#expired.delete(oldest);
+    }
   }
 }

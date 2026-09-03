@@ -1,14 +1,18 @@
 import { dirname, resolve } from "node:path";
 import { AnalysisStore } from "./analysis-store.js";
-import type { AnalysisItem, AnalysisResultSet } from "./analysis-types.js";
+import type { AnalysisItem, AnalysisResultSet, CoverageStatus } from "./analysis-types.js";
 import { abortError, CursorError, SignalGrepError } from "./errors.js";
 import { findGitRepository } from "./git-repository.js";
 import { isPathInsideCwd } from "./path-policy.js";
 import { resolveInspectionTarget } from "./inspect.js";
-import { collectEvidenceCandidates } from "./evidence-candidates.js";
+import {
+  collectEvidenceCandidates,
+  type EvidenceCandidateFile,
+  type EvidenceCandidates,
+} from "./evidence-candidates.js";
 import { listWorkspaceFiles, workspaceRelativePath } from "./workspace-files.js";
 import { navigateImports } from "./import-navigation.js";
-import { findRelatedTests } from "./test-navigation.js";
+import { findRelatedTests, isLikelyTestPath, TEST_DISCOVERY_PATTERN } from "./test-navigation.js";
 import { selectImpactTarget } from "./impact-target.js";
 import {
   classifyImpactOccurrences,
@@ -39,7 +43,18 @@ import {
 import { sameSourceRevision } from "./source.js";
 import type { CodeStructureProvider } from "./structure.js";
 import { filterRoleOccurrences, findFunctionConjunctions } from "./syntax-search.js";
-import { MAX_INSPECT_TARGETS, type SignalGrepResult } from "./types.js";
+import { syntaxLanguage } from "./syntax.js";
+import {
+  MAX_ANY_OF_TERMS,
+  MAX_CONFIGURABLE_STRUCTURE_FILES,
+  MAX_STRUCTURE_FILES,
+} from "./analysis-limits.js";
+import {
+  MAX_INSPECT_TARGETS,
+  type SearchRequest,
+  type SearchScopeDetails,
+  type SignalGrepResult,
+} from "./types.js";
 
 export function isEvidenceRequest(input: SignalGrepInput): boolean {
   return (
@@ -63,12 +78,18 @@ function rejectFields(
   input: SignalGrepInput,
   fields: (keyof SignalGrepInput)[],
   operation: string,
+  cursor = false,
 ): void {
   const present = fields.filter((field) => input[field] !== undefined);
   if (present.length)
-    throw new SignalGrepError(
-      `${operation} does not accept ${present.join(", ")}; copy the complete returned request`,
-    );
+    throw cursor
+      ? new CursorError(
+          `${operation} does not accept ${present.join(", ")}; copy the complete returned request`,
+          "E_CURSOR_OPTIONS_CONFLICT",
+        )
+      : new SignalGrepError(
+          `${operation} does not accept ${present.join(", ")}; copy the complete returned request`,
+        );
 }
 const searchFields = [
   "pattern",
@@ -91,6 +112,20 @@ const inspectFields = [
   "targets",
   "sourceCursor",
 ] satisfies (keyof SignalGrepInput)[];
+
+function maxFilesToParse(value: number | undefined): number {
+  const candidate = value ?? MAX_STRUCTURE_FILES;
+  if (
+    !Number.isSafeInteger(candidate) ||
+    candidate < 1 ||
+    candidate > MAX_CONFIGURABLE_STRUCTURE_FILES
+  ) {
+    throw new SignalGrepError(
+      `maxFilesToParse must be an integer from 1 through ${String(MAX_CONFIGURABLE_STRUCTURE_FILES)}`,
+    );
+  }
+  return candidate;
+}
 
 function validateTerms(input: SignalGrepInput): string[] | undefined {
   const terms = input.allOf;
@@ -154,6 +189,20 @@ function fileConjunction(
   };
 }
 
+function searchScope(request: SearchRequest): SearchScopeDetails {
+  const path = request.path ?? ".";
+  const requestedPath = request.expandedFromPath ?? path;
+  return {
+    path,
+    requestedPath,
+    glob: [...request.glob],
+    exclude: [...request.exclude],
+    hidden: request.hidden,
+    expandedToProjectRoot: request.expandedFromPath !== undefined,
+    assertion: path === "." ? "project-wide" : "requested-scope",
+  };
+}
+
 async function navigationRoot(cwd: string, path: string, signal?: AbortSignal): Promise<string> {
   const absolute = resolve(cwd, path);
   if (isPathInsideCwd(absolute, cwd)) return resolve(cwd);
@@ -182,13 +231,63 @@ export class EvidenceService {
     await this.#queue.shutdown();
   }
 
+  async #testEntryPaths(
+    root: string,
+    files: readonly string[],
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<string[]> {
+    const request = normalizeRequest({
+      pattern: TEST_DISCOVERY_PATTERN,
+      path: root,
+      glob: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"],
+      ignoreCase: false,
+    });
+    const scan = await this.#runner(request, cwd, signal);
+    const contentCandidates = new Set(scan.fileCounts.keys());
+    return files.filter(
+      (path) => isLikelyTestPath(path) || contentCandidates.has(workspaceRelativePath(cwd, path)),
+    );
+  }
+
+  async #candidates(
+    request: SearchRequest,
+    input: SignalGrepInput,
+    access: SourceAccess,
+  ): Promise<{ candidates: EvidenceCandidates; request: SearchRequest }> {
+    const collect = (candidateRequest: SearchRequest) =>
+      collectEvidenceCandidates({
+        request: candidateRequest,
+        ...(input.changes ? { changes: input.changes } : {}),
+        cwd: access.cwd,
+        ...(access.signal ? { signal: access.signal } : {}),
+        access,
+        runRipgrep: this.#runner,
+        maxFiles: access.maxFiles,
+      });
+    const candidates = await collect(request);
+    if (
+      input.changes ||
+      request.path === undefined ||
+      candidates.files.length > 0 ||
+      candidates.partial
+    ) {
+      return { candidates, request };
+    }
+    const { path: requestedPath, ...projectRequest } = request;
+    const expandedRequest = { ...projectRequest, expandedFromPath: requestedPath };
+    return { candidates: await collect(expandedRequest), request: expandedRequest };
+  }
+
   async search(
     input: SignalGrepInput,
     cwd: string,
     signal?: AbortSignal,
   ): Promise<SignalGrepResult> {
     if (signal?.aborted) throw abortError();
-    const access = new SourceAccess(cwd, this.#queue, signal);
+    const analysisStarted = performance.now();
+    const fileLimit = maxFilesToParse(input.maxFilesToParse);
+    const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
     if (input.sourceCursor !== undefined) {
       if (typeof input.sourceCursor !== "string" || !input.sourceCursor.trim())
         throw new CursorError("A nonempty sourceCursor is required");
@@ -205,25 +304,40 @@ export class EvidenceService {
           "matchIndices",
           "targets",
           "symbol",
+          "maxFilesToParse",
         ],
         "Source continuation",
+        true,
       );
       return continueSource(input.sourceCursor, access, this.#continuations);
     }
     if (input.mode === "inspect") {
-      rejectFields(input, [...searchFields, "paths", "symbol"], "mode=inspect");
+      rejectFields(input, [...searchFields, "paths", "symbol", "maxFilesToParse"], "mode=inspect");
       const targets = this.#inspectionTargets(input, cwd);
       return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
     if (input.mode === "impact") return this.#impact(input, access);
     if (input.cursor?.includes(".analysis.") && !input.mode?.match(/^(outline|imports|tests)$/)) {
+      this.#analyses.resolve(input.cursor);
       rejectFields(
         input,
-        [...searchFields, ...inspectFields, "path", "line", "matchIndex", "symbol"],
+        [
+          ...searchFields,
+          ...inspectFields,
+          "path",
+          "line",
+          "matchIndex",
+          "symbol",
+          "maxFilesToParse",
+        ],
         "Analysis continuation",
+        true,
       );
       if (input.mode !== undefined && input.mode !== "matches" && input.mode !== "auto")
-        throw new CursorError("Analysis cursor continues with cursor alone");
+        throw new CursorError(
+          "Analysis cursor cannot continue in the requested mode",
+          "E_CURSOR_WRONG_KIND",
+        );
       return this.#analyses.page(input.cursor);
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
@@ -248,38 +362,107 @@ export class EvidenceService {
         );
       if (input.mode !== undefined && input.mode !== "auto" && input.mode !== "matches")
         throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
-      const request = normalizeRequest({
-        ...input,
-        pattern: anyOf.map(escapeRegexLiteral).join("|"),
-        literal: false,
-        ignoreCase: false,
-      });
-      const candidates = await collectEvidenceCandidates({
-        request,
-        ...(input.changes ? { changes: input.changes } : {}),
-        cwd,
-        ...(signal ? { signal } : {}),
-        access,
-        runRipgrep: this.#runner,
-      });
+      const chunks = Array.from(
+        { length: Math.ceil(anyOf.length / MAX_ANY_OF_TERMS) },
+        (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS),
+      );
+      const { path: _inputPath, ...unscopedInput } = input;
+      const runChunks = async (expandedFromPath?: string) =>
+        Promise.all(
+          chunks.map(async (chunk) => {
+            const request = normalizeRequest({
+              ...(expandedFromPath === undefined ? input : unscopedInput),
+              pattern: chunk.map(escapeRegexLiteral).join("|"),
+              literal: false,
+              ignoreCase: false,
+            });
+            const effectiveRequest =
+              expandedFromPath === undefined ? request : { ...request, expandedFromPath };
+            const candidates = await collectEvidenceCandidates({
+              request: effectiveRequest,
+              ...(input.changes ? { changes: input.changes } : {}),
+              cwd,
+              ...(signal ? { signal } : {}),
+              access,
+              runRipgrep: this.#runner,
+              maxFiles: fileLimit,
+            });
+            return { chunk, request: effectiveRequest, candidates };
+          }),
+        );
+      let chunkResults = await runChunks();
+      if (
+        !input.changes &&
+        input.path !== undefined &&
+        chunkResults.every(({ candidates }) => !candidates.partial && candidates.files.length === 0)
+      ) {
+        chunkResults = await runChunks(input.path.replace(/^@/, ""));
+      }
+      const reasons = new Set<string>();
+      let partial = false;
+      let filesRead = 0;
+      let bytesRead = 0;
+      let changes: AnalysisResultSet["changes"];
+      const candidateFiles = new Map<string, EvidenceCandidateFile>();
+      const invalidatedPaths = new Set<string>();
+      for (const { candidates } of chunkResults) {
+        partial ||= candidates.partial;
+        filesRead += candidates.filesRead;
+        bytesRead += candidates.bytesRead;
+        changes ??= candidates.changes;
+        for (const reason of candidates.reasons) reasons.add(reason);
+        for (const file of candidates.files) {
+          if (invalidatedPaths.has(file.document.path)) continue;
+          const existing = candidateFiles.get(file.document.path);
+          if (
+            existing &&
+            JSON.stringify(existing.document.reference) !== JSON.stringify(file.document.reference)
+          ) {
+            candidateFiles.delete(file.document.path);
+            invalidatedPaths.add(file.document.path);
+            partial = true;
+            reasons.add(`Source changed across anyOf chunks: ${file.document.path}`);
+          } else candidateFiles.set(file.document.path, file);
+        }
+      }
       const expanded = expandMultiTermCandidates(
-        candidates.files,
+        [...candidateFiles.values()],
         anyOf,
         input.changes?.scope === "lines",
+      );
+      partial ||= expanded.partial;
+      for (const reason of expanded.reasons) reasons.add(reason);
+      const scope = searchScope(
+        chunkResults[0]?.request ??
+          normalizeRequest({
+            ...input,
+            pattern: chunks[0]?.map(escapeRegexLiteral).join("|") ?? "",
+            literal: false,
+            ignoreCase: false,
+          }),
       );
       const result: AnalysisResultSet = {
         kind: "any-of",
         unit: "occurrences",
         items: expanded.items,
-        partial: candidates.partial || expanded.partial,
-        reasons: [...new Set([...candidates.reasons, ...expanded.reasons])],
-        filesRead: candidates.filesRead,
-        bytesRead: candidates.bytesRead,
-        ...(candidates.changes ? { changes: candidates.changes } : {}),
+        partial,
+        reasons: [...reasons],
+        filesRead,
+        bytesRead,
+        ...(changes ? { changes } : {}),
+        scope,
+        chunks: {
+          chunked: chunks.length > 1,
+          count: chunks.length,
+          maxTermsPerChunk: MAX_ANY_OF_TERMS,
+          execution: chunks.length > 1 ? ("bounded-parallel" as const) : ("single" as const),
+        },
+        coverage: { exactOccurrences: partial ? "partial" : "complete" },
+        redact: input.redact ?? false,
       };
       return this.#analyses.page(
-        this.#analyses.create(result, (items) => ({
-          termCounts: retainedTermCounts(anyOf, items),
+        this.#analyses.create(result, (retainedItems) => ({
+          termCounts: retainedTermCounts(anyOf, retainedItems),
         })),
       );
     }
@@ -313,14 +496,8 @@ export class EvidenceService {
           }
         : input,
     );
-    const candidates = await collectEvidenceCandidates({
-      request,
-      ...(input.changes ? { changes: input.changes } : {}),
-      cwd,
-      ...(signal ? { signal } : {}),
-      access,
-      runRipgrep: this.#runner,
-    });
+    const selected = await this.#candidates(request, input, access);
+    const candidates = selected.candidates;
     const kind = terms
       ? input.within === "function"
         ? "function-and"
@@ -337,7 +514,14 @@ export class EvidenceService {
       filesRead: candidates.filesRead,
       bytesRead: candidates.bytesRead,
       ...(candidates.changes ? { changes: candidates.changes } : {}),
+      scope: searchScope(selected.request),
+      coverage: {
+        candidateSearch: candidates.partial ? "partial" : "complete",
+        ...(terms || input.roles ? { syntaxClassification: "complete" as const } : {}),
+      },
+      redact: input.redact ?? false,
     };
+    let syntaxCapableFiles = 0;
     const processFile = async (index: number): Promise<void> => {
       const file = candidates.files[index];
       if (!file) return;
@@ -355,8 +539,9 @@ export class EvidenceService {
           );
           if (item) result.items.push(item);
         } else if (terms || input.roles) {
+          if (syntaxLanguage(file.document.path)) syntaxCapableFiles += 1;
           const syntax = await access.syntax(file.document);
-          const selected = terms
+          const classified = terms
             ? findFunctionConjunctions(
                 file.document,
                 syntax,
@@ -364,9 +549,11 @@ export class EvidenceService {
                 input.changes?.scope === "lines" ? file.changedRanges : undefined,
               )
             : filterRoleOccurrences(file.document, syntax, file.occurrences, input.roles ?? []);
-          result.items.push(...selected.items);
-          result.partial ||= selected.partial;
-          result.reasons.push(...selected.reasons);
+          result.items.push(...classified.items);
+          result.partial ||= classified.partial;
+          if (classified.partial && result.coverage)
+            result.coverage.syntaxClassification = "partial";
+          result.reasons.push(...classified.reasons);
         } else {
           for (const range of file.occurrences) {
             const line = file.document.lineAt(range.start);
@@ -393,6 +580,23 @@ export class EvidenceService {
     };
     await processFile(0);
     result.reasons = [...new Set(result.reasons)];
+    if ((input.roles || (terms && input.within === "function")) && syntaxCapableFiles === 0) {
+      throw new SignalGrepError(
+        `${input.roles ? "roles" : "within=function"} requires a supported source language; use ordinary search or file-level allOf for non-code content`,
+      );
+    }
+    if (terms || input.roles) {
+      result.stats = {
+        filesEnumerated: candidates.files.length,
+        filesParsed: access.syntaxParses,
+        filesSkipped: Math.max(0, candidates.files.length - syntaxCapableFiles),
+        cacheHits: access.syntaxCacheHits,
+        parseMs: Math.round(performance.now() - analysisStarted),
+        budgetExhausted: result.reasons.some(
+          (reason) => reason.includes("limit") || reason.includes("budget-exhausted"),
+        ),
+      };
+    }
     return this.#analyses.page(this.#analyses.create(result));
   }
 
@@ -444,6 +648,7 @@ export class EvidenceService {
   }
 
   async #impact(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {
+    const impactStarted = performance.now();
     rejectFields(input, [...searchFields, ...inspectFields], "mode=impact");
     let path: string;
     let line = input.line;
@@ -509,11 +714,14 @@ export class EvidenceService {
       ...(access.signal ? { signal: access.signal } : {}),
       access,
       runRipgrep: this.#runner,
+      maxFiles: access.maxFiles,
     });
     const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
     let testItems: AnalysisItem[] = [];
+    let testStats: AnalysisResultSet["stats"];
+    let relatedTestsCoverage: CoverageStatus = "skipped";
     const retainedBeforeTests = [target.item, ...occurrences.items];
     if (!target.symbol.hasBody) {
       reasons.add("Related-test augmentation skipped: selected target has no implementation body");
@@ -540,13 +748,26 @@ export class EvidenceService {
         syntax: (source: SourceDocument) => access.syntax(source),
         releaseSyntax: (source: SourceDocument) => access.releaseSyntax(source),
         listFiles: async () => files,
+        maxFilesToParse: access.maxFiles,
       };
-      const tests = await findRelatedTests(host, {
-        path: document.path,
-        line: target.item.line,
-        symbol: target.symbol.name,
-      });
+      const entryPaths = await this.#testEntryPaths(root, files.paths, access.cwd, access.signal);
+      const tests = await findRelatedTests(
+        host,
+        {
+          path: document.path,
+          line: target.item.line,
+          symbol: target.symbol.name,
+        },
+        { entryPaths },
+      );
       testItems = tests.items;
+      testStats = {
+        filesEnumerated: files.paths.length,
+        ...tests.stats,
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits,
+      };
+      relatedTestsCoverage = tests.partial || files.partial ? "partial" : "complete";
       partial ||= tests.partial || files.partial;
       for (const reason of [...tests.reasons, ...files.reasons]) reasons.add(reason);
     }
@@ -558,6 +779,23 @@ export class EvidenceService {
       reasons: [...reasons],
       filesRead: access.filesRead,
       bytesRead: access.bytesRead,
+      stats: {
+        ...testStats,
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits,
+        parseMs: testStats?.parseMs ?? Math.round(performance.now() - impactStarted),
+        budgetExhausted:
+          testStats?.budgetExhausted ??
+          [...reasons].some(
+            (reason) => reason.includes("limit") || reason.includes("budget-exhausted"),
+          ),
+      },
+      coverage: {
+        exactOccurrences: candidates.partial ? "partial" : "complete",
+        syntaxClassification: occurrences.partial ? "partial" : "complete",
+        relatedTests: relatedTestsCoverage,
+      },
+      redact: input.redact ?? false,
     };
     return this.#analyses.page(
       this.#analyses.create(
@@ -569,6 +807,7 @@ export class EvidenceService {
   }
 
   async #navigate(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {
+    const navigationStarted = performance.now();
     rejectFields(input, [...searchFields, ...inspectFields], `mode=${input.mode}`);
     let path = input.path;
     let reference: SourceReference | undefined;
@@ -599,6 +838,12 @@ export class EvidenceService {
       throw new SignalGrepError("matchIndex requires a cursor");
     if (!path) throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
     const document = loaded ?? (await access.load(path, reference));
+    const language = syntaxLanguage(document.path);
+    if (!language || language === "go") {
+      throw new SignalGrepError(
+        `${input.mode} requires reliable JS/TS/TSX syntax (${language ?? "unsupported"})`,
+      );
+    }
     if (input.mode === "outline") {
       const syntax = await access.syntax(document);
       const supported = syntax.status === "ok" && syntax.language !== "go";
@@ -645,6 +890,15 @@ export class EvidenceService {
               ],
           filesRead: access.filesRead,
           bytesRead: access.bytesRead,
+          stats: {
+            filesEnumerated: 1,
+            filesParsed: access.syntaxParses,
+            filesSkipped: 0,
+            cacheHits: access.syntaxCacheHits,
+            parseMs: Math.round(performance.now() - navigationStarted),
+            budgetExhausted: false,
+          },
+          redact: input.redact ?? false,
         }),
       );
     }
@@ -678,6 +932,7 @@ export class EvidenceService {
       syntax: (doc: SourceDocument) => access.syntax(doc),
       releaseSyntax: (doc: SourceDocument) => access.releaseSyntax(doc),
       listFiles: async () => files,
+      maxFilesToParse: access.maxFiles,
     };
     const request = {
       path: document.path,
@@ -687,7 +942,9 @@ export class EvidenceService {
     const result =
       input.mode === "imports"
         ? await navigateImports(host, request)
-        : await findRelatedTests(host, request);
+        : await findRelatedTests(host, request, {
+            entryPaths: await this.#testEntryPaths(root, files.paths, access.cwd, access.signal),
+          });
     return this.#analyses.page(
       this.#analyses.create({
         ...result,
@@ -695,6 +952,16 @@ export class EvidenceService {
         reasons: [...result.reasons, ...files.reasons],
         kind: input.mode === "imports" ? "imports" : "tests",
         unit: input.mode === "imports" ? "relationships" : "evidence-items",
+        coverage: {
+          navigation: result.partial || files.partial ? "partial" : "complete",
+        },
+        stats: {
+          filesEnumerated: files.paths.length,
+          ...result.stats,
+          filesParsed: access.syntaxParses,
+          cacheHits: access.syntaxCacheHits,
+        },
+        redact: input.redact ?? false,
       }),
     );
   }

@@ -83,14 +83,19 @@ Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep
 - cancellation and protocol-failure cleanup, including children that ignore graceful termination and executable startup errors;
 - adaptive result budgets, explicit limits, long-line inspection focus, single/batch byte bounds, per-target failures, retries, deduplication, and source revision rechecks;
 - provider absence and parse failure, partial snapshots, plain-language session accounting, actual service-output TUI recognition, independent raw-`rg` parity, and medium-repository exhaustive/parallel runtime stress;
-- one-scan `anyOf` expansion with Unicode, metacharacters, different-term overlap, case, hidden/
-  ignore/exclude policy, Git changed-line containment, pagination, retained counts, invalid shapes,
-  and executable inspection;
+- `anyOf` expansion with Unicode, metacharacters, different-term overlap, case, hidden/
+  ignore/exclude policy, Git changed-line containment, bounded parallel chunking through 64 terms,
+  source-change handling, pagination, retained counts, invalid shapes, and executable inspection;
 - impact target selection by name, line, and ordinary snapshot; same-owner compatible-overload
   preference and scope/kind/other ambiguity, unsupported, or anonymous failure before scanning;
   every syntax category, unsupported-file retention, Go candidate certainty, related-test
   non-claims, target-first pagination, stored counts, and source-change failure closure.
-- analysis retention prioritization, stable impact test identity, bounded high-cardinality diagnostics, and post-scan cancellation checks.
+- project-root recovery after a zero-result subpath, analysis/top-level count consistency,
+  dimension-specific coverage, opt-in redaction across cursor pages, strict numeric bounds, and stable
+  cursor error categories;
+- candidate-prefiltered 600-file impact performance, content-hash syntax cache hits/invalidation,
+  configurable parse bounds, analysis retention prioritization, stable impact test identity, bounded
+  high-cardinality diagnostics, Git capability fallback, and post-scan cancellation checks.
 
 Controlled process wrappers make the scan-mutation timing deterministic and invoke real ripgrep; these executable-script fixtures run on POSIX. Portable process lifecycle tests and the remaining real-ripgrep matrix also run on Windows. Every asynchronous/process test needs a completion condition and an explicit timeout. Missing optional Ctags must not turn ordinary search into a failure.
 

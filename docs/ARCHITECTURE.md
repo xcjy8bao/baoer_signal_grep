@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of code evidence, not ripgrep itself. Version 0.6.0 adds one-scan exact multi-term evidence and deterministic symbol-impact evidence. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
+Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of project evidence, not ripgrep itself. Version 0.6.6 adds project-wide zero-result recovery, parallel exact multi-term evidence, candidate-prefiltered structural analysis, bounded content-addressed syntax reuse, and dimension-specific coverage. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
 
 ## Data flow
 
@@ -27,8 +27,8 @@ service.ts ── auto/summary/matches/inspect policy and response composition
                    └─► structure.ts ── optional Ctags symbols, using owned-process.ts
 
 evidence-service.ts ── advanced-operation policy and analysis pagination
-  ├─► source-access.ts ── one verified source read and serialized parser ownership per request
-  ├─► syntax.ts ───────── owned compiled ast-grep worker; JS/TS/TSX/Go facts only live in the request
+  ├─► source-access.ts ── one verified source read/request plus bounded content-hash syntax reuse
+  ├─► syntax.ts ───────── owned compiled ast-grep worker with serialized parser ownership
   ├─► multi-term-search.ts / literal-search.ts ── exact any-of expansion and retained term counts
   ├─► impact-target.ts ── reliable JS/TS/TSX target selection and ambiguity failure
   ├─► impact-analysis.ts ── same-spelling classification, test merge, ordering and retained counts
@@ -62,7 +62,7 @@ The public tool name is constant. Signal Grep does not inspect installed package
 
 `evidence-service.ts` dispatches mutually exclusive advanced requests, creates one request-scoped `SourceAccess`, and stores the final analysis snapshot. It delegates facts instead of deriving them itself. External import, test and impact navigation use the containing Git repository when detected, otherwise the target file's directory; cwd-local navigation retains cwd as its root. `analysis-store.ts` applies the shared 50,000-item/32 MiB bound, recomputes operation summaries from the items actually admitted, pages at most 30 items within the 16 KiB response bound, and owns session-local cursor expiry and eviction.
 
-`multi-term-search.ts` validates 2–8 distinct single-line literals up to 256 UTF-8 bytes. `evidence-candidates.ts` runs one alternation candidate scan with the ordinary path/ignore/Git policy; the multi-term module then scans verified bytes independently per input term. This preserves different-term overlap and deterministic input-term/path/byte ordering without one content scan per term. Changed-line admission requires the exact occurrence to be wholly contained in the retained changed range.
+`multi-term-search.ts` validates 2–64 distinct single-line literals up to 256 UTF-8 bytes. Each group of at most eight terms uses one alternation candidate scan with the ordinary path/ignore/Git policy; independent groups start concurrently and merge in input order into one analysis snapshot. The multi-term module scans verified bytes independently per input term, preserving different-term overlap and deterministic input-term/path/byte ordering. Changed-line admission requires the exact occurrence to be wholly contained in the retained changed range. A source revision mismatch makes the affected coverage partial instead of combining stale evidence with current bytes.
 
 `syntax-worker.ts` is the TypeScript source of the isolated parser boundary. Release packages execute the checked-in `syntax-worker.mjs` bundle because Node deliberately refuses to strip TypeScript inside `node_modules`. `check:worker` rebuilds the bundle and compares its exact bytes before lint, type checking, tests, and publication, so the executable artifact cannot drift from its source. Only the pinned ast-grep runtime packages remain external to the bundle.
 
@@ -72,7 +72,9 @@ The public tool name is constant. Signal Grep does not inspect installed package
 
 ### Ripgrep and process boundaries
 
-`rg.ts` owns the matching engine boundary: argument arrays, request-selected search roots, JSON match validation, matching-line counts, and exact occurrence ranges. `path-policy.ts` keeps cwd as the default root while allowing explicit absolute or `..` targets outside it, rejects `.git`, known external credential stores and special system areas after both lexical and canonical resolution, and supplies descendant exclusions for broad external scans. Candidate enumeration and content search receive the same protected-root and file-scope arguments, while cwd-relative targets preserve root-relative user-glob semantics. Git exclusions follow user globs so they cannot be overridden. Ordinary Git change comparison remains cwd-scoped because historical paths and refs belong to that repository boundary.
+`rg.ts` owns the matching engine boundary: argument arrays, request-selected search roots, JSON match validation, matching-line counts, and exact occurrence ranges. `service.ts` retries an ordinary zero-result subpath from cwd; `evidence-service.ts` applies the same recovery to content-analysis candidates. The expanded search keeps explicit glob, exclusion, case, literal, and hidden-file semantics and records both requested and effective roots. `path-policy.ts` keeps cwd as the default root while allowing explicit absolute or `..` targets outside it, rejects `.git`, known external credential stores and special system areas after both lexical and canonical resolution, and supplies descendant exclusions for broad external scans. Candidate enumeration and content search receive the same protected-root and file-scope arguments, while cwd-relative targets preserve root-relative user-glob semantics. Git exclusions follow user globs so they cannot be overridden. Ordinary Git change comparison remains cwd-scoped because historical paths and refs belong to that repository boundary.
+
+`git-process.ts` caches the installed Git capability per executable environment. Git 2.45 and newer receives `--no-lazy-fetch`; older Git omits the unsupported option for full repositories and rejects partial/promisor repositories with a focused capability error. Every object read remains non-interactive and does not invoke lazy fetch, replacement objects, filters, hooks, or user execution helpers.
 
 `scan-revisions.ts` first runs `rg --files --null` and streams candidate names with backpressure. It records revisions for at most `MAX_SOURCE_REVISION_FILES` (50,000) candidates, with at most 16 concurrent metadata reads, before content search starts. NUL framing preserves newline-containing names. After content search it checks retained files again and only binds revisions that match both observations. File size, modification time, identity and available change time are compared by `source.ts`.
 
@@ -96,7 +98,7 @@ Snapshots are session-local and are cleared at shutdown. Cursorless results are 
 
 `SignalGrepService` composes a runner, a snapshot store, and formatters. Its policy is:
 
-1. no matches → explicit complete empty result;
+1. no matches in an explicit subpath → retry from the project root; only a project-wide zero becomes an explicit complete empty result;
 2. `summary` → a count-ranked file page, bounded source-preview windows that fit the budget, and a cursor in the text and details;
 3. implicit `auto` complete result fits its resolved context budget → return every grouped detail directly;
 4. `auto` with an explicit `limit` → honor the request with an immediate detail page and cursor if needed;
@@ -120,7 +122,7 @@ Lines over 500 source characters use occurrence-centered excerpts while columns 
 
 ### Source ranges and structure inspection
 
-`source-document.ts` owns the bounded (5 MiB) raw-byte document, UTF-8/UTF-16 offset mapping and revision binding. `source.ts` applies the shared path policy before opening worktree content, including canonical external-path checks. `source-access.ts` caches that document and serializes parser use for one request. For JS/TS/TSX, `syntax.ts` uses its owned ast-grep worker to identify complete implementation boundaries; unsupported languages can use optional Universal Ctags only for a worktree symbol range. Parser/provider absence, parse errors, oversized files, unavailable source and changed source remain distinct statuses.
+`source-document.ts` owns the bounded (5 MiB) raw-byte document, UTF-8/UTF-16 offset mapping and revision binding. `source.ts` applies the shared path policy before opening worktree content, including canonical external-path checks. `source-access.ts` caches each verified document for one request and uses a service-level parser queue whose syntax results are keyed by language plus worktree content hash or Git blob. The cache is bounded to 256 entries and one million syntax nodes, evicts least-recently-used entries, and naturally misses after content changes. Structural candidate discovery always precedes the configurable 1–2,000 file parse budget, whose default is 200. For JS/TS/TSX, `syntax.ts` uses its owned ast-grep worker to identify complete implementation boundaries; unsupported languages can use optional Universal Ctags only for a worktree symbol range. Parser/provider absence, parse errors, oversized files, unavailable source and changed source remain distinct statuses.
 
 `source-inspection.ts` validates one cursor-bound or direct target, or a batch of 1–5 targets. It merges same-document ranges before allocating the single 16 KiB response budget, reads and parses each document only once, and reports one `details.inspections` item per input. Valid UTF-8 content is emitted as raw-byte fragments without line clipping. If a range remains, `source-continuations.ts` produces an executable version-bound `sourceCursor` for exactly those missing offsets; it rejects forged, expired or source-changed tokens, while valid replay is idempotent. Non-UTF-8 data is an explicit lossy preview and has no continuation. Cancellation, invalid request combinations and unexpected runtime failures reject rather than fabricate empty source.
 
@@ -135,17 +137,21 @@ The formatter produces one plain-language English or Simplified Chinese status a
 ## Core invariants
 
 - Completed retained match snapshots paginate without omission or duplication.
+- A zero-result subpath cannot become project-wide negative evidence until cwd has also been searched with the same explicit filters.
 - Completed file-summary pages cover every retained file in deterministic count-ranked order.
 - Partial retention is observable in text and structured details.
+- Analysis top-level counts use analysis items; exact-occurrence, syntax, test/navigation, and retention coverage remain independently observable.
 - A cursor never silently reruns a search or changes a bound file selection.
 - An original summary cursor remains reusable independently of filtered detail continuations.
 - A cursor-scoped inspection never accepts a missing or changed retained source revision; a direct inspection also checks provider/read revision consistency.
 - Current-file context is never mixed with retained matching text from another revision.
 - Every retained occurrence has a precise range, and every matching line has a stable index. Range display limits never delete retained occurrences or identifying evidence; long excerpts keep the primary occurrence visible.
 - Process and protocol errors never become an empty successful result; failure and cancellation await owned subprocess cleanup.
+- Cursor errors expose stable malformed, missing, expired, wrong-kind, option-conflict, and offset categories after cursor validity is checked first.
 - Structure provider absence or parse failure is explicit and does not corrupt ordinary search.
 - Limits have one source of truth in `types.ts` or `analysis-limits.ts`, according to their owner.
 - Exact multi-term and impact counts are derived from retained stored items; partial counts never become repository totals.
+- Multi-term requests above eight terms use bounded parallel chunks and retain one input-term/path/byte order across pagination.
 - Impact retains every admitted exact same-spelling occurrence and never upgrades it into a semantic binding or test-coverage claim.
 - Runtime source uses Node.js 22+ APIs and remains executable under Bun 1.4+.
 - Signal Grep registers only `signal_grep` and exposes no public commands.
@@ -155,5 +161,6 @@ The formatter produces one plain-language English or Simplified Chinese status a
 - Summary samples are retained source evidence, not relevance ranking; their cursor and follow-up instructions are visible in model-facing text.
 - Batch inspection has one byte budget, per-input outcomes, and no duplicate same-revision source lines.
 - Context-aware budgeting never downshifts explicit limits, `matches`, inspection, or cursor continuation.
+- Optional display redaction never changes admission, matching, counts, coverage, stored evidence, or continuation policy; project files remain searchable by default.
 - A known context adjustment is attributed in structured details; tight and critical adjustments are also explicit in model-facing text.
 - TUI rendering never mutates or replaces model-facing text, structured details, cursor state, session accounting, or non-interactive output; unknown or failed presentation paths expose the original text.

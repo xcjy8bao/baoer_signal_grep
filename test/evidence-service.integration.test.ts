@@ -51,7 +51,7 @@ test("public AND counts files separately and function AND excludes nested/commen
   expect(files.details.analysis?.kind).toBe("file-and");
   expect(files.details.analysis?.unit).toBe("files");
   expect(files.details.analysis?.totalItems).toBe(2);
-  expect(files.details.totalMatches).toBe(0);
+  expect(files.details.totalMatches).toBe(2);
   const functions = await search.search(
     { allOf: ["authorize", "persist"], within: "function" },
     root,
@@ -111,7 +111,7 @@ test("anyOf retains exact overlapping terms with one candidate scan and stable t
 test("anyOf validates its exclusive literal contract", async () => {
   const root = await fixture({ "a.txt": "alpha beta\n" });
   const search = service();
-  await expectFailure(search.search({ anyOf: ["alpha"] }, root), "2–8");
+  await expectFailure(search.search({ anyOf: ["alpha"] }, root), "2–64");
   await expectFailure(search.search({ anyOf: ["alpha", "alpha"] }, root), "distinct");
   await expectFailure(search.search({ anyOf: ["alpha", "line\nbreak"] }, root), "single-line");
   await expectFailure(search.search({ anyOf: ["alpha", "\uD800"] }, root), "well-formed");
@@ -120,6 +120,118 @@ test("anyOf validates its exclusive literal contract", async () => {
   await expectFailure(search.search({ anyOf: ["alpha", "beta"], mode: "summary" }, root), "mode");
   await search.shutdown();
 }, 10000);
+
+test("anyOf safely chunks more than eight terms and merges one pageable result", async () => {
+  const terms = Array.from({ length: 9 }, (_, index) => `term-${String(index + 1)}`);
+  const root = await fixture({ "a.txt": `${terms.join(" ")}\n` });
+  const runner = createRipgrepRunner();
+  let scans = 0;
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      scans++;
+      return runner(...args);
+    },
+  });
+  const found = await search.search({ anyOf: terms }, root);
+  expect(scans).toBe(2);
+  expect(found.details.totalMatches).toBe(9);
+  expect(found.details.analysis?.totalItems).toBe(9);
+  expect(found.details.analysis?.chunks).toEqual({
+    chunked: true,
+    count: 2,
+    maxTermsPerChunk: 8,
+    execution: "bounded-parallel",
+  });
+  expect(found.details.analysis?.termCounts).toEqual(
+    terms.map((term) => ({ term, retainedOccurrences: 1 })),
+  );
+  await search.shutdown();
+}, 10_000);
+
+test("anyOf keeps a bounded total chunk count", async () => {
+  const root = await fixture({ "a.txt": "term\n" });
+  const search = service();
+  await expectFailure(
+    search.search(
+      { anyOf: Array.from({ length: 65 }, (_, index) => `term-${String(index)}`) },
+      root,
+    ),
+    "2–64",
+  );
+  await search.shutdown();
+});
+
+test("anyOf starts independent chunks concurrently", async () => {
+  const terms = Array.from({ length: 9 }, (_, index) => `parallel-${String(index + 1)}`);
+  const root = await fixture({ "a.txt": `${terms.join(" ")}\n` });
+  const runner = createRipgrepRunner();
+  let started = 0;
+  let release: (() => void) | undefined;
+  const bothStarted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      started += 1;
+      if (started === 2) release?.();
+      await bothStarted;
+      return runner(...args);
+    },
+  });
+  const result = await search.search({ anyOf: terms }, root);
+  expect(started).toBe(2);
+  expect(result.details.analysis?.chunks?.execution).toBe("bounded-parallel");
+  await search.shutdown();
+}, 10_000);
+
+test("anyOf never combines an older chunk with newer source bytes", async () => {
+  const terms = Array.from({ length: 9 }, (_, index) => `version-${String(index + 1)}`);
+  const path = "moving.txt";
+  const root = await fixture({ [path]: `${terms.slice(0, 8).join(" ")}\n` });
+  const runner = createRipgrepRunner();
+  let calls = 0;
+  let signalChanged: (() => void) | undefined;
+  const changed = new Promise<void>((resolve) => {
+    signalChanged = resolve;
+  });
+  const search = new SignalGrepService({
+    runRipgrep: async (...args) => {
+      calls += 1;
+      if (calls === 1) {
+        const scan = await runner(...args);
+        await writeFile(join(root, path), `${terms[8]}\n`);
+        signalChanged?.();
+        return scan;
+      }
+      await changed;
+      return runner(...args);
+    },
+  });
+  const result = await search.search({ anyOf: terms }, root);
+  expect(result.details.status).toBe("partial");
+  expect(result.details.analysis?.coverage?.exactOccurrences).toBe("partial");
+  expect(result.text).not.toContain(`Exact literal occurrence for "${terms[0]}"`);
+  expect(result.text).toContain(`Exact literal occurrence for "${terms[8]}"`);
+  await search.shutdown();
+}, 10_000);
+
+test("analysis zero results expand a narrow path to project-wide evidence", async () => {
+  const root = await fixture({
+    "src/local.txt": "nothing here\n",
+    "notes/global.txt": "alpha beta\n",
+  });
+  const search = service();
+  const result = await search.search({ anyOf: ["alpha", "beta"], path: "src" }, root);
+  expect(result.details.totalMatches).toBe(2);
+  expect(result.details.scope).toMatchObject({
+    path: ".",
+    requestedPath: "src",
+    expandedToProjectRoot: true,
+    assertion: "project-wide",
+  });
+  expect(result.text).toContain('expanded after "src" had no matches');
+  await search.shutdown();
+});
 
 test("anyOf preserves a nonempty whitespace-only literal exactly", async () => {
   const root = await fixture({ "a.txt": "alpha beta\n" });
@@ -414,7 +526,7 @@ test("impact prefers one implemented overload and fails unresolved target ambigu
     root,
   );
   expect(selected.details.analysis?.items[0]?.details?.hasBody).toBe(true);
-  expect(scans).toBe(1);
+  expect(scans).toBe(2);
   const selectedMethod = await search.search(
     { mode: "impact", path: "method-overload.ts", symbol: "select" },
     root,
@@ -423,32 +535,32 @@ test("impact prefers one implemented overload and fails unresolved target ambigu
     hasBody: true,
     scope: "API",
   });
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await expectFailure(
     search.search({ mode: "impact", path: "ambiguous.ts", symbol: "duplicate" }, root),
     "ambiguous",
   );
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await expectFailure(
     search.search({ mode: "impact", path: "unrelated.ts", symbol: "select" }, root),
     "ambiguous",
   );
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await expectFailure(
     search.search({ mode: "impact", path: "scope-collision.ts", symbol: "select" }, root),
     "ambiguous",
   );
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await expectFailure(
     search.search({ mode: "impact", path: "kind-collision.ts", symbol: "select" }, root),
     "ambiguous",
   );
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await expectFailure(
     search.search({ mode: "impact", path: "unsupported.go", symbol: "Select" }, root),
     "JS/TS/TSX",
   );
-  expect(scans).toBe(2);
+  expect(scans).toBe(4);
   await search.shutdown();
 }, 15000);
 
@@ -671,3 +783,97 @@ test("new operations contribute only complete session facts", async () => {
   });
   await runtime.shutdown();
 }, 10000);
+
+test("analysis-only modes explicitly reject unsupported source", async () => {
+  const root = await fixture({
+    "notes/a.md": "meeting topic\n",
+    "notes/b.md": "meeting notes\n",
+  });
+  const search = service();
+  await Promise.all(
+    (["outline", "imports", "tests"] as const).map((mode) =>
+      expectFailure(search.search({ mode, path: "notes/a.md" }, root), "JS/TS/TSX"),
+    ),
+  );
+  await expectFailure(
+    search.search({ pattern: "meeting", roles: ["declaration"], path: "notes" }, root),
+    "requires a supported source language",
+  );
+  await search.shutdown();
+});
+
+test("impact prefilters test entries before parsing a 600-file workspace", async () => {
+  const files: Record<string, string> = {
+    "src/target.ts": "export function selected(){ return 1; }\n",
+  };
+  for (let index = 0; index < 600; index += 1) {
+    files[`src/noise-${String(index)}.ts`] =
+      `export const noise${String(index)} = ${String(index)};\n`;
+  }
+  const root = await fixture(files);
+  const search = service();
+  const started = performance.now();
+  const result = await search.search(
+    { mode: "impact", path: "src/target.ts", symbol: "selected" },
+    root,
+  );
+  const duration = performance.now() - started;
+  expect(duration).toBeLessThan(3_000);
+  expect(result.details.status).toBe("complete");
+  expect(result.details.analysis?.coverage).toMatchObject({
+    exactOccurrences: "complete",
+    syntaxClassification: "complete",
+    relatedTests: "complete",
+  });
+
+  expect(result.details.analysis?.stats).toMatchObject({
+    filesEnumerated: 601,
+    filesSkipped: 600,
+    budgetExhausted: false,
+  });
+  await search.shutdown();
+}, 15_000);
+
+test("structural analysis reuses content-addressed syntax and invalidates changed files", async () => {
+  const root = await fixture({
+    "src/target.ts": "export function selected(){ return 1; }\n",
+    "test/target.test.ts":
+      "import { selected } from '../src/target.js';\ntest('selected', () => selected());\n",
+  });
+  const search = service();
+  await search.search({ mode: "impact", path: "src/target.ts", symbol: "selected" }, root);
+  const warm = await search.search(
+    { mode: "impact", path: "src/target.ts", symbol: "selected" },
+    root,
+  );
+  expect(warm.details.analysis?.stats?.filesParsed).toBe(0);
+  expect(warm.details.analysis?.stats?.cacheHits).toBeGreaterThan(0);
+
+  await writeFile(join(root, "src/target.ts"), "export function selected(){ return 2; }\n");
+  const changed = await search.search(
+    { mode: "impact", path: "src/target.ts", symbol: "selected" },
+    root,
+  );
+  expect(changed.details.analysis?.stats?.filesParsed).toBeGreaterThan(0);
+  await search.shutdown();
+}, 10_000);
+
+test("structural parse limits are explicit, configurable and strictly validated", async () => {
+  const root = await fixture({ "a.ts": "export function a(){ return 1; }\n" });
+  const search = service();
+  await expectFailure(
+    search.search({ mode: "outline", path: "a.ts", maxFilesToParse: 0 }, root),
+    "1 through 2000",
+  );
+  await expectFailure(
+    search.search({ mode: "outline", path: "a.ts", maxFilesToParse: 2_001 }, root),
+    "1 through 2000",
+  );
+  await expectFailure(
+    search.search({ mode: "outline", path: "a.ts", maxFilesToParse: 1.5 }, root),
+    "integer",
+  );
+  const valid = await search.search({ mode: "outline", path: "a.ts", maxFilesToParse: 1 }, root);
+  expect(valid.details.analysis?.totalItems).toBe(1);
+  await search.shutdown();
+});

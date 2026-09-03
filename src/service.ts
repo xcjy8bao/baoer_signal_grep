@@ -8,6 +8,7 @@ import { formatMatchPage, MatchPageSoftLimitError, type MatchPageOptions } from 
 import { formatSummary } from "./summary.js";
 import { summarySourcePreviews } from "./summary-previews.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
+import { redactSignalGrepResult } from "./redaction.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
 import { SearchPathPolicy } from "./path-policy.js";
@@ -20,6 +21,7 @@ import {
   type InspectTarget,
   type SearchMode,
   type SearchSnapshot,
+  type SearchScopeDetails,
   type SignalGrepDetails,
   type SignalGrepResult,
 } from "./types.js";
@@ -39,6 +41,7 @@ export interface SignalGrepInput extends RawSearchInput {
   roles?: SyntaxRoleName[];
   changes?: GitChangeRequest;
   symbol?: string;
+  maxFilesToParse?: number;
 }
 
 export interface SignalGrepServiceOptions {
@@ -106,9 +109,46 @@ function baseDetails(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepDeta
     totalFiles: snapshot.fileCounts.size,
     returnedMatches: 0,
     snapshotComplete: snapshot.snapshotComplete,
+    scope: searchScope(snapshot.request),
+    ...(snapshot.request.redact ? { redactionRequested: true } : {}),
     ...(snapshot.truncatedLines > 0 ? { lineContentTruncated: snapshot.truncatedLines } : {}),
     ...(sourceUnverifiedFileCount > 0 ? { sourceUnverifiedFileCount } : {}),
   };
+}
+
+function searchScope(request: SearchSnapshot["request"]): SearchScopeDetails {
+  const path = request.path ?? ".";
+  const requestedPath = request.expandedFromPath ?? path;
+  return {
+    path,
+    requestedPath,
+    glob: [...request.glob],
+    exclude: [...request.exclude],
+    hidden: request.hidden,
+    expandedToProjectRoot: request.expandedFromPath !== undefined,
+    assertion: path === "." ? "project-wide" : "requested-scope",
+  };
+}
+
+function emptyResultText(scope: SearchScopeDetails): string {
+  const filters =
+    scope.glob.length || scope.exclude.length || !scope.hidden
+      ? " Include/exclude and hidden-file filters were applied."
+      : "";
+  const expansion = scope.expandedToProjectRoot
+    ? ` after the requested path ${JSON.stringify(scope.requestedPath)} also returned no matches`
+    : "";
+  const range = scope.assertion === "project-wide" ? "project root" : "requested path";
+  return `No matches found anywhere in ${range} ${JSON.stringify(scope.path)}${expansion}.${filters}`;
+}
+
+function scopeExpansionNote(scope: SearchScopeDetails | undefined, totalMatches: number): string {
+  if (!scope?.expandedToProjectRoot) return "";
+  const outcome =
+    totalMatches > 0
+      ? "returned project-wide matches"
+      : "the project root was also searched and had no matches";
+  return `\n\n[Scope expanded: requested path ${JSON.stringify(scope.requestedPath)} had no matches; ${outcome} from ${JSON.stringify(scope.path)}.]`;
 }
 
 function completenessNote(snapshot: SearchSnapshot): string {
@@ -172,8 +212,9 @@ function rejectCursorOnlyOptions(input: SignalGrepInput): void {
   if (input.matchIndices !== undefined) ignored.push("matchIndices");
   if (input.targets !== undefined) ignored.push("targets");
   if (ignored.length > 0) {
-    throw new SignalGrepError(
+    throw new CursorError(
       `The following options cannot be used with cursor: ${ignored.join(", ")}`,
+      "E_CURSOR_OPTIONS_CONFLICT",
     );
   }
 }
@@ -206,7 +247,10 @@ export class SignalGrepService {
     const request = this.#search(input, cwd, combined, options);
     this.#active.add(request);
     try {
-      return await request;
+      const result = await request;
+      return input.redact || result.details.redactionRequested
+        ? redactSignalGrepResult(result)
+        : result;
     } finally {
       this.#active.delete(request);
     }
@@ -227,6 +271,9 @@ export class SignalGrepService {
     const mode = input.mode ?? "auto";
     const contextBudget = selectContextBudget(input, mode, options.contextBudget);
     if (isEvidenceRequest(input)) return this.#evidence.search(input, cwd, signal);
+    if (input.maxFilesToParse !== undefined) {
+      throw new SignalGrepError("maxFilesToParse is only valid for structural analysis requests");
+    }
     if (input.cursor) return this.#continue(input, cwd, signal);
     if (input.paths !== undefined) {
       throw new SignalGrepError("paths can only select retained files from a cursor");
@@ -240,15 +287,24 @@ export class SignalGrepService {
     if (input.line !== undefined) throw new SignalGrepError("line requires mode=inspect");
 
     const request = normalizeRequest(input);
-    const scan = await this.#runRipgrep(request, cwd, signal);
+    let scan = await this.#runRipgrep(request, cwd, signal);
+    if (scan.totalMatches === 0 && request.path !== undefined) {
+      const { path: requestedPath, ...projectRequest } = request;
+      scan = await this.#runRipgrep(
+        { ...projectRequest, expandedFromPath: requestedPath },
+        cwd,
+        signal,
+      );
+    }
     const snapshot = this.#snapshots.create(scan);
     try {
       let result: SignalGrepResult;
 
       if (snapshot.totalMatches === 0) {
+        const details = baseDetails(snapshot, mode);
         result = {
-          text: "No matches found (complete).",
-          details: baseDetails(snapshot, mode),
+          text: emptyResultText(details.scope ?? searchScope(snapshot.request)),
+          details,
         };
       } else if (mode === "summary") {
         result = await this.#summary(snapshot, mode, cwd, signal);
@@ -270,6 +326,10 @@ export class SignalGrepService {
         }
       }
 
+      result = {
+        ...result,
+        text: `${result.text}${scopeExpansionNote(result.details.scope, result.details.totalMatches)}`,
+      };
       const budgetedResult = attachContextBudget(result, contextBudget, snapshot.totalMatches);
       return this.#finalize(snapshot, budgetedResult);
     } catch (error) {
@@ -307,15 +367,18 @@ export class SignalGrepService {
   ): Promise<SignalGrepResult> {
     const cursor = input.cursor;
     if (!cursor) throw new CursorError("A cursor is required to continue a search");
-    rejectCursorOnlyOptions(input);
     const { snapshot, offset, kind, selectionKey } = this.#snapshots.resolve(cursor);
+    rejectCursorOnlyOptions(input);
     const mode = input.mode ?? "auto";
     if (mode === "summary") {
       if (input.path !== undefined || input.paths !== undefined) {
         throw new SignalGrepError("path and paths are not valid while paging a file summary");
       }
       if (kind !== "summary") {
-        throw new CursorError("A summary cursor is required to continue a file summary.");
+        throw new CursorError(
+          "A summary cursor is required to continue a file summary.",
+          "E_CURSOR_WRONG_KIND",
+        );
       }
       if (offset >= snapshot.fileCounts.size) {
         throw new CursorError("Cursor is already at the end of the file summary.");
@@ -326,7 +389,10 @@ export class SignalGrepService {
     const selection = cursorPathSelection(input, cwd);
     const requestedSelectionKey = selection?.key ?? "all";
     if (kind === "matches" && selectionKey !== requestedSelectionKey) {
-      throw new CursorError("A match cursor must continue with the same path selection.");
+      throw new CursorError(
+        "A match cursor must continue with the same path selection.",
+        "E_CURSOR_OPTIONS_CONFLICT",
+      );
     }
     const pageOffset = kind === "summary" ? 0 : offset;
     const result = await this.#page(snapshot, pageOffset, "matches", signal, selection);
@@ -387,15 +453,21 @@ export class SignalGrepService {
       ? `\n\nSamples: bounded source windows; not relevance-ranked or exhaustive.\n${sampleText}`
       : "";
     const sampleOmissions = `\n[Preview limits: at most 5 source files, 2 non-overlapping windows/file, 7 lines/window. File rows and navigation take priority; shown ${preview.text ? preview.windows : summary.previewsShown} previews.]${preview.reasons.length ? `\n[${preview.reasons.map((reason) => reason.slice(0, 200)).join("; ")}]` : ""}`;
+    const redaction = snapshot.request.redact ? { redact: true } : {};
     const nextRequest =
-      cursor && summary.hasNext ? { cursor, mode: "summary" as const } : undefined;
+      cursor && summary.hasNext ? { cursor, mode: "summary" as const, ...redaction } : undefined;
     const inspectRequest =
       cursor && indices.length
-        ? { mode: "inspect" as const, cursor, matchIndices: indices.slice(0, MAX_INSPECT_TARGETS) }
+        ? {
+            mode: "inspect" as const,
+            cursor,
+            matchIndices: indices.slice(0, MAX_INSPECT_TARGETS),
+            ...redaction,
+          }
         : undefined;
     const matchesRequest =
       cursor && summary.shownPaths.length
-        ? { cursor, paths: summary.shownPaths.slice(0, 1) }
+        ? { cursor, paths: summary.shownPaths.slice(0, 1), ...redaction }
         : undefined;
     const followUp = cursor
       ? `\n\nSnapshot cursor="${cursor}".${inspectRequest ? `\nInspect samples: ${JSON.stringify(inspectRequest)}` : ""}${matchesRequest ? `\nRetrieve matching lines: ${JSON.stringify(matchesRequest)}` : ""}${nextRequest ? `\nNext request: ${JSON.stringify(nextRequest)}` : ""}`
@@ -494,7 +566,7 @@ export class SignalGrepService {
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
     const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor
-      ? `\n\nContinue with cursor="${cursor}".\nNext request: ${JSON.stringify({ cursor, ...(selectedPaths ? { paths: selectedPaths } : {}) })}`
+      ? `\n\nContinue with cursor="${cursor}".\nNext request: ${JSON.stringify({ cursor, ...(selectedPaths ? { paths: selectedPaths } : {}), ...(snapshot.request.redact ? { redact: true } : {}) })}`
       : "";
     const missingSelectionNote =
       selectionMissingPaths.length > 0
@@ -530,7 +602,13 @@ export class SignalGrepService {
           : {}),
         ...(cursor ? { cursor } : {}),
         ...(cursor
-          ? { nextRequest: { cursor, ...(selectedPaths ? { paths: selectedPaths } : {}) } }
+          ? {
+              nextRequest: {
+                cursor,
+                ...(selectedPaths ? { paths: selectedPaths } : {}),
+                ...(snapshot.request.redact ? { redact: true } : {}),
+              },
+            }
           : {}),
         ...(selectedPaths ? { selectedPaths } : {}),
         ...(selectionMissingPaths.length > 0 ? { selectionMissingPaths } : {}),

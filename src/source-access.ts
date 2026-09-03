@@ -1,5 +1,10 @@
-import { resolve } from "node:path";
-import { MAX_STRUCTURE_BYTES, MAX_STRUCTURE_FILES } from "./analysis-limits.js";
+import { extname, resolve } from "node:path";
+import {
+  MAX_STRUCTURE_BYTES,
+  MAX_STRUCTURE_FILES,
+  MAX_SYNTAX_CACHE_ENTRIES,
+  MAX_SYNTAX_CACHE_NODES,
+} from "./analysis-limits.js";
 import { abortError, SignalGrepError } from "./errors.js";
 import { readGitSource } from "./git-source.js";
 import {
@@ -13,12 +18,31 @@ import { getSourceRevision } from "./source.js";
 
 function noop(): void {}
 
-/** One owner across concurrent tool calls; no parser or AST survives its request. */
+interface CachedSyntax {
+  analysis: SyntaxAnalysis;
+  nodes: number;
+}
+
+interface SyntaxParseResult {
+  analysis: SyntaxAnalysis;
+  cacheHit: boolean;
+}
+
+/** One parser owner across calls, with a bounded content-addressed syntax cache. */
 export class SyntaxQueue {
   #tail: Promise<void> = Promise.resolve();
   #generation = new AbortController();
+  readonly #cache = new Map<string, CachedSyntax>();
+  #cachedNodes = 0;
 
   async parse(document: SourceDocument, signal?: AbortSignal): Promise<SyntaxAnalysis> {
+    return (await this.parseWithMetrics(document, signal)).analysis;
+  }
+
+  async parseWithMetrics(
+    document: SourceDocument,
+    signal?: AbortSignal,
+  ): Promise<SyntaxParseResult> {
     const combined = signal
       ? AbortSignal.any([signal, this.#generation.signal])
       : this.#generation.signal;
@@ -33,7 +57,29 @@ export class SyntaxQueue {
       if (combined.aborted) throw abortError();
       if (!document.utf8)
         throw new SourceDocumentError("encoding", "Syntax requires lossless UTF-8 source");
-      return await parseSyntax(document.path, document.text, combined);
+      const origin = document.reference.origin;
+      const revision = origin.kind === "worktree" ? origin.contentHash : origin.blob;
+      const key = `${extname(document.path).toLowerCase()}\0${revision}`;
+      const cached = this.#cache.get(key);
+      if (cached) {
+        this.#cache.delete(key);
+        this.#cache.set(key, cached);
+        return { analysis: cached.analysis, cacheHit: true };
+      }
+      const analysis = await parseSyntax(document.path, document.text, combined);
+      const entry = { analysis, nodes: analysis.nodes.length };
+      this.#cache.set(key, entry);
+      this.#cachedNodes += entry.nodes;
+      while (
+        this.#cache.size > MAX_SYNTAX_CACHE_ENTRIES ||
+        this.#cachedNodes > MAX_SYNTAX_CACHE_NODES
+      ) {
+        const oldest = this.#cache.entries().next().value;
+        if (!oldest) break;
+        this.#cache.delete(oldest[0]);
+        this.#cachedNodes -= oldest[1].nodes;
+      }
+      return { analysis, cacheHit: false };
     } finally {
       release();
     }
@@ -42,6 +88,8 @@ export class SyntaxQueue {
   clear(): void {
     this.#generation.abort();
     this.#generation = new AbortController();
+    this.#cache.clear();
+    this.#cachedNodes = 0;
   }
 
   async shutdown(): Promise<void> {
@@ -59,15 +107,24 @@ export class SourceAccess {
   readonly cwd: string;
   readonly signal: AbortSignal | undefined;
   readonly #queue: SyntaxQueue;
+  readonly #maxFiles: number;
   readonly #documents = new Map<string, Promise<SourceDocument>>();
   readonly #syntax = new Map<SourceDocument, Promise<SyntaxAnalysis>>();
   #bytes = 0;
+  #syntaxParses = 0;
+  #syntaxCacheHits = 0;
   #readTail: Promise<void> = Promise.resolve();
 
-  constructor(cwd: string, queue: SyntaxQueue, signal?: AbortSignal) {
+  constructor(
+    cwd: string,
+    queue: SyntaxQueue,
+    signal?: AbortSignal,
+    options: { maxFiles?: number } = {},
+  ) {
     this.cwd = cwd;
     this.#queue = queue;
     this.signal = signal;
+    this.#maxFiles = options.maxFiles ?? MAX_STRUCTURE_FILES;
   }
 
   get filesRead(): number {
@@ -75,6 +132,15 @@ export class SourceAccess {
   }
   get bytesRead(): number {
     return this.#bytes;
+  }
+  get maxFiles(): number {
+    return this.#maxFiles;
+  }
+  get syntaxParses(): number {
+    return this.#syntaxParses;
+  }
+  get syntaxCacheHits(): number {
+    return this.#syntaxCacheHits;
   }
 
   async load(path: string, expected?: SourceReference): Promise<SourceDocument> {
@@ -85,8 +151,10 @@ export class SourceAccess {
     const key = JSON.stringify([resolve(this.cwd, path), expected?.origin]);
     const existing = this.#documents.get(key);
     if (existing) return existing;
-    if (this.#documents.size >= MAX_STRUCTURE_FILES) {
-      throw new SourceBudgetError("Structural scan reached the 200-file limit");
+    if (this.#documents.size >= this.#maxFiles) {
+      throw new SourceBudgetError(
+        `Structural scan reached the ${String(this.#maxFiles)}-file limit`,
+      );
     }
     const pending = this.#read(path, expected);
     this.#documents.set(key, pending);
@@ -152,7 +220,11 @@ export class SourceAccess {
   syntax(document: SourceDocument): Promise<SyntaxAnalysis> {
     let pending = this.#syntax.get(document);
     if (!pending) {
-      pending = this.#queue.parse(document, this.signal);
+      pending = this.#queue.parseWithMetrics(document, this.signal).then((parsed) => {
+        if (parsed.cacheHit) this.#syntaxCacheHits += 1;
+        else this.#syntaxParses += 1;
+        return parsed.analysis;
+      });
       this.#syntax.set(document, pending);
     }
     return pending;

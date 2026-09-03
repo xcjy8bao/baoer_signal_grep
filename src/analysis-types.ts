@@ -1,5 +1,8 @@
 import type { ByteRange, SourceReference } from "./source-document.js";
 import type { SignalGrepInput } from "./service.js";
+import type { SearchScopeDetails } from "./types.js";
+
+export type CoverageStatus = "complete" | "partial" | "skipped" | "not-applicable";
 
 export interface AnalysisItem {
   path: string;
@@ -40,6 +43,22 @@ export interface AnalysisDetails {
   counts?: Record<string, number>;
   termCounts?: { term: string; retainedOccurrences: number }[];
   changes?: { base: string; target: string; scope: string; side: string };
+  scope?: SearchScopeDetails;
+  chunks?: {
+    chunked: boolean;
+    count: number;
+    maxTermsPerChunk: number;
+    execution: "single" | "bounded-parallel";
+  };
+  coverage?: Record<string, CoverageStatus>;
+  stats?: {
+    filesEnumerated?: number;
+    filesParsed?: number;
+    filesSkipped?: number;
+    cacheHits?: number;
+    parseMs?: number;
+    budgetExhausted?: boolean;
+  };
 }
 
 export interface AnalysisResultSet {
@@ -53,4 +72,9 @@ export interface AnalysisResultSet {
   counts?: Record<string, number>;
   termCounts?: { term: string; retainedOccurrences: number }[];
   changes?: AnalysisDetails["changes"];
+  scope?: SearchScopeDetails;
+  chunks?: AnalysisDetails["chunks"];
+  coverage?: Record<string, CoverageStatus>;
+  stats?: AnalysisDetails["stats"];
+  redact?: boolean;
 }

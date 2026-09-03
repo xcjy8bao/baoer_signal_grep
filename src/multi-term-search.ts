@@ -1,6 +1,7 @@
 import {
   ANALYSIS_METADATA_RESERVE_BYTES,
   MAX_ANY_OF_TERMS,
+  MAX_ANY_OF_TOTAL_TERMS,
   MAX_ANALYSIS_RESULTS,
   MAX_ANALYSIS_STORAGE_BYTES,
   MAX_LITERAL_TERM_BYTES,
@@ -17,7 +18,7 @@ export function validateAnyOf(value: string[] | undefined): string[] | undefined
   if (
     !Array.isArray(value) ||
     value.length < MIN_ANY_OF_TERMS ||
-    value.length > MAX_ANY_OF_TERMS ||
+    value.length > MAX_ANY_OF_TOTAL_TERMS ||
     value.some(
       (term) =>
         typeof term !== "string" ||
@@ -29,7 +30,7 @@ export function validateAnyOf(value: string[] | undefined): string[] | undefined
     new Set(value).size !== value.length
   ) {
     throw new SignalGrepError(
-      `anyOf requires ${String(MIN_ANY_OF_TERMS)}–${String(MAX_ANY_OF_TERMS)} distinct, nonempty, well-formed, single-line literal terms of at most ${String(MAX_LITERAL_TERM_BYTES)} UTF-8 bytes`,
+      `anyOf requires ${String(MIN_ANY_OF_TERMS)}–${String(MAX_ANY_OF_TOTAL_TERMS)} distinct, nonempty, well-formed, single-line literal terms of at most ${String(MAX_LITERAL_TERM_BYTES)} UTF-8 bytes; requests above ${String(MAX_ANY_OF_TERMS)} terms are safely chunked`,
     );
   }
   return value;
