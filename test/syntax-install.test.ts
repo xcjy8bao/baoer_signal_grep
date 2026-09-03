@@ -96,7 +96,7 @@ const fixtures = [
 
 describe("production parser assets", () => {
   test("Node runs all four grammars with only the actual installed production packages", async () => {
-    expect(await readdir(join(isolated, "node_modules"))).toEqual([
+    expect((await readdir(join(isolated, "node_modules"))).toSorted()).toEqual([
       "@ast-grep",
       "pi-plugin-signal-grep",
     ]);
