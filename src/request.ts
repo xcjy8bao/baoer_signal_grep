@@ -16,6 +16,7 @@ export interface RawSearchInput {
   hidden?: boolean;
   context?: number;
   limit?: number;
+  redact?: boolean;
 }
 
 function list(value: string | string[] | undefined): string[] {
@@ -31,8 +32,12 @@ function boundedInteger(
   field: string,
 ): number {
   const candidate = value ?? fallback;
-  if (!Number.isFinite(candidate)) throw new SignalGrepError(`${field} must be finite`);
-  return Math.min(maximum, Math.max(minimum, Math.floor(candidate)));
+  if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) {
+    throw new SignalGrepError(
+      `${field} must be an integer from ${String(minimum)} through ${String(maximum)}`,
+    );
+  }
+  return candidate;
 }
 
 export function normalizeRequest(input: RawSearchInput): SearchRequest {
@@ -52,5 +57,6 @@ export function normalizeRequest(input: RawSearchInput): SearchRequest {
     hidden: input.hidden ?? true,
     context: boundedInteger(input.context, 0, 0, MAX_CONTEXT_LINES, "context"),
     pageSize: boundedInteger(input.limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, "limit"),
+    redact: input.redact ?? false,
   };
 }

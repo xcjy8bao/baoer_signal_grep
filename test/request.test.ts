@@ -12,18 +12,19 @@ describe("normalizeRequest", () => {
       hidden: true,
       context: 0,
       pageSize: 100,
+      redact: false,
     });
   });
 
-  test("normalizes @ paths and numeric bounds without changing search text", () => {
+  test("normalizes @ paths without changing search text", () => {
     expect(
       normalizeRequest({
         pattern: " TODO ",
         path: "@src",
         glob: ["*.ts", ""],
         exclude: "node_modules/**",
-        context: 99,
-        limit: 999,
+        context: 20,
+        limit: 100,
       }),
     ).toMatchObject({
       pattern: " TODO ",
@@ -33,6 +34,19 @@ describe("normalizeRequest", () => {
       context: 20,
       pageSize: 100,
     });
+  });
+
+  test("rejects numeric values outside the public integer contract", () => {
+    for (const input of [
+      { pattern: "TODO", context: 21 },
+      { pattern: "TODO", context: -1 },
+      { pattern: "TODO", context: 1.5 },
+      { pattern: "TODO", limit: 101 },
+      { pattern: "TODO", limit: 0 },
+      { pattern: "TODO", limit: Number.NaN },
+    ]) {
+      expect(() => normalizeRequest(input)).toThrow(SignalGrepError);
+    }
   });
 
   test("preserves empty and whitespace-only patterns because ripgrep treats them as valid", () => {

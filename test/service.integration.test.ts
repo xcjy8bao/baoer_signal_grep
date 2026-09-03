@@ -130,7 +130,7 @@ describe("SignalGrepService with ripgrep", () => {
       failure = error;
     }
     expect(failure).toMatchObject({
-      message: "The following options cannot be used with cursor: limit",
+      message: "E_CURSOR_OPTIONS_CONFLICT: The following options cannot be used with cursor: limit",
     });
   });
 

@@ -35,6 +35,7 @@ export interface EvidenceCandidateOptions {
   signal?: AbortSignal;
   access: { load(path: string, expected?: SourceReference): Promise<SourceDocument> };
   runRipgrep: RipgrepRunner;
+  maxFiles?: number;
 }
 
 export interface EvidenceCandidates {
@@ -195,6 +196,7 @@ async function ordinaryCandidates(options: EvidenceCandidateOptions): Promise<Ev
   let filesRead = 0;
   let bytesRead = 0;
   let retained = 0;
+  const maxFiles = options.maxFiles ?? MAX_STRUCTURE_FILES;
   for (const [absolute, matches] of grouped) {
     if (options.signal?.aborted) throw abortError();
     const revision = scan.sourceRevisions.get(absolute);
@@ -202,8 +204,8 @@ async function ordinaryCandidates(options: EvidenceCandidateOptions): Promise<Ev
       reasons.add("Some matching files lack a verified search revision");
       continue;
     }
-    if (filesRead >= MAX_STRUCTURE_FILES || bytesRead + revision.size > MAX_STRUCTURE_BYTES) {
-      reasons.add("Candidate analysis reached the 200-file / 32 MiB source limit");
+    if (filesRead >= maxFiles || bytesRead + revision.size > MAX_STRUCTURE_BYTES) {
+      reasons.add(`Candidate analysis reached the ${String(maxFiles)}-file / 32 MiB source limit`);
       continue;
     }
     filesRead += 1;

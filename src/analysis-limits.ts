@@ -1,6 +1,9 @@
 /** Shared limits for source analysis, independent of retained grep matches. */
 export const MAX_STRUCTURE_FILES = 200;
+export const MAX_CONFIGURABLE_STRUCTURE_FILES = 2_000;
 export const MAX_STRUCTURE_BYTES = 32 * 1024 * 1024;
+export const MAX_SYNTAX_CACHE_ENTRIES = 256;
+export const MAX_SYNTAX_CACHE_NODES = 1_000_000;
 export const MAX_GIT_DIFF_WORK = 2_000_000;
 export const MAX_SYNTAX_NODES = 100_000;
 export const MAX_PARSE_TIME_MS = 5_000;
@@ -12,6 +15,8 @@ export const MAX_ANALYSIS_REASONS = 64;
 export const MAX_ANALYSIS_REASON_BYTES = 4 * 1024;
 export const MIN_ANY_OF_TERMS = 2;
 export const MAX_ANY_OF_TERMS = 8;
+/** Public union size; execution keeps the proven eight-term scan boundary per chunk. */
+export const MAX_ANY_OF_TOTAL_TERMS = 64;
 export const MAX_LITERAL_TERM_BYTES = 256;
 export const ANALYSIS_TTL_MS = 10 * 60 * 1000;
 export const MAX_SOURCE_CONTINUATIONS = 20;

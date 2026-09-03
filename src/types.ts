@@ -143,6 +143,7 @@ export interface InspectBatchItemDetails {
 export interface SearchRequest {
   pattern: string;
   path?: string;
+  expandedFromPath?: string;
   glob: string[];
   exclude: string[];
   literal: boolean;
@@ -150,6 +151,17 @@ export interface SearchRequest {
   hidden: boolean;
   context: number;
   pageSize: number;
+  redact?: boolean;
+}
+
+export interface SearchScopeDetails {
+  path: string;
+  requestedPath: string;
+  glob: string[];
+  exclude: string[];
+  hidden: boolean;
+  expandedToProjectRoot: boolean;
+  assertion: "requested-scope" | "project-wide";
 }
 
 export interface MatchRecord {
@@ -209,6 +221,10 @@ export interface SignalGrepDetails {
   structure?: StructureDetails;
   source?: SourceExcerptDetails;
   inspections?: InspectBatchItemDetails[];
+  scope?: SearchScopeDetails;
+  redactedCount?: number;
+  redactionRequested?: boolean;
+  redactionApplied?: boolean;
 }
 
 export interface SignalGrepResult {

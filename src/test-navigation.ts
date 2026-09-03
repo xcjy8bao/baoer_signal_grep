@@ -45,6 +45,15 @@ interface UseEvidence {
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/i;
 const TEST_FILENAME =
   /(?:^|\/)(?:__tests__|tests?)(?:\/|$)|(?:^|\/)[^/]+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/i;
+export const TEST_DISCOVERY_PATTERN = String.raw`\b(?:describe|it|test)\s*\(|\b(?:from\s*|require\s*\(\s*)["'](?:node:test|bun:test|vitest|@jest/globals)["']`;
+
+export function isLikelyTestPath(path: string): boolean {
+  return TEST_FILENAME.test(path);
+}
+
+export interface TestNavigationOptions {
+  entryPaths?: readonly string[];
+}
 
 function basenameStem(path: string): string {
   return posix
@@ -279,7 +288,9 @@ function relationDetails(facts: ModuleFacts, relation: Relation): Record<string,
 export async function findRelatedTests(
   host: NavigationHost,
   input: NavigationInput,
+  options: TestNavigationOptions = {},
 ): Promise<NavigationResult> {
+  const started = performance.now();
   if (input.line !== undefined && (!Number.isSafeInteger(input.line) || input.line < 1))
     throw new SignalGrepError("Test target line must be a positive integer");
   if (input.symbol !== undefined && input.symbol.trim().length === 0)
@@ -300,9 +311,20 @@ export async function findRelatedTests(
   } finally {
     context.release(target);
   }
-  const files = [...(await context.files())]
+  const allFiles = [...(await context.files())];
+  const selectedEntries = options.entryPaths
+    ? new Set(options.entryPaths.map((path) => context.normalizePath(path)))
+    : undefined;
+  const targetPath = context.normalizePath(target.document.path);
+  const eligibleEntries = allFiles.filter(
+    (path) => path !== targetPath && SOURCE_EXTENSION.test(path),
+  );
+  const files = allFiles
     .filter(
-      (path) => path !== context.normalizePath(target.document.path) && SOURCE_EXTENSION.test(path),
+      (path) =>
+        path !== targetPath &&
+        SOURCE_EXTENSION.test(path) &&
+        (!selectedEntries || selectedEntries.has(path)),
     )
     .toSorted(
       (a, b) => Number(TEST_FILENAME.test(b)) - Number(TEST_FILENAME.test(a)) || a.localeCompare(b),
@@ -332,7 +354,7 @@ export async function findRelatedTests(
     context.checkAbort();
     let facts;
     try {
-      // oxlint-disable-next-line no-await-in-loop -- the 200-file / 32 MiB limits apply before each file.
+      // oxlint-disable-next-line no-await-in-loop -- the configured file and 32 MiB limits apply before each file.
       facts = await context.module(path, true);
     } catch (error) {
       const reason = navigationError(error);
@@ -510,6 +532,12 @@ export async function findRelatedTests(
       testCases: items.filter((item) => item.details.kind === "test-case").length,
       useSites: items.filter((item) => item.details.kind === "test-use").length,
       moduleRelations: items.filter((item) => item.details.kind === "test-relation").length,
+    },
+    stats: {
+      filesParsed: context.modules.size,
+      filesSkipped: Math.max(0, eligibleEntries.length - files.length),
+      parseMs: Math.round(performance.now() - started),
+      budgetExhausted: [...context.reasons].some((reason) => reason.includes("budget-exhausted")),
     },
   };
 }

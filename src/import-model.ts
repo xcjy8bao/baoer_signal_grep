@@ -18,6 +18,7 @@ export interface NavigationHost {
   syntax(document: SourceDocument): Promise<SyntaxAnalysis>;
   releaseSyntax?(document: SourceDocument): void;
   listFiles(): Promise<string[] | { paths: string[]; partial: boolean; reasons: string[] }>;
+  maxFilesToParse?: number;
 }
 
 export interface NavigationInput {
@@ -41,6 +42,12 @@ export interface NavigationResult {
   filesRead: number;
   bytesRead: number;
   counts?: Record<string, number>;
+  stats?: {
+    filesParsed: number;
+    filesSkipped: number;
+    parseMs: number;
+    budgetExhausted: boolean;
+  };
 }
 
 export interface ImportBinding {
@@ -455,7 +462,7 @@ export class NavigationContext {
   #fileLimit: number;
   #failures = new Map<string, string>();
   #attempted = new Set<string>();
-  constructor(host: NavigationHost, fileLimit = MAX_STRUCTURE_FILES) {
+  constructor(host: NavigationHost, fileLimit = host.maxFilesToParse ?? MAX_STRUCTURE_FILES) {
     this.host = host;
     this.#fileLimit = fileLimit;
   }
