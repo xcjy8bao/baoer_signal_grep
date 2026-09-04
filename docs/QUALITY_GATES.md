@@ -143,4 +143,4 @@ Required checks and pull-request rules are configured on `main` and apply to adm
 
 ## Publication boundary
 
-The manual publication workflow validates a release tag against the current `main` commit and package metadata, reruns the quality/package gates, and publishes with npm provenance from GitHub Actions. Publication remains a separately authorized action; local validation is not permission to publish.
+Publishing a GitHub Release automatically runs the npm publication workflow. The workflow validates the release tag against the current `main` commit and package metadata, reruns the quality/package gates, and publishes through the package's OIDC Trusted Publisher with npm provenance. Publishing the GitHub Release is the explicit publication boundary; local validation alone is not permission to publish.
