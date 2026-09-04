@@ -1,12 +1,8 @@
 name: Publish npm release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Reviewed release tag at the current main commit (for example v0.5.6)"
-        required: true
-        type: string
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -17,7 +13,6 @@ concurrency:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -30,7 +25,7 @@ jobs:
           persist-credentials: false
       - name: Verify reviewed tag and package identity
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           node --input-type=module <<'NODE'
           import { execFileSync } from 'node:child_process';
