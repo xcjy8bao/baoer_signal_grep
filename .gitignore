@@ -1,6 +1,6 @@
 node_modules/
 coverage/
-.signal-grep-node-smoke/
+.baoer_signal_grep-node-smoke/
 *.tgz
 .DS_Store
 .env

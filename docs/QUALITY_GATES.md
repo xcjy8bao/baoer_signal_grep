@@ -1,6 +1,6 @@
 # Quality Gates
 
-Signal Grep separates formatting, linting, type checking, behavioral testing, and repository policy. Each gate has one responsibility; no tool duplicates another tool's authority.
+baoer_signal_grep separates formatting, linting, type checking, behavioral testing, and repository policy. Each gate has one responsibility; no tool duplicates another tool's authority.
 
 ## Local command
 
@@ -27,7 +27,7 @@ Node does not execute TypeScript files located inside an installed `node_modules
 bun run check:mcp
 ```
 
-`check:mcp` rebuilds the Node-compatible remote MCP server in a temporary directory and compares it byte-for-byte with the checked-in `src/mcp-server.mjs` artifact. Run `bun run build:mcp` only when the source entrypoint changes.
+`check:mcp` rebuilds the Node-compatible MCP executable in a temporary directory and compares it byte-for-byte with the checked-in `src/mcp-server.mjs` artifact. The artifact contains both HTTP and stdio entry modes. Run `bun run build:mcp` only when the source entrypoint changes.
 
 ## Oxfmt: deterministic code style
 
@@ -104,6 +104,8 @@ Bun 1.4 is the primary test runner. Tests cover pure boundaries and real ripgrep
 - candidate-prefiltered 600-file impact performance, content-hash syntax cache hits/invalidation,
   configurable parse bounds, analysis retention prioritization, stable impact test identity, bounded
   high-cardinality diagnostics, Git capability fallback, and post-scan cancellation checks.
+- MCP CLI transport selection plus stdio end-of-input, idempotent close, transport failure, and
+  cleanup-failure behavior.
 
 Controlled process wrappers make the scan-mutation timing deterministic and invoke real ripgrep; these executable-script fixtures run on POSIX. Portable process lifecycle tests and the remaining real-ripgrep matrix also run on Windows. Every asynchronous/process test needs a completion condition and an explicit timeout. Missing optional Ctags must not turn ordinary search into a failure.
 
@@ -113,7 +115,7 @@ Controlled process wrappers make the scan-mutation timing deterministic and invo
 bun run test:node
 ```
 
-The smoke test builds a temporary Node-targeted extension bundle and imports it with the configured Node.js executable. It also starts the checked-in `src/mcp-server.mjs` artifact with Node, initializes a real Streamable HTTP session, verifies the advertised release version, searches a temporary fixture through `signal_grep`, and exercises graceful signal shutdown on POSIX (Windows signal termination is only required to reap the child process). Temporary output is removed afterward. This verifies that Bun-first development does not introduce Bun-only runtime behavior into either published entrypoint.
+The smoke test builds a temporary Node-targeted extension bundle and imports it with the configured Node.js executable. It then exercises the checked-in `src/mcp-server.mjs` artifact through both public transports. The HTTP path initializes a real Streamable HTTP session, verifies the advertised release version, searches a temporary fixture through `baoer_signal_grep`, and exercises graceful signal shutdown on POSIX (Windows signal termination is only required to reap the child process). The stdio path launches the artifact as a real MCP child, verifies the same version, instructions, sole tool name, and fixture search, proves that HTTP-only environment values are ignored, checks that diagnostics stay on stderr, and closes through protocol EOF. Temporary output is removed afterward. This verifies that Bun-first development does not introduce Bun-only runtime behavior into either published entrypoint.
 
 ## Context-shape benchmark
 

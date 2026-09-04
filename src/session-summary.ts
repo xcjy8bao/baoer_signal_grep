@@ -2,7 +2,7 @@ import type { SignalGrepLocale } from "./config.js";
 import type { SignalGrepInput } from "./service.js";
 import type { SignalGrepResult } from "./types.js";
 
-export const SESSION_STATUS_KEY = "signal-grep-session";
+export const SESSION_STATUS_KEY = "baoer_signal_grep_session";
 
 export interface SessionSummarySnapshot {
   queries: number;
@@ -48,7 +48,7 @@ export class SessionSummary {
           : `${String(completeQueries)} 次结果完整；${String(partialQueries)} 次仅获得部分结果并已明确标注`;
       const organized =
         organizedQueries > 0 ? `；${String(organizedQueries)} 次结果已自动按文件整理` : "";
-      return `Signal Grep：已处理 ${String(queries)} 次查询，${completeness}${organized}`;
+      return `baoer_signal_grep：已处理 ${String(queries)} 次查询，${completeness}${organized}`;
     }
 
     const completeness =
@@ -59,6 +59,6 @@ export class SessionSummary {
       organizedQueries > 0
         ? `; ${String(organizedQueries)} ${organizedQueries === 1 ? "result" : "results"} automatically organized by file`
         : "";
-    return `Signal Grep: handled ${String(queries)} ${queries === 1 ? "query" : "queries"}; ${completeness}${organized}`;
+    return `baoer_signal_grep: handled ${String(queries)} ${queries === 1 ? "query" : "queries"}; ${completeness}${organized}`;
   }
 }

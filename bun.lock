@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pi-plugin-signal-grep",
+      "name": "baoer_signal_grep",
       "dependencies": {
         "@ast-grep/lang-go": "0.0.6",
         "@ast-grep/napi": "0.45.2",

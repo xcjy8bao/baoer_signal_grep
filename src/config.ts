@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-const CONFIG_FILE = "signal-grep.json";
+const CONFIG_FILE = "baoer_signal_grep.json";
 
 export type SignalGrepLocale = "en" | "zh-CN";
 
@@ -32,11 +32,11 @@ function isRawSignalGrepConfig(value: unknown): value is RawSignalGrepConfig {
 
 function parseConfig(value: unknown, path: string): SignalGrepConfig {
   if (!isRawSignalGrepConfig(value)) {
-    throw new Error(`Invalid Signal Grep config at ${path}: expected a JSON object`);
+    throw new Error(`Invalid baoer_signal_grep config at ${path}: expected a JSON object`);
   }
   const { locale } = value;
   if (locale !== undefined && locale !== "en" && locale !== "zh-CN") {
-    throw new Error(`Invalid Signal Grep config at ${path}: locale must be "en" or "zh-CN"`);
+    throw new Error(`Invalid baoer_signal_grep config at ${path}: locale must be "en" or "zh-CN"`);
   }
   return {
     locale: locale ?? DEFAULT_SIGNAL_GREP_CONFIG.locale,
@@ -55,7 +55,9 @@ export async function readSignalGrepConfig(agentDir = getAgentDir()): Promise<Si
   } catch (error) {
     if (isMissingFile(error)) return { ...DEFAULT_SIGNAL_GREP_CONFIG };
     if (error instanceof SyntaxError) {
-      throw new Error(`Invalid Signal Grep config at ${path}: ${error.message}`, { cause: error });
+      throw new Error(`Invalid baoer_signal_grep config at ${path}: ${error.message}`, {
+        cause: error,
+      });
     }
     throw error;
   }

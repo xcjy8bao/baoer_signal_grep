@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture(files: Record<string, string>): Promise<NavigationHost> {
-  const cwd = await mkdtemp(join(tmpdir(), "signal-grep-tests-"));
+  const cwd = await mkdtemp(join(tmpdir(), "baoer_signal_grep-tests-"));
   roots.push(cwd);
   await Promise.all(
     Object.entries(files).map(async ([path, text]) => {

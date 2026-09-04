@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 async function fixture(): Promise<{ root: string; workspace: string }> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-lifecycle-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-lifecycle-"));
   roots.add(root);
   const workspace = join(root, "workspace");
   await mkdir(workspace);

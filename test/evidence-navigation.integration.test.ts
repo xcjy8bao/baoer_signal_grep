@@ -12,7 +12,7 @@ const roots = new Set<string>();
 const theme = { bold: (text: string) => text, fg: (_color: string, text: string) => text };
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-navigation-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-navigation-"));
   roots.add(root);
   await Promise.all([
     writeFile(

@@ -6,12 +6,14 @@ import { createServer } from "node:http";
 import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
-  name: "pi-plugin-signal-grep",
-  version: "0.7.0",
+  name: "baoer_signal_grep",
+  version: "1.0.0",
   description: "Context-efficient project search and bounded code analysis for Pi and MCP clients",
   keywords: [
     "ai-agent",
+    "claude-code",
     "code-navigation",
+    "codex",
     "context-engineering",
     "grep",
     "mcp",
@@ -22,18 +24,18 @@ var package_default = {
     "search",
     "source-inspection"
   ],
-  homepage: "https://github.com/xcjy8bao/pi-plugin-signal-grep#readme",
+  homepage: "https://github.com/xcjy8bao/baoer_signal_grep#readme",
   bugs: {
-    url: "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
+    url: "https://github.com/xcjy8bao/baoer_signal_grep/issues"
   },
   license: "AGPL-3.0-only",
   author: "宝儿",
   repository: {
     type: "git",
-    url: "git+https://github.com/xcjy8bao/pi-plugin-signal-grep.git"
+    url: "git+https://github.com/xcjy8bao/baoer_signal_grep.git"
   },
   bin: {
-    "signal-grep-mcp": "./src/mcp-server.mjs"
+    baoer_signal_grep_mcp: "./src/mcp-server.mjs"
   },
   files: [
     "src/**/*.ts",
@@ -1924,7 +1926,7 @@ async function filterHistoricalPaths(cwd, paths, request, signal) {
   const bounded = candidates.slice(0, MAX_STRUCTURE_FILES);
   if (bounded.length === 0)
     return { paths: [], partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead: 0 };
-  const root = await mkdtemp(join2(tmpdir(), "signal-grep-paths-"));
+  const root = await mkdtemp(join2(tmpdir(), "baoer_signal_grep-paths-"));
   const absoluteCwd = resolve8(cwd);
   const volumeRoot = parse(absoluteCwd).root;
   const ignoreFiles = [];
@@ -7831,6 +7833,32 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
   }
 }
 
+// src/prompt-guidelines.ts
+function signalGrepPromptGuidelines() {
+  return [
+    `Use baoer_signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
+    `An omitted path searches the project cwd. If an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
+    `For external source navigation, imports/tests/impact use the containing Git repository when detected, otherwise the target file's directory.`,
+    `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
+    `Use the file samples in baoer_signal_grep summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
+    `When source context is missing, use one baoer_signal_grep batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
+    `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
+    `Use anyOf:["term1","term2"] when every exact occurrence of 2-64 literals is needed in one version-bound result. It is case-sensitive, reports retained counts per input term, and runs requests above eight terms as bounded parallel chunks.`,
+    `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
+    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
+    `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Same spelling does not prove binding, and returned tests have not been run.`,
+    `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
+    `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
+  ];
+}
+function signalGrepMcpInstructions() {
+  return [
+    "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
+    ...signalGrepPromptGuidelines()
+  ].join(`
+`);
+}
+
 // src/tool-schema.ts
 import { Type } from "typebox";
 function stringEnum(values, options) {
@@ -7952,16 +7980,16 @@ var signalGrepSchema = Type.Object({
 });
 
 // src/mcp.ts
-var SIGNAL_GREP_MCP_PATH = "/mcp";
+var BAOER_SIGNAL_GREP_MCP_PATH = "/mcp";
 var DEFAULT_MCP_HOST = "127.0.0.1";
 var DEFAULT_MCP_PORT = 3000;
 var DEFAULT_MCP_MAX_SESSIONS = 100;
 var DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 var MAX_MCP_BODY_BYTES = 16 * 1024 * 1024;
-var SIGNAL_GREP_MCP_VERSION = package_default.version;
+var BAOER_SIGNAL_GREP_MCP_VERSION = package_default.version;
 var SIGNAL_GREP_TOOL = {
-  name: "signal_grep",
-  title: "Signal Grep",
+  name: "baoer_signal_grep",
+  title: "baoer_signal_grep",
   description: SIGNAL_GREP_DESCRIPTION,
   inputSchema: signalGrepSchema,
   outputSchema: {
@@ -7970,14 +7998,14 @@ var SIGNAL_GREP_TOOL = {
     required: ["details"]
   },
   annotations: {
-    title: "Signal Grep",
+    title: "baoer_signal_grep",
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
     openWorldHint: false
   }
 };
-function createDefaultService() {
+function createDefaultSignalGrepMcpService() {
   return new SignalGrepService({
     runRipgrep: createRipgrepRunner(),
     structure: createCtagsStructureProvider()
@@ -7991,8 +8019,8 @@ function validationMessage(value) {
     return;
   const first = Value.Errors(signalGrepSchema, value)[0];
   if (!first)
-    return "Invalid signal_grep arguments";
-  return `Invalid signal_grep arguments at ${first.instancePath || "/"}: ${first.message}`;
+    return "Invalid baoer_signal_grep arguments";
+  return `Invalid baoer_signal_grep arguments at ${first.instancePath || "/"}: ${first.message}`;
 }
 function parseSignalGrepInput(value) {
   const message = validationMessage(value);
@@ -8002,14 +8030,14 @@ function parseSignalGrepInput(value) {
 }
 function toolError(error) {
   return {
-    content: [{ type: "text", text: `Signal Grep failed: ${errorMessage(error)}` }],
+    content: [{ type: "text", text: `baoer_signal_grep failed: ${errorMessage(error)}` }],
     isError: true
   };
 }
 function createSignalGrepMcpServer(service, cwd) {
-  const server = new McpServer({ name: "pi-plugin-signal-grep", version: SIGNAL_GREP_MCP_VERSION }, {
+  const server = new McpServer({ name: "baoer_signal_grep", version: BAOER_SIGNAL_GREP_MCP_VERSION }, {
     capabilities: { tools: {} },
-    instructions: "Use signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured working directory; explicit absolute and parent paths follow the same protected-path policy as the local Pi tool."
+    instructions: signalGrepMcpInstructions()
   });
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [SIGNAL_GREP_TOOL]
@@ -8134,7 +8162,7 @@ function writeJsonError(response, status, message) {
   response.end(body);
 }
 function requestPath(request) {
-  return new URL2(request.url ?? SIGNAL_GREP_MCP_PATH, "http://signal-grep.local").pathname;
+  return new URL2(request.url ?? BAOER_SIGNAL_GREP_MCP_PATH, "http://baoer_signal_grep.local").pathname;
 }
 async function handleMcpRequest(request, response, state, createService, cwd) {
   if (!admitOrigin(request, response, state.allowedOrigins))
@@ -8150,7 +8178,7 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
     writeJsonError(response, 400, "MCP request URL is invalid");
     return;
   }
-  if (path !== SIGNAL_GREP_MCP_PATH) {
+  if (path !== BAOER_SIGNAL_GREP_MCP_PATH) {
     writeJsonError(response, 404, "MCP endpoint not found");
     return;
   }
@@ -8309,7 +8337,7 @@ async function startSignalGrepMcpServer(options = {}) {
     pendingInitializations: 0,
     closing: false
   };
-  const createService = options.createService ?? createDefaultService;
+  const createService = options.createService ?? createDefaultSignalGrepMcpService;
   const httpServer = createServer((request, response) => {
     handleMcpRequest(request, response, state, createService, cwd).catch((error) => {
       if (!response.headersSent)
@@ -8353,13 +8381,14 @@ async function startSignalGrepMcpServer(options = {}) {
       const stopListening = new Promise((resolve15, reject) => {
         httpServer.close((error) => error ? reject(error) : resolve15());
       });
-      const initialCleanup = await Promise.allSettled([...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)));
-      const closeResults = await Promise.allSettled([stopListening]);
+      const initialCleanup = await Promise.allSettled([
+        ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
+        stopListening
+      ]);
       const finalCleanup = await Promise.allSettled([...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)));
       const errors = [
         ...state.cleanupErrors,
         ...settledErrors(initialCleanup),
-        ...settledErrors(closeResults),
         ...settledErrors(finalCleanup)
       ];
       if (errors.length > 0)
@@ -8374,6 +8403,99 @@ async function startSignalGrepMcpServer(options = {}) {
   };
 }
 
+// src/mcp-cli.ts
+var BAOER_SIGNAL_GREP_MCP_USAGE = `Usage: baoer_signal_grep_mcp [--http | --stdio]
+
+Transports:
+  --http   Start the Streamable HTTP server (default)
+  --stdio  Serve one local MCP client over stdin/stdout
+`;
+function parseSignalGrepMcpTransport(arguments_) {
+  if (arguments_.length === 0 || arguments_.length === 1 && arguments_[0] === "--http") {
+    return "http";
+  }
+  if (arguments_.length === 1 && arguments_[0] === "--stdio")
+    return "stdio";
+  if (arguments_.length === 1 && (arguments_[0] === "--help" || arguments_[0] === "-h")) {
+    return "help";
+  }
+  throw new Error(`Unknown arguments: ${arguments_.join(" ")}
+${BAOER_SIGNAL_GREP_MCP_USAGE}`);
+}
+
+// src/mcp-stdio.ts
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+function rejectedReasons(results) {
+  return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+}
+async function startSignalGrepMcpStdioServer(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
+  const input = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
+  const service = (options.createService ?? createDefaultSignalGrepMcpService)();
+  const protocol = createSignalGrepMcpServer(service, cwd);
+  const lifecycle = Promise.withResolvers();
+  let closePromise;
+  let transportFailure;
+  const requestClose = () => {
+    close();
+  };
+  const requestFailure = (error) => {
+    transportFailure ??= error;
+    close();
+  };
+  const removeLifecycleListeners = () => {
+    input.off("end", requestClose);
+    input.off("close", requestClose);
+    input.off("error", requestFailure);
+    output.off("error", requestFailure);
+  };
+  const close = () => {
+    if (closePromise)
+      return closePromise;
+    input.off("end", requestClose);
+    input.off("close", requestClose);
+    closePromise = lifecycle.promise;
+    const performClose = async () => {
+      const cleanupErrors = rejectedReasons(await Promise.allSettled([protocol.close(), service.shutdown()]));
+      removeLifecycleListeners();
+      const errors = transportFailure ? [transportFailure, ...cleanupErrors] : cleanupErrors;
+      if (errors.length > 0) {
+        lifecycle.reject(new AggregateError(errors, transportFailure ? "MCP stdio transport failed" : "MCP stdio shutdown failed"));
+      } else {
+        lifecycle.resolve();
+      }
+    };
+    performClose();
+    return closePromise;
+  };
+  const transport = new StdioServerTransport(input, output);
+  try {
+    if (!Reflect.set(transport, "onclose", requestClose)) {
+      throw new Error("Unable to attach the MCP stdio close handler");
+    }
+    input.once("end", requestClose);
+    input.once("close", requestClose);
+    input.once("error", requestFailure);
+    output.once("error", requestFailure);
+    await protocol.connect(transport);
+  } catch (error) {
+    let cleanupFailure;
+    try {
+      await close();
+    } catch (closeError) {
+      cleanupFailure = closeError instanceof Error ? closeError : new Error("MCP stdio startup cleanup failed", { cause: closeError });
+    }
+    if (cleanupFailure) {
+      throw new AggregateError([error, cleanupFailure], "MCP stdio startup failed", {
+        cause: error
+      });
+    }
+    throw error;
+  }
+  return { cwd, closed: lifecycle.promise, close };
+}
+
 // src/mcp-server.ts
 function environmentInteger(name, fallback, minimum, maximum) {
   const value = process.env[name];
@@ -8386,36 +8508,85 @@ function environmentInteger(name, fallback, minimum, maximum) {
   return port;
 }
 function allowedOrigins() {
-  return (process.env.SIGNAL_GREP_MCP_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
+  return (process.env.BAOER_SIGNAL_GREP_MCP_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
 }
-var running = await startSignalGrepMcpServer({
-  cwd: process.env.SIGNAL_GREP_MCP_CWD ?? process.cwd(),
-  host: process.env.SIGNAL_GREP_MCP_HOST ?? DEFAULT_MCP_HOST,
-  port: environmentInteger("SIGNAL_GREP_MCP_PORT", DEFAULT_MCP_PORT, 0, 65535),
-  maxSessions: environmentInteger("SIGNAL_GREP_MCP_MAX_SESSIONS", DEFAULT_MCP_MAX_SESSIONS, 1, Number.MAX_SAFE_INTEGER),
-  sessionIdleTimeoutMs: environmentInteger("SIGNAL_GREP_MCP_SESSION_IDLE_MS", DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS, 1, Number.MAX_SAFE_INTEGER),
-  allowedOrigins: allowedOrigins()
-});
-var address = running.httpServer.address();
-if (!address || typeof address === "string")
-  throw new Error("MCP TCP listener is unavailable");
-var displayHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
-process.stderr.write(`Signal Grep MCP listening on http://${displayHost}:${String(address.port)}${SIGNAL_GREP_MCP_PATH}
-`);
-process.stderr.write(`Signal Grep MCP working directory: ${running.cwd}
-`);
-var shuttingDown = false;
-var shutdown = async () => {
-  if (shuttingDown)
-    return;
-  shuttingDown = true;
-  try {
-    await running.close();
-  } catch (error) {
-    process.stderr.write(`Signal Grep MCP shutdown failed: ${error instanceof Error ? error.message : String(error)}
-`);
-    process.exitCode = 1;
+async function runHttpServer() {
+  const running = await startSignalGrepMcpServer({
+    cwd: process.env.BAOER_SIGNAL_GREP_MCP_CWD ?? process.cwd(),
+    host: process.env.BAOER_SIGNAL_GREP_MCP_HOST ?? DEFAULT_MCP_HOST,
+    port: environmentInteger("BAOER_SIGNAL_GREP_MCP_PORT", DEFAULT_MCP_PORT, 0, 65535),
+    maxSessions: environmentInteger("BAOER_SIGNAL_GREP_MCP_MAX_SESSIONS", DEFAULT_MCP_MAX_SESSIONS, 1, Number.MAX_SAFE_INTEGER),
+    sessionIdleTimeoutMs: environmentInteger("BAOER_SIGNAL_GREP_MCP_SESSION_IDLE_MS", DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS, 1, Number.MAX_SAFE_INTEGER),
+    allowedOrigins: allowedOrigins()
+  });
+  const address = running.httpServer.address();
+  if (!address || !(address instanceof Object)) {
+    throw new Error("MCP TCP listener is unavailable");
   }
-};
-process.once("SIGINT", () => void shutdown());
-process.once("SIGTERM", () => void shutdown());
+  const displayHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
+  process.stderr.write(`baoer_signal_grep MCP listening on http://${displayHost}:${String(address.port)}${BAOER_SIGNAL_GREP_MCP_PATH}
+`);
+  process.stderr.write(`baoer_signal_grep MCP working directory: ${running.cwd}
+`);
+  let shuttingDown = false;
+  const closeAfterSignal = async () => {
+    try {
+      await running.close();
+    } catch (error) {
+      process.stderr.write(`baoer_signal_grep MCP shutdown failed: ${String(error)}
+`);
+      process.exitCode = 1;
+    }
+  };
+  const shutdown = () => {
+    if (shuttingDown)
+      return;
+    shuttingDown = true;
+    closeAfterSignal();
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}
+async function runStdioServer() {
+  const running = await startSignalGrepMcpStdioServer({
+    cwd: process.env.BAOER_SIGNAL_GREP_MCP_CWD ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd()
+  });
+  process.stderr.write(`baoer_signal_grep MCP serving one local client over stdio
+`);
+  process.stderr.write(`baoer_signal_grep MCP working directory: ${running.cwd}
+`);
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown)
+      return;
+    shuttingDown = true;
+    running.close();
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  try {
+    await running.closed;
+  } finally {
+    process.off("SIGINT", shutdown);
+    process.off("SIGTERM", shutdown);
+  }
+}
+async function main() {
+  const transport = parseSignalGrepMcpTransport(process.argv.slice(2));
+  if (transport === "help") {
+    process.stdout.write(BAOER_SIGNAL_GREP_MCP_USAGE);
+    return;
+  }
+  if (transport === "stdio") {
+    await runStdioServer();
+    return;
+  }
+  await runHttpServer();
+}
+try {
+  await main();
+} catch (error) {
+  process.stderr.write(`baoer_signal_grep MCP failed: ${String(error)}
+`);
+  process.exitCode = 1;
+}

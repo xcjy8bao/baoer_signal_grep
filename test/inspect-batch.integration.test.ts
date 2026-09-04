@@ -14,7 +14,7 @@ afterEach(async () => {
   fixtures.clear();
 });
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-inspect-batch-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-inspect-batch-"));
   fixtures.add(root);
   return root;
 }

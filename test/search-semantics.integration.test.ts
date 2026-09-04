@@ -169,7 +169,7 @@ describe("search semantics", () => {
       expect(invalidRegex.message).toContain("regex parse error");
 
       const unavailable = new SignalGrepService({
-        runRipgrep: createRipgrepRunner({ executable: "signal-grep-rg-does-not-exist" }),
+        runRipgrep: createRipgrepRunner({ executable: "baoer_signal_grep-rg-does-not-exist" }),
       });
       const missingExecutable = await captureFailure(unavailable.search({ pattern: "TODO" }, root));
       expect(missingExecutable).toBeInstanceOf(Error);

@@ -6,7 +6,7 @@ import { createRipgrepRunner } from "../src/rg.js";
 import { SignalGrepService } from "../src/service.js";
 
 test("selected-file follow-ups are complete executable requests and do not rescan", async () => {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-follow-up-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-follow-up-"));
   try {
     await writeFile(join(root, "chosen.ts"), "value 1\nvalue 2\nvalue 3\n");
     await writeFile(join(root, "other.ts"), "value 4\n");

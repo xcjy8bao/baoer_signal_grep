@@ -33,7 +33,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function fixture(action: (cwd: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "signal-grep-candidates-"));
+  const cwd = await mkdtemp(join(tmpdir(), "baoer_signal_grep-candidates-"));
   try {
     git(cwd, "init", "-q");
     await writeFile(join(cwd, "source.ts"), "foo initial\nbar unchanged\n");

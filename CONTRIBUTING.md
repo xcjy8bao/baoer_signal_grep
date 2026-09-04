@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving Signal Grep.
+Thank you for improving baoer_signal_grep.
 
 ## Workflow
 

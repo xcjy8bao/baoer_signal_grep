@@ -1,6 +1,6 @@
 # Architecture
 
-Signal Grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of project evidence, not ripgrep itself. Version 0.7.0 adds a remote MCP transport around the existing evidence contract; version 0.6.6 added project-wide zero-result recovery, parallel exact multi-term evidence, candidate-prefiltered structural analysis, bounded content-addressed syntax reuse, and dimension-specific coverage. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
+baoer_signal_grep is intentionally a composition of single-purpose components. It optimizes the quality and shape of project evidence, not ripgrep itself. Version 1.0.0 establishes the `baoer_signal_grep` public identity and adds a local stdio MCP transport alongside the existing Streamable HTTP transport without changing the evidence contract. Version 0.6.6 added project-wide zero-result recovery, parallel exact multi-term evidence, candidate-prefiltered structural analysis, bounded content-addressed syntax reuse, and dimension-specific coverage. Counts and retained evidence remain separate from presentation limits; a complete search snapshot is not a repository-wide atomic read or semantic binding claim.
 
 ## Data flow
 
@@ -38,15 +38,20 @@ evidence-service.ts ── advanced-operation policy and analysis pagination
 
 runtime.ts ── session lifecycle, cancellation and query-summary coordination
   └─► session-summary.ts ── plain-language session facts
-mcp.ts ── MCP tool protocol adapter, remote result shaping and session service ownership
+prompt-guidelines.ts ── shared Pi and MCP search-workflow guidance
+mcp.ts ── transport-neutral MCP tool adapter plus HTTP session ownership
+mcp-stdio.ts ── single-client stdio transport and process-scoped service lifecycle
+mcp-cli.ts ── explicit HTTP/stdio command-line selection
 mcp-server.ts ── executable environment configuration and graceful shutdown
 index.ts ── Pi schema, stable tool registration and lifecycle hooks
   └─► tui/ ── responsive human-only presentation of existing text/details
 ```
 
-`index.ts` registers exactly one Signal Grep tool named `signal_grep`; it does not register commands or replace another tool. `runtime.ts` owns session coordination rather than search algorithms. Model-facing evidence remains language-neutral or English, while the passive session status follows the configured interface locale.
+`index.ts` registers exactly one baoer_signal_grep tool named `baoer_signal_grep`; it does not register commands or replace another tool. `runtime.ts` owns session coordination rather than search algorithms. Model-facing evidence remains language-neutral or English, while the passive session status follows the configured interface locale.
 
-`mcp.ts` exposes the same tool contract through the MCP protocol. It validates remote arguments against the shared TypeBox schema, invokes a service rooted at the server's configured working directory, and returns the existing model-facing text together with structured details. Each stateful remote MCP session owns its service and snapshot store, so cursors and source continuations do not cross session boundaries. The HTTP owner applies a global session-count bound, proactive idle expiry, exact configured browser-origin admission with its CORS preflight/response headers, fatal UTF-8 decoding, and observable cleanup. `mcp-server.ts` owns executable environment configuration and graceful shutdown; authentication and external routing remain deployment concerns.
+`mcp.ts` exposes the same tool contract through the MCP protocol. It validates arguments against the shared TypeBox schema, invokes a service rooted at the configured working directory, and returns the existing model-facing text together with structured details. Each stateful HTTP session owns its service and snapshot store, so cursors and source continuations do not cross session boundaries. The HTTP owner applies a global session-count bound, proactive idle expiry, exact configured browser-origin admission with its CORS preflight/response headers, fatal UTF-8 decoding, and observable cleanup.
+
+`mcp-stdio.ts` gives one local client one process-scoped service and snapshot store. End-of-input, transport failure, explicit close, and process signals converge on one idempotent cleanup path; cleanup failures remain observable. Stdout belongs exclusively to MCP framing, while startup and failure diagnostics use stderr. `mcp-server.ts` selects the transport and owns executable environment configuration and graceful shutdown. Stdio resolves its search root from `BAOER_SIGNAL_GREP_MCP_CWD`, then `CLAUDE_PROJECT_DIR`, then the launched process cwd; it does not parse HTTP-only host, port, origin, or session settings. Authentication and external routing remain HTTP deployment concerns.
 
 The tool schema retains the single-target inspection forms and adds `matchIndices` or `targets` arrays of 1–5 entries. These are mutually exclusive request forms, not aliases or a persisted-format migration. `service.ts` dispatches to single or batch inspection; inspection modules validate their own target combinations before source access.
 
@@ -54,9 +59,9 @@ The tool schema retains the single-target inspection forms and adds `matchIndice
 
 ### Stable tool and configuration boundary
 
-`config.ts` owns the user-global `signal-grep.json` locale contract. Missing config means an English interface; the only accepted locales are `en` and `zh-CN`. Existing files may retain retired fields, which are ignored rather than changing tool behavior. Invalid JSON, a non-object value, or an unsupported locale fails clearly.
+`config.ts` owns the user-global `baoer_signal_grep.json` locale contract. Missing config means an English interface; the only accepted locales are `en` and `zh-CN`. Existing files may retain retired fields, which are ignored rather than changing tool behavior. Invalid JSON, a non-object value, or an unsupported locale fails clearly.
 
-The public tool name is constant. Signal Grep does not inspect installed packages, claim another tool name, persist tool ownership, or expose a session command surface. This keeps registration independent from unrelated extensions and leaves their lifecycle unchanged.
+The public tool name is constant. baoer_signal_grep does not inspect installed packages, claim another tool name, persist tool ownership, or expose a session command surface. This keeps registration independent from unrelated extensions and leaves their lifecycle unchanged.
 
 ### Request normalization
 
@@ -158,7 +163,8 @@ The formatter produces one plain-language English or Simplified Chinese status a
 - Multi-term requests above eight terms use bounded parallel chunks and retain one input-term/path/byte order across pagination.
 - Impact retains every admitted exact same-spelling occurrence and never upgrades it into a semantic binding or test-coverage claim.
 - Runtime source uses Node.js 22+ APIs and remains executable under Bun 1.4+.
-- Signal Grep registers only `signal_grep` and exposes no public commands.
+- baoer_signal_grep registers only `baoer_signal_grep` and exposes no public commands.
+- HTTP and stdio expose the same schema, instructions, result contract, and release version; stdio never writes diagnostics to protocol stdout or opens a listener.
 - Session facts count only returned new queries; cursor and source continuation pages never inflate them.
 - Session status never claims model performance, task success, token savings, or cost savings.
 - Compact complete searches return directly; adaptive policy and the candidate-revision cache never change the underlying match set.

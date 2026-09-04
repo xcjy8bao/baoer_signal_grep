@@ -13,7 +13,7 @@ afterEach(async () => {
 
 for (const batch of [false, true]) {
   test(`${batch ? "batch" : "single"} inspection keeps byte-based matches after invalid UTF-8`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "signal-grep-source-encoding-"));
+    const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-source-encoding-"));
     fixtures.add(root);
     await writeFile(
       join(root, "bytes.txt"),
@@ -38,7 +38,7 @@ for (const batch of [false, true]) {
   });
 
   test(`${batch ? "batch" : "single"} inspection keeps ripgrep line numbers across bare CR and CRLF`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "signal-grep-source-encoding-"));
+    const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-source-encoding-"));
     fixtures.add(root);
     await writeFile(join(root, "cr.txt"), "aaa\rneedle\rbbb\r\nnext\r\n");
     const service = new SignalGrepService({ runRipgrep: createRipgrepRunner() });

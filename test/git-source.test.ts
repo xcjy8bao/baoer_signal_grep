@@ -45,7 +45,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function fixture(action: (cwd: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "signal-grep-git-"));
+  const cwd = await mkdtemp(join(tmpdir(), "baoer_signal_grep-git-"));
   try {
     git(cwd, "init", "-q");
     await writeFile(join(cwd, ".gitignore"), "ignored.txt\nAGENTS.md\nsecret*\n");

@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 async function fixture(name: string, content: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-match-output-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-match-output-"));
   fixtures.add(root);
   await writeFile(join(root, name), content);
   return root;

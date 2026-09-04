@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement to Signal Grep
+description: Propose a focused improvement to baoer_signal_grep
 title: "feat: "
 labels: ["enhancement", "triage"]
 body:

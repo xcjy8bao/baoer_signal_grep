@@ -445,7 +445,7 @@ interface CallView {
 }
 
 function signalGrepTitle(theme: Theme): string {
-  return theme.fg("toolTitle", theme.bold("Signal Grep"));
+  return theme.fg("toolTitle", theme.bold("baoer_signal_grep"));
 }
 
 function inspectCall(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView {
@@ -608,7 +608,7 @@ export function renderSignalGrepPresentationLines(
     case "inspect-batch":
       return renderInspectBatch(presentation, copy, theme, width);
     default:
-      throw new Error("Unsupported Signal Grep presentation");
+      throw new Error("Unsupported baoer_signal_grep presentation");
   }
 }
 

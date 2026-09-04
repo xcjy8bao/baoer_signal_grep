@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function fixture(): Promise<{ root: string; file: string }> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-structure-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-structure-"));
   fixtures.add(root);
   const file = join(root, "client.ts");
   await writeFile(
@@ -196,7 +196,7 @@ describe("Universal Ctags structure provider", () => {
     const version = Bun.spawnSync([executable, "--version"]);
     const versionText = new TextDecoder().decode(version.stdout);
     if (version.exitCode !== 0 || !/Universal Ctags/i.test(versionText)) return;
-    const root = await mkdtemp(join(tmpdir(), "signal-grep-real-ctags-"));
+    const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-real-ctags-"));
     fixtures.add(root);
     const file = join(root, "main.go");
     await writeFile(file, "package main\nfunc answer() int {\n  return 42\n}\n");
@@ -252,7 +252,7 @@ describe("readSourceRange", () => {
       omittedAfter: 0,
       truncatedLines: [],
     });
-    expect(root).toContain("signal-grep-structure-");
+    expect(root).toContain("baoer_signal_grep-structure-");
   });
 
   test("centers an oversized source range on the requested target line", async () => {

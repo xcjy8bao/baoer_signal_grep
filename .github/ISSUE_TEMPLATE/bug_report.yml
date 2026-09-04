@@ -25,7 +25,7 @@ body:
     id: input
     attributes:
       label: Tool input
-      description: Provide the exact signal_grep arguments using a non-sensitive fixture.
+      description: Provide the exact baoer_signal_grep arguments using a non-sensitive fixture.
       render: json
     validations:
       required: true

@@ -7,7 +7,7 @@ import { readSignalGrepConfig, signalGrepConfigPath } from "../src/config.js";
 const roots = new Set<string>();
 
 async function agentDir(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-config-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-config-"));
   roots.add(root);
   return join(root, "agent");
 }
@@ -22,7 +22,7 @@ afterEach(async () => {
   roots.clear();
 });
 
-describe("Signal Grep config", () => {
+describe("baoer_signal_grep config", () => {
   test("defaults to English when no config exists", async () => {
     expect(await readSignalGrepConfig(await agentDir())).toEqual({ locale: "en" });
   });
@@ -51,7 +51,7 @@ describe("Signal Grep config", () => {
   test("rejects malformed or non-object config", async () => {
     const directory = await agentDir();
     await writeConfig(directory, "{");
-    expect(readSignalGrepConfig(directory)).rejects.toThrow("Invalid Signal Grep config");
+    expect(readSignalGrepConfig(directory)).rejects.toThrow("Invalid baoer_signal_grep config");
     await writeConfig(directory, "[]");
     expect(readSignalGrepConfig(directory)).rejects.toThrow("expected a JSON object");
   });

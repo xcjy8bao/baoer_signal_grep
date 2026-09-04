@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-target-boundary-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-target-boundary-"));
   roots.add(root);
   return root;
 }

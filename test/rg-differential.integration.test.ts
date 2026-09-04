@@ -28,7 +28,7 @@ function sortMatches(left: ReferenceMatch, right: ReferenceMatch): number {
 const roots = new Set<string>();
 
 async function createDifferentialFixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-differential-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-differential-"));
   roots.add(root);
   await mkdir(join(root, "src"), { recursive: true });
   await mkdir(join(root, "docs"), { recursive: true });

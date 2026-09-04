@@ -71,7 +71,7 @@ export async function filterHistoricalPaths(
   const bounded = candidates.slice(0, MAX_STRUCTURE_FILES);
   if (bounded.length === 0)
     return { paths: [], partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead: 0 };
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-paths-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-paths-"));
   const absoluteCwd = resolve(cwd);
   const volumeRoot = parse(absoluteCwd).root;
   const ignoreFiles: { local: string; bytes: Buffer }[] = [];
