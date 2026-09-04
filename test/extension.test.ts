@@ -47,7 +47,7 @@ afterEach(async () => {
   roots.clear();
 });
 
-describe("Signal Grep extension registration", () => {
+describe("baoer_signal_grep extension registration", () => {
   test("keeps public enums compatible with providers that reject anyOf/const", () => {
     expect(signalGrepSchema.properties.mode).toMatchObject({
       type: "string",
@@ -74,7 +74,7 @@ describe("Signal Grep extension registration", () => {
     const testHarness = harness();
     await registerSignalGrepExtension(testHarness.pi, DEFAULT_SIGNAL_GREP_CONFIG);
 
-    expect(testHarness.toolNames).toEqual(["signal_grep"]);
+    expect(testHarness.toolNames).toEqual(["baoer_signal_grep"]);
     expect(testHarness.commands).toEqual([]);
     expect(testHarness.guidelines).toEqual([signalGrepPromptGuidelines()]);
     expect(testHarness.guidelines.flat()).toHaveLength(13);
@@ -82,7 +82,7 @@ describe("Signal Grep extension registration", () => {
   });
 
   test("updates a plain-language status after a query and clears it at shutdown", async () => {
-    const root = await mkdtemp(join(tmpdir(), "signal-grep-extension-"));
+    const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-extension-"));
     roots.add(root);
     await writeFile(join(root, "source.ts"), "const needle = true;\n", "utf8");
     const testHarness = harness();
@@ -98,14 +98,14 @@ describe("Signal Grep extension registration", () => {
       ui: { setStatus },
     });
     expect(statuses.at(-1)).toEqual({
-      key: "signal-grep-session",
-      value: "Signal Grep：已处理 1 次查询，结果全部完整",
+      key: "baoer_signal_grep_session",
+      value: "baoer_signal_grep：已处理 1 次查询，结果全部完整",
     });
 
     const shutdown = testHarness.lifecycle.get("session_shutdown");
     if (!shutdown) throw new Error("Expected shutdown handler");
     // oxlint-disable-next-line no-unsafe-type-assertion -- only setStatus is consumed by shutdown
     await shutdown({}, { ui: { setStatus } } as unknown as ExtensionContext);
-    expect(statuses.at(-1)).toEqual({ key: "signal-grep-session", value: undefined });
+    expect(statuses.at(-1)).toEqual({ key: "baoer_signal_grep_session", value: undefined });
   }, 10_000);
 });

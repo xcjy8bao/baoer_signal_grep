@@ -16,20 +16,21 @@ import type { SignalGrepResult } from "./types.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { SignalGrepService, type SignalGrepInput } from "./service.js";
+import { signalGrepMcpInstructions } from "./prompt-guidelines.js";
 import { SIGNAL_GREP_DESCRIPTION, signalGrepSchema } from "./tool-schema.js";
 
-export const SIGNAL_GREP_MCP_PATH = "/mcp";
+export const BAOER_SIGNAL_GREP_MCP_PATH = "/mcp";
 export const DEFAULT_MCP_HOST = "127.0.0.1";
 export const DEFAULT_MCP_PORT = 3000;
 export const DEFAULT_MCP_MAX_SESSIONS = 100;
 export const DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const MAX_MCP_BODY_BYTES = 16 * 1024 * 1024;
 
-const SIGNAL_GREP_MCP_VERSION = packageMetadata.version;
+const BAOER_SIGNAL_GREP_MCP_VERSION = packageMetadata.version;
 
 const SIGNAL_GREP_TOOL: Tool = {
-  name: "signal_grep",
-  title: "Signal Grep",
+  name: "baoer_signal_grep",
+  title: "baoer_signal_grep",
   description: SIGNAL_GREP_DESCRIPTION,
   // TypeBox and MCP both consume JSON Schema, but their TypeScript declarations are intentionally unrelated.
   // SAFETY: signalGrepSchema is runtime-validated TypeBox JSON Schema and matches MCP's input schema shape.
@@ -41,7 +42,7 @@ const SIGNAL_GREP_TOOL: Tool = {
     required: ["details"],
   },
   annotations: {
-    title: "Signal Grep",
+    title: "baoer_signal_grep",
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
@@ -54,7 +55,7 @@ export interface SignalGrepMcpService {
   shutdown(): Promise<void>;
 }
 
-function createDefaultService(): SignalGrepMcpService {
+export function createDefaultSignalGrepMcpService(): SignalGrepMcpService {
   return new SignalGrepService({
     runRipgrep: createRipgrepRunner(),
     structure: createCtagsStructureProvider(),
@@ -68,8 +69,8 @@ function errorMessage(error: unknown): string {
 function validationMessage(value: unknown): string | undefined {
   if (Value.Check(signalGrepSchema, value)) return undefined;
   const first = Value.Errors(signalGrepSchema, value)[0];
-  if (!first) return "Invalid signal_grep arguments";
-  return `Invalid signal_grep arguments at ${first.instancePath || "/"}: ${first.message}`;
+  if (!first) return "Invalid baoer_signal_grep arguments";
+  return `Invalid baoer_signal_grep arguments at ${first.instancePath || "/"}: ${first.message}`;
 }
 
 function parseSignalGrepInput(value: unknown): SignalGrepInput {
@@ -82,18 +83,17 @@ function parseSignalGrepInput(value: unknown): SignalGrepInput {
 
 function toolError(error: unknown) {
   return {
-    content: [{ type: "text" as const, text: `Signal Grep failed: ${errorMessage(error)}` }],
+    content: [{ type: "text" as const, text: `baoer_signal_grep failed: ${errorMessage(error)}` }],
     isError: true,
   };
 }
 
-function createSignalGrepMcpServer(service: SignalGrepMcpService, cwd: string): McpServer {
+export function createSignalGrepMcpServer(service: SignalGrepMcpService, cwd: string): McpServer {
   const server = new McpServer(
-    { name: "pi-plugin-signal-grep", version: SIGNAL_GREP_MCP_VERSION },
+    { name: "baoer_signal_grep", version: BAOER_SIGNAL_GREP_MCP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions:
-        "Use signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured working directory; explicit absolute and parent paths follow the same protected-path policy as the local Pi tool.",
+      instructions: signalGrepMcpInstructions(),
     },
   );
 
@@ -274,7 +274,8 @@ function writeJsonError(response: ServerResponse, status: number, message: strin
 }
 
 function requestPath(request: IncomingMessage): string {
-  return new URL(request.url ?? SIGNAL_GREP_MCP_PATH, "http://signal-grep.local").pathname;
+  return new URL(request.url ?? BAOER_SIGNAL_GREP_MCP_PATH, "http://baoer_signal_grep.local")
+    .pathname;
 }
 
 async function handleMcpRequest(
@@ -297,7 +298,7 @@ async function handleMcpRequest(
     writeJsonError(response, 400, "MCP request URL is invalid");
     return;
   }
-  if (path !== SIGNAL_GREP_MCP_PATH) {
+  if (path !== BAOER_SIGNAL_GREP_MCP_PATH) {
     writeJsonError(response, 404, "MCP endpoint not found");
     return;
   }
@@ -472,7 +473,7 @@ export async function startSignalGrepMcpServer(
     pendingInitializations: 0,
     closing: false,
   };
-  const createService = options.createService ?? createDefaultService;
+  const createService = options.createService ?? createDefaultSignalGrepMcpService;
   const httpServer = createServer((request, response) => {
     void handleMcpRequest(request, response, state, createService, cwd).catch((error: unknown) => {
       if (!response.headersSent) writeJsonError(response, 500, errorMessage(error));
@@ -516,17 +517,16 @@ export async function startSignalGrepMcpServer(
       const stopListening = new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
       });
-      const initialCleanup = await Promise.allSettled(
-        [...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
-      );
-      const closeResults = await Promise.allSettled([stopListening]);
+      const initialCleanup = await Promise.allSettled([
+        ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
+        stopListening,
+      ]);
       const finalCleanup = await Promise.allSettled(
         [...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
       );
       const errors = [
         ...state.cleanupErrors,
         ...settledErrors(initialCleanup),
-        ...settledErrors(closeResults),
         ...settledErrors(finalCleanup),
       ];
       if (errors.length > 0) throw new AggregateError(errors, "MCP server shutdown failed");

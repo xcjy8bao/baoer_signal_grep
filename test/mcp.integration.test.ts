@@ -18,7 +18,7 @@ const roots = new Set<string>();
 const servers = new Set<RunningSignalGrepMcpServer>();
 
 async function createRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-mcp-test-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep_mcp-test-"));
   roots.add(root);
   return root;
 }
@@ -174,7 +174,7 @@ afterEach(async () => {
   roots.clear();
 });
 
-describe("Signal Grep MCP server", () => {
+describe("baoer_signal_grep MCP server", () => {
   test("exposes the existing search contract through a remote session", async () => {
     const root = await createRoot();
     await writeFile(join(root, "source.ts"), "const needle = true;\n", "utf8");
@@ -187,13 +187,13 @@ describe("Signal Grep MCP server", () => {
       // The SDK's transport declaration is not exact-optional-compatible with this repository's strict settings.
       // oxlint-disable-next-line no-unsafe-type-assertion -- upstream transport boundary
       await client.connect(transport as unknown as Transport);
-      expect(client.getServerVersion()).toMatchObject({ version: "0.7.0" });
+      expect(client.getServerVersion()).toMatchObject({ version: "1.0.0" });
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toEqual(["signal_grep"]);
+      expect(tools.tools.map((tool) => tool.name)).toEqual(["baoer_signal_grep"]);
 
       const result = await client.callTool(
         {
-          name: "signal_grep",
+          name: "baoer_signal_grep",
           arguments: { pattern: "needle", literal: true },
         },
         CallToolResultSchema,
@@ -223,14 +223,14 @@ describe("Signal Grep MCP server", () => {
       await client.connect(transport as unknown as Transport);
       const result = await client.callTool(
         {
-          name: "signal_grep",
+          name: "baoer_signal_grep",
           arguments: { pattern: "anything", context: -1 },
         },
         CallToolResultSchema,
       );
       const text = firstTextContent(result);
       expect(result.isError).toBe(true);
-      expect(text).toContain("Signal Grep failed");
+      expect(text).toContain("baoer_signal_grep failed");
     } finally {
       await client.close();
     }
@@ -256,7 +256,7 @@ describe("Signal Grep MCP server", () => {
       await client.connect(transport as unknown as Transport);
       const first = await client.callTool(
         {
-          name: "signal_grep",
+          name: "baoer_signal_grep",
           arguments: { pattern: "needle", literal: true, mode: "matches", limit: 1 },
         },
         CallToolResultSchema,
@@ -266,14 +266,14 @@ describe("Signal Grep MCP server", () => {
       const cursor = resultDetails(first).cursor;
       if (typeof cursor !== "string") throw new Error("Expected a match cursor");
       const next = await client.callTool(
-        { name: "signal_grep", arguments: { cursor, mode: "matches" } },
+        { name: "baoer_signal_grep", arguments: { cursor, mode: "matches" } },
         CallToolResultSchema,
       );
       expect(firstTextContent(next)).toContain("second");
 
       const external = await client.callTool(
         {
-          name: "signal_grep",
+          name: "baoer_signal_grep",
           arguments: { pattern: "needle", literal: true, path: outsideFile },
         },
         CallToolResultSchema,
@@ -282,7 +282,7 @@ describe("Signal Grep MCP server", () => {
 
       const protectedPath = await client.callTool(
         {
-          name: "signal_grep",
+          name: "baoer_signal_grep",
           arguments: { pattern: "needle", path: join(outsideRoot, ".ssh") },
         },
         CallToolResultSchema,
@@ -422,7 +422,7 @@ describe("Signal Grep MCP server", () => {
       // oxlint-disable-next-line no-unsafe-type-assertion -- upstream transport boundary
       await client.connect(transport as unknown as Transport);
       const result = await client.callTool(
-        { name: "signal_grep", arguments: { pattern: "needle", literal: true } },
+        { name: "baoer_signal_grep", arguments: { pattern: "needle", literal: true } },
         CallToolResultSchema,
       );
       expect(result.isError).not.toBe(true);
@@ -453,7 +453,7 @@ describe("Signal Grep MCP server", () => {
     const initialized = await rawPost(server, initializeBody());
     const invalidBody = Buffer.concat([
       Buffer.from(
-        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"signal_grep","arguments":{"pattern":"',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"baoer_signal_grep","arguments":{"pattern":"',
       ),
       Buffer.from([0xff]),
       Buffer.from('","literal":true}}}'),

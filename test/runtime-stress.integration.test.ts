@@ -10,7 +10,7 @@ import { extractMatchIds } from "./helpers.js";
 const roots = new Set<string>();
 
 async function createMediumFixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-medium-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-medium-"));
   roots.add(root);
   await mkdir(join(root, "src"), { recursive: true });
   await mkdir(join(root, ".hidden"), { recursive: true });

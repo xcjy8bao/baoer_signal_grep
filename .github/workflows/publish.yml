@@ -43,7 +43,7 @@ jobs:
             throw new Error('Release tag must identify the current reviewed main commit');
           }
           const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          if (`v${pkg.version}` !== tag || pkg.name !== 'pi-plugin-signal-grep' || pkg.author !== '宝儿') {
+          if (`v${pkg.version}` !== tag || pkg.name !== 'baoer_signal_grep' || pkg.author !== '宝儿') {
             throw new Error('Release version, package name or author does not match');
           }
           NODE

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMcpServer, mcpServerArtifact } from "./mcp-server-artifact.js";
 
-const output = await mkdtemp(join(tmpdir(), "signal-grep-mcp-check-"));
+const output = await mkdtemp(join(tmpdir(), "baoer_signal_grep_mcp-check-"));
 try {
   const generated = await buildMcpServer(output);
   const [expected, actual] = await Promise.all([readFile(generated), readFile(mcpServerArtifact)]);

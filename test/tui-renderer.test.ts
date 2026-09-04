@@ -49,7 +49,7 @@ function collapsed(result: ReturnType<typeof textResult>, locale: "en" | "zh-CN"
   );
 }
 
-describe("Signal Grep TUI renderers", () => {
+describe("baoer_signal_grep TUI renderers", () => {
   test("renders new, continuation, and inspect calls within narrow and wide widths", () => {
     const calls = [
       renderSignalGrepCall(

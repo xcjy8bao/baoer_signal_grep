@@ -1,10 +1,12 @@
 {
-  "name": "pi-plugin-signal-grep",
-  "version": "0.7.0",
+  "name": "baoer_signal_grep",
+  "version": "1.0.0",
   "description": "Context-efficient project search and bounded code analysis for Pi and MCP clients",
   "keywords": [
     "ai-agent",
+    "claude-code",
     "code-navigation",
+    "codex",
     "context-engineering",
     "grep",
     "mcp",
@@ -15,18 +17,18 @@
     "search",
     "source-inspection"
   ],
-  "homepage": "https://github.com/xcjy8bao/pi-plugin-signal-grep#readme",
+  "homepage": "https://github.com/xcjy8bao/baoer_signal_grep#readme",
   "bugs": {
-    "url": "https://github.com/xcjy8bao/pi-plugin-signal-grep/issues"
+    "url": "https://github.com/xcjy8bao/baoer_signal_grep/issues"
   },
   "license": "AGPL-3.0-only",
   "author": "宝儿",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xcjy8bao/pi-plugin-signal-grep.git"
+    "url": "git+https://github.com/xcjy8bao/baoer_signal_grep.git"
   },
   "bin": {
-    "signal-grep-mcp": "./src/mcp-server.mjs"
+    "baoer_signal_grep_mcp": "./src/mcp-server.mjs"
   },
   "files": [
     "src/**/*.ts",

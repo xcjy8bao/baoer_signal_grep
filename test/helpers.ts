@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export async function createTodoFixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "signal-grep-test-"));
+  const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-test-"));
   await mkdir(join(root, "src"), { recursive: true });
   await writeFile(
     join(root, "noise.ts"),

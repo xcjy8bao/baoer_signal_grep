@@ -110,7 +110,7 @@ describe("owned search process", () => {
 
   test("preserves startup failure and bounds stderr by bytes", async () => {
     const missing = runOwnedProcess(
-      { executable: "signal-grep-missing-executable", args: [], cwd: process.cwd() },
+      { executable: "baoer_signal_grep-missing-executable", args: [], cwd: process.cwd() },
       (stdout) => consumeCappedLines(stdout, () => {}),
     );
     expect(missing).rejects.toMatchObject({ code: "ENOENT" });

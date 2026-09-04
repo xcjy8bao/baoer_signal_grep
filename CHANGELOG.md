@@ -4,6 +4,29 @@ All notable changes will be documented in this file. The project follows [Semant
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-04
+
+### Added
+
+- A local stdio MCP transport lets Claude Code, Codex, and compatible clients launch the published Node executable directly while retaining the complete `baoer_signal_grep` contract.
+- The MCP executable accepts explicit `--stdio`, `--http`, and `--help` modes. Argument-free startup remains the existing Streamable HTTP server.
+
+### Changed
+
+- **Breaking:** the public identity is now consistently `baoer_signal_grep`. Migrate the npm
+  package from `pi-plugin-signal-grep`, the public tool from `signal_grep`, the executable from
+  `signal-grep-mcp`, the Pi configuration file from `signal-grep.json`, the session status key
+  from `signal-grep-session`, and every `SIGNAL_GREP_MCP_*` variable to its
+  `BAOER_SIGNAL_GREP_MCP_*` equivalent. Existing installations and client configurations must be
+  updated; no compatibility aliases are retained.
+- Local MCP clients now receive the same search, pagination, inspection, and evidence-coverage workflow guidance as Pi.
+- Local stdio working-directory selection honors `BAOER_SIGNAL_GREP_MCP_CWD`, then Claude Code's `CLAUDE_PROJECT_DIR`, then the client process working directory.
+
+### Correctness
+
+- Closing a local MCP connection or stopping its client reliably releases its search state, and cleanup failures remain visible.
+- Stdio reserves stdout for MCP protocol messages and sends startup diagnostics to stderr without opening a network listener.
+
 ## [0.7.0] - 2026-09-03
 
 ### Added

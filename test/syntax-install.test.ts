@@ -48,7 +48,7 @@ async function execute(
 }
 
 beforeAll(async () => {
-  isolated = await mkdtemp(join(tmpdir(), "signal-grep-syntax-install-"));
+  isolated = await mkdtemp(join(tmpdir(), "baoer_signal_grep-syntax-install-"));
   const scope = join(repository, "node_modules", "@ast-grep");
   await mkdir(join(isolated, "node_modules", "@ast-grep"), { recursive: true });
   await Promise.all(
@@ -68,7 +68,7 @@ beforeAll(async () => {
       ),
   );
   await writeFile(join(isolated, "package.json"), JSON.stringify({ type: "module" }));
-  const installedSource = join(isolated, "node_modules", "pi-plugin-signal-grep", "src");
+  const installedSource = join(isolated, "node_modules", "baoer_signal_grep", "src");
   await mkdir(installedSource, { recursive: true });
   await Promise.all(
     ["syntax-worker.mjs", "syntax-worker.toml"].map((asset) =>
@@ -98,7 +98,7 @@ describe("production parser assets", () => {
   test("Node runs all four grammars with only the actual installed production packages", async () => {
     expect((await readdir(join(isolated, "node_modules"))).toSorted()).toEqual([
       "@ast-grep",
-      "pi-plugin-signal-grep",
+      "baoer_signal_grep",
     ]);
     await Promise.all(
       fixtures.map(async (fixture) => {

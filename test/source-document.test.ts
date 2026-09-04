@@ -39,7 +39,7 @@ describe("verified source documents", () => {
   });
 
   test("binds a bounded file read to its revision and content, rejecting stale references", async () => {
-    const root = await mkdtemp(join(tmpdir(), "signal-grep-document-"));
+    const root = await mkdtemp(join(tmpdir(), "baoer_signal_grep-document-"));
     roots.push(root);
     await writeFile(join(root, "example.ts"), "export const value = 1;\n");
     const first = await readWorkspaceDocument("example.ts", root);

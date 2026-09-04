@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSyntaxWorker, syntaxWorkerArtifact } from "./syntax-worker-artifact.js";
 
-const output = await mkdtemp(join(tmpdir(), "signal-grep-worker-check-"));
+const output = await mkdtemp(join(tmpdir(), "baoer_signal_grep-worker-check-"));
 try {
   const generated = await buildSyntaxWorker(output);
   const [expected, actual] = await Promise.all([

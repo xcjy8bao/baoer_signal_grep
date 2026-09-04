@@ -78,7 +78,7 @@ export function renderSignalGrepCall(
 ): Component {
   return component(
     (width) => renderSignalGrepCallLines(input, locale, theme, width),
-    "Signal Grep",
+    "baoer_signal_grep",
   );
 }
 

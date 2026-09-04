@@ -32,7 +32,7 @@ describe("SessionSummary", () => {
     summary.record({ pattern: "small" }, result("complete"));
     summary.record({ pattern: "broad" }, result("complete", { organized: true }));
     expect(summary.format("zh-CN")).toBe(
-      "Signal Grep：已处理 2 次查询，结果全部完整；1 次结果已自动按文件整理",
+      "baoer_signal_grep：已处理 2 次查询，结果全部完整；1 次结果已自动按文件整理",
     );
   });
 
@@ -41,7 +41,7 @@ describe("SessionSummary", () => {
     summary.record({ pattern: "complete" }, result("complete"));
     summary.record({ pattern: "partial" }, result("partial"));
     expect(summary.format("zh-CN")).toBe(
-      "Signal Grep：已处理 2 次查询，1 次结果完整；1 次仅获得部分结果并已明确标注",
+      "baoer_signal_grep：已处理 2 次查询，1 次结果完整；1 次仅获得部分结果并已明确标注",
     );
   });
 
@@ -61,7 +61,7 @@ describe("SessionSummary", () => {
     const summary = new SessionSummary();
     summary.record({ pattern: "broad" }, result("partial", { organized: true }));
     expect(summary.format("en")).toBe(
-      "Signal Grep: handled 1 query; 0 complete; 1 partial and clearly marked; 1 result automatically organized by file",
+      "baoer_signal_grep: handled 1 query; 0 complete; 1 partial and clearly marked; 1 result automatically organized by file",
     );
   });
 });
