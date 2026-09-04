@@ -60,7 +60,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run pack:check
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.15.0
       - name: Publish with npm provenance
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
