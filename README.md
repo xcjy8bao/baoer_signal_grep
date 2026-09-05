@@ -1,26 +1,51 @@
 # baoer_signal_grep
 
-[简体中文](README.zh-CN.md) · English
+English · [简体中文](README.zh-CN.md)
 
-A project librarian for Pi, Claude Code, Codex and other MCP clients: it helps your agent find the right shelf, open the useful pages and continue from where it left off.
+**A general-purpose local search plugin that helps agents find files, documents, notes, logs and other text material.**
 
-## What it helps with
+Think of a patient librarian: describe what you need, and it helps locate the shelf, open the relevant page and follow the next lead. A small search brings the passages straight to you. A broad search starts with a map so you can decide where to look first.
 
-- **A precise question gets a direct answer.** Like asking for one book, a small search brings back the matching lines with their locations.
-- **A broad question gets a map.** Instead of piling every page onto the desk, it shows which files contain the material, with excerpts to help you choose.
-- **Follow-up questions keep their place.** The agent can continue through results or open the source it just found, like returning to a bookmark.
-- **Names come with context.** Definitions, references and calls help the agent distinguish things that share a name; related tests remain clues to investigate.
-- **Missing pages stay visible.** Incomplete results and changed source are called out, so the agent knows when it needs to look again.
+## How it helps
 
-## Common ways to use it
+### Find a passage without opening every folder
 
-Ask your agent naturally:
+Looking for an error message, a sentence or a name is like giving a librarian a keyword. When there are only a few matches, the plugin returns their text and locations directly, saving repeated file opening and scrolling.
 
-- “Find where this error message comes from.”
-- “Show me which files handle login, then open the relevant code.”
-- “Where is this function defined, and who calls it?”
-- “Find the tests related to this change.”
-- “Continue from the results we just saw.”
+### Start with a map when the collection is large
+
+“Which documents mention refunds?” can produce a lot of material. The plugin first presents matching files and snippets, like marking promising stops on a map. The agent can choose what to open before filling the conversation with entire documents.
+
+### Keep your bookmark for the next question
+
+“Continue from where we stopped” can follow the existing result to its next page. The agent can also open the surrounding text of a match, like returning to a bookmarked passage to read what came before and after it.
+
+### Give several search conditions together
+
+“Find files mentioning both the customer and a refund” works like selecting documents with two labels. “Any of these words will do” works like handing over a shortlist. Multiple conditions can be expressed together to reduce repeated searches.
+
+### Choose the drawer you want searched
+
+Ask the agent to restrict a search to one folder when that is the scope you need. If you remember only part of a filename, start by finding the file and then inspect its contents—like narrowing a cabinet down to a shelf and then a document.
+
+### Know what has been shown
+
+Long results arrive in pages with a way to continue. When the original material changes, the plugin asks for a fresh check. Like a careful research assistant, it distinguishes the passages already shown from the pages still to come.
+
+## Common uses
+
+Tell your agent what you need, for example:
+
+- “Which documents mention the refund deadline?”
+- “Find this error in the logs and show the surrounding messages.”
+- “Find files containing both the customer name and the order number.”
+- “List matches for any of these keywords.”
+- “I remember part of the meeting-notes filename. Help me find it.”
+- “Search only this folder; do not expand the scope.”
+- “Show me which files contain relevant text, then open two of them.”
+- “Continue from the previous page and show the remaining passages.”
+
+The plugin provides file locations and actual text so the agent can answer from the material and you can check the original yourself.
 
 ## Install
 

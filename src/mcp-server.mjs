@@ -8,7 +8,7 @@ import { URL as URL2 } from "node:url";
 var package_default = {
   name: "baoer_signal_grep",
   version: "1.2.0",
-  description: "Context-efficient project search and bounded code analysis for Pi and MCP clients",
+  description: "Context-efficient local search for files, documents, notes and logs across Pi and MCP clients",
   keywords: [
     "ai-agent",
     "claude-code",
