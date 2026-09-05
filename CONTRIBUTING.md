@@ -1,46 +1,19 @@
 # Contributing
 
-Thank you for improving baoer_signal_grep.
+Bug reports and focused pull requests are welcome. Check existing issues first and describe the observable problem and intended behavior.
 
-## Workflow
-
-1. Search existing issues and pull requests.
-2. Open an issue before large behavioral or public-schema changes.
-3. Fork the repository or create a focused branch from `main`.
-4. Follow `docs/AI_PULL_REQUEST_GUIDE.md` and `docs/QUALITY_GATES.md`.
-5. Add tests and documentation with the implementation.
-6. Run `bun run check` and `bun run pack:check`.
-7. Open a pull request using the repository template.
-
-Direct pushes to `main` are not accepted. Use Conventional Commits and keep each PR focused on one observable outcome.
-
-## Development environment
+For a source checkout, use Bun 1.4+, Node.js 22.19+ and `rg`:
 
 ```bash
-bun install
-rg --version
+bun install --frozen-lockfile
 bun run check
+bun run pack:check
 ```
 
-Runtime code must remain compatible with Node.js 22+ and Bun 1.4+. Development uses TypeScript 7+ and Bun's native test runner.
+`check` validates formatting, lint, types and builds the shipped artifacts. Public CI also checks that rebuilding leaves those artifacts unchanged. This does not claim that the private regression suite ran; report any additional validation you actually performed.
 
-## Reporting bugs
+Keep changes focused, preserve existing behavior outside the intended change, and include concise reproduction steps or validation evidence in the pull request. Use Conventional Commits and update user documentation when usage changes.
 
-Use the bug report template and include:
+For bug reports, include the package and host versions, operating system, exact tool request, expected behavior, actual result and a minimal non-sensitive example. Do not post private source, credentials or sensitive paths.
 
-- Pi, Bun or Node.js, and ripgrep versions;
-- operating system;
-- exact tool input;
-- actual text and structured details;
-- whether the result reported `complete` or `partial`;
-- a minimal repository fixture when possible.
-
-Do not include private source code, credentials, or sensitive paths in public issues.
-
-## Security issues
-
-Do not open public issues for vulnerabilities. Follow [SECURITY.md](SECURITY.md).
-
-## Community
-
-Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Participation follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

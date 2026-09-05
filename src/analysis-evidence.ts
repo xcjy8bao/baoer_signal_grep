@@ -27,3 +27,17 @@ export function sourceEvidence(document: SourceDocument, range: ByteRange) {
     excerptTruncated: start > lineStart || end < lineEnd,
   };
 }
+
+/** A bounded multi-line excerpt from a selected source range, without splitting Unicode. */
+export function rangeEvidence(document: SourceDocument, range: ByteRange) {
+  const start = document.toCharacterOffset(range.start);
+  const rangeEnd = document.toCharacterOffset(range.end);
+  let end = Math.min(rangeEnd, start + MAX_LINE_CHARACTERS);
+  const code = document.text.charCodeAt(end);
+  if (code >= 0xdc00 && code <= 0xdfff) end -= 1;
+  return {
+    excerpt: `${document.text.slice(start, end)}${end < rangeEnd ? "…" : ""}`,
+    excerptRange: { start: range.start, end: document.toByteOffset(end) },
+    excerptTruncated: end < rangeEnd,
+  };
+}

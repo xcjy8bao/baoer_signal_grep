@@ -27,6 +27,8 @@ import {
 } from "./types.js";
 
 export interface SignalGrepInput extends RawSearchInput {
+  query?: string;
+  column?: number;
   mode?: SearchMode;
   cursor?: string;
   paths?: string[];
@@ -109,6 +111,7 @@ function baseDetails(snapshot: SearchSnapshot, mode: SearchMode): SignalGrepDeta
     totalFiles: snapshot.fileCounts.size,
     returnedMatches: 0,
     snapshotComplete: snapshot.snapshotComplete,
+    ...(snapshot.retention ? { retention: snapshot.retention } : {}),
     scope: searchScope(snapshot.request),
     ...(snapshot.request.redact ? { redactionRequested: true } : {}),
     ...(snapshot.truncatedLines > 0 ? { lineContentTruncated: snapshot.truncatedLines } : {}),
@@ -153,7 +156,8 @@ function scopeExpansionNote(scope: SearchScopeDetails | undefined, totalMatches:
 
 function completenessNote(snapshot: SearchSnapshot): string {
   if (snapshot.snapshotComplete) return "complete snapshot";
-  return `PARTIAL snapshot: retained ${snapshot.matches.length} of ${snapshot.totalMatches} matches; narrow the search to retrieve all matches`;
+  const reasons = snapshot.retention?.reasons.join("; ");
+  return `PARTIAL snapshot: retained ${snapshot.matches.length} of ${snapshot.totalMatches} matches; ${reasons ? `${reasons}; ` : ""}narrow the search to retrieve all matches`;
 }
 
 function sourceVerificationNote(details: SignalGrepDetails): string {
@@ -199,6 +203,9 @@ function attachContextBudget(
 
 function rejectCursorOnlyOptions(input: SignalGrepInput): void {
   const ignored: string[] = [];
+  if (input.scope !== undefined) ignored.push("scope");
+  if (input.wholeWord !== undefined) ignored.push("wholeWord");
+  if (input.query !== undefined) ignored.push("query");
   if (input.pattern !== undefined) ignored.push("pattern");
   if (input.glob !== undefined) ignored.push("glob");
   if (input.exclude !== undefined) ignored.push("exclude");
@@ -271,6 +278,9 @@ export class SignalGrepService {
     const mode = input.mode ?? "auto";
     const contextBudget = selectContextBudget(input, mode, options.contextBudget);
     if (isEvidenceRequest(input)) return this.#evidence.search(input, cwd, signal);
+    if (input.column !== undefined)
+      throw new SignalGrepError("column requires semantic navigation");
+    if (input.query !== undefined) throw new SignalGrepError("query requires a discovery mode");
     if (input.maxFilesToParse !== undefined) {
       throw new SignalGrepError("maxFilesToParse is only valid for structural analysis requests");
     }
@@ -288,7 +298,7 @@ export class SignalGrepService {
 
     const request = normalizeRequest(input);
     let scan = await this.#runRipgrep(request, cwd, signal);
-    if (scan.totalMatches === 0 && request.path !== undefined) {
+    if (scan.totalMatches === 0 && request.path !== undefined && request.scope !== "strict") {
       const { path: requestedPath, ...projectRequest } = request;
       scan = await this.#runRipgrep(
         { ...projectRequest, expandedFromPath: requestedPath },
@@ -306,6 +316,8 @@ export class SignalGrepService {
           text: emptyResultText(details.scope ?? searchScope(snapshot.request)),
           details,
         };
+      } else if (snapshot.matches.length === 0) {
+        result = await this.#summary(snapshot, mode, cwd, signal);
       } else if (mode === "summary") {
         result = await this.#summary(snapshot, mode, cwd, signal);
       } else if (mode === "matches") {
@@ -431,7 +443,7 @@ export class SignalGrepService {
     );
     const details = baseDetails(snapshot, mode);
     const cursor =
-      snapshot.matches.length > 0
+      snapshot.fileCounts.size > 0
         ? this.#snapshots.cursor(snapshot, summary.nextOffset, "summary")
         : undefined;
     const fileRange =
@@ -466,7 +478,7 @@ export class SignalGrepService {
           }
         : undefined;
     const matchesRequest =
-      cursor && summary.shownPaths.length
+      cursor && snapshot.matches.length > 0 && summary.shownPaths.length
         ? { cursor, paths: summary.shownPaths.slice(0, 1), ...redaction }
         : undefined;
     const followUp = cursor

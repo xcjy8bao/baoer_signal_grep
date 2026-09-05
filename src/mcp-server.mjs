@@ -7,7 +7,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.0.0",
+  version: "1.2.0",
   description: "Context-efficient project search and bounded code analysis for Pi and MCP clients",
   keywords: [
     "ai-agent",
@@ -35,22 +35,22 @@ var package_default = {
     url: "git+https://github.com/xcjy8bao/baoer_signal_grep.git"
   },
   bin: {
-    baoer_signal_grep_mcp: "./src/mcp-server.mjs"
+    baoer_signal_grep_mcp: "./src/mcp-server.mjs",
+    baoer_signal_grep_model: "./src/concept-worker.mjs"
   },
   files: [
     "src/**/*.ts",
     "src/syntax-worker.mjs",
     "src/mcp-server.mjs",
     "src/syntax-worker.toml",
-    "docs/AI_PULL_REQUEST_GUIDE.md",
-    "docs/ARCHITECTURE.md",
-    "docs/QUALITY_GATES.md",
     "README.md",
     "README.zh-CN.md",
     "CONTRIBUTING.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "src/concept-worker.mjs",
+    "plugins/baoer-signal-grep/**"
   ],
   type: "module",
   publishConfig: {
@@ -60,24 +60,40 @@ var package_default = {
   },
   scripts: {
     "build:worker": "bun run scripts/build-syntax-worker.ts",
-    "check:worker": "bun run scripts/check-syntax-worker.ts",
+    "check:worker": "bun run doc/testing/scripts/check-syntax-worker.ts",
     "build:mcp": "bun run scripts/build-mcp-server.ts",
-    "check:mcp": "bun run scripts/check-mcp-server.ts",
+    "check:mcp": "bun run doc/testing/scripts/check-mcp-server.ts",
     format: "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    lint: "oxlint --type-aware --deny-warnings --report-unused-disable-directives .",
+    lint: "oxlint --type-aware --deny-warnings --report-unused-disable-directives src scripts",
     typecheck: "tsc --noEmit",
-    test: "bun test",
-    "test:node": "bun run scripts/node-smoke.ts",
-    benchmark: "bun run scripts/benchmark.ts",
-    check: "bun run format:check && bun run check:worker && bun run check:mcp && bun run lint && bun run typecheck && bun test && bun run test:node && bun run benchmark",
-    "pack:check": "bun pm pack --dry-run"
+    test: "bun test ./doc/testing/test",
+    "test:node": "bun run doc/testing/scripts/node-smoke.ts",
+    benchmark: "bun run doc/testing/scripts/benchmark.ts",
+    check: "bun run format:check && bun run lint && bun run typecheck && bun run build",
+    "pack:check": "bun pm pack --dry-run",
+    "setup:concept": "bun run src/concept-worker.mjs --install-model",
+    "build:concept-worker": "bun run scripts/build-concept-worker.ts",
+    "check:concept-worker": "bun run doc/testing/scripts/check-concept-worker.ts",
+    "test:concept": "bun run doc/testing/scripts/test-concept.ts",
+    "evaluate:investigations": "bun run doc/testing/scripts/investigation-eval.ts",
+    "build:search-plugin": "bun run scripts/build-search-plugin.ts",
+    "check:search-plugin": "bun run doc/testing/scripts/check-search-plugin.ts",
+    "test:mcp-hosts": "bun run doc/testing/scripts/mcp-host-verification.ts",
+    build: "bun run build:worker && bun run build:concept-worker && bun run build:search-plugin && bun run build:mcp",
+    "format:local:check": "bun run doc/testing/scripts/format-local.ts --check",
+    "lint:local": "oxlint --no-ignore --type-aware --tsconfig doc/testing/tsconfig.json --deny-warnings --report-unused-disable-directives src scripts doc/testing/test doc/testing/scripts",
+    "typecheck:local": "tsc --noEmit --project doc/testing/tsconfig.json",
+    "check:local": "bun run format:check && bun run format:local:check && bun run check:search-plugin && bun run check:concept-worker && bun run check:worker && bun run check:mcp && bun run lint:local && bun run typecheck:local && bun run test && bun run test:node && bun run benchmark"
   },
   dependencies: {
     "@ast-grep/lang-go": "0.0.6",
     "@ast-grep/napi": "0.45.2",
+    "@huggingface/transformers": "3.8.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     typebox: "1.3.19",
+    typescript: "7.0.2",
+    "web-tree-sitter": "0.25.10",
     zod: "4.5.4"
   },
   devDependencies: {
@@ -88,7 +104,8 @@ var package_default = {
     oxfmt: "^0.65.0",
     oxlint: "^1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
-    typescript: "^7.0.2"
+    "tree-sitter-bash": "0.25.1",
+    "tree-sitter-powershell": "0.26.4"
   },
   peerDependencies: {
     "@earendil-works/pi-ai": "*",
@@ -168,6 +185,8 @@ var MAX_SELECTED_PATHS = 20;
 var MAX_INSPECT_TARGETS = 5;
 var MAX_DISPLAYED_OCCURRENCES = 20;
 var MAX_STORED_MATCHES = 50000;
+var MAX_STORED_OCCURRENCES = 200000;
+var MAX_SEARCH_STORAGE_BYTES = 32 * 1024 * 1024;
 var MAX_LINE_CHARACTERS = 500;
 var MAX_RESULT_BYTES = 16 * 1024;
 var MAX_CONTEXT_LINES = 20;
@@ -207,6 +226,62 @@ function excerptText(text, focusStart = 0, focusEnd = focusStart, maximumCharact
     startCharacter,
     endCharacter
   };
+}
+
+// src/search-retention.ts
+class SearchRetention {
+  #bytes = 0;
+  #metadataBytes = 0;
+  #occurrences = 0;
+  #reasons = new Set;
+  maxBytes;
+  maxOccurrences;
+  constructor(maxBytes = MAX_SEARCH_STORAGE_BYTES, maxOccurrences = MAX_STORED_OCCURRENCES) {
+    this.maxBytes = maxBytes;
+    this.maxOccurrences = maxOccurrences;
+    for (const value of [maxBytes, maxOccurrences]) {
+      if (!Number.isSafeInteger(value) || value < 1)
+        throw new SignalGrepError("Search retention limits must be positive safe integers");
+    }
+  }
+  file(displayPath, absolutePath) {
+    const bytes = Buffer.byteLength(JSON.stringify([displayPath, absolutePath])) + 512;
+    const metadataLimit = Math.floor(this.maxBytes / 4);
+    if (this.#metadataBytes + bytes > metadataLimit)
+      throw new SignalGrepError(`File-summary storage exceeds its ${String(metadataLimit)}-byte share of the search budget; narrow the path or filters`);
+    this.#bytes += bytes;
+    this.#metadataBytes += bytes;
+  }
+  canRetainOccurrences(count) {
+    if (this.#occurrences + count <= this.maxOccurrences)
+      return true;
+    this.#reasons.add(`Occurrence retention reached the ${String(this.maxOccurrences)} limit`);
+    return false;
+  }
+  retain(match) {
+    if (!this.canRetainOccurrences(match.occurrences.length))
+      return false;
+    const bytes = Buffer.byteLength(JSON.stringify(match)) + 1;
+    if (this.#bytes - this.#metadataBytes + bytes > this.maxBytes - Math.floor(this.maxBytes / 4)) {
+      this.#reasons.add(`Search evidence retention reached the ${String(this.maxBytes)}-byte limit`);
+      return false;
+    }
+    this.#bytes += bytes;
+    this.#occurrences += match.occurrences.length;
+    return true;
+  }
+  noteLimit(reason) {
+    this.#reasons.add(reason);
+  }
+  get details() {
+    return {
+      accountedBytes: this.#bytes,
+      retainedOccurrences: this.#occurrences,
+      maxBytes: this.maxBytes,
+      maxOccurrences: this.maxOccurrences,
+      reasons: [...this.#reasons]
+    };
+  }
 }
 
 // src/capped-lines.ts
@@ -412,7 +487,11 @@ async function runOwnedProcess(options, consumeOutput) {
   if (signal?.aborted)
     throw abortError();
   const spawnOptions = { cwd, windowsHide: true, ...env ? { env } : {} };
-  const child = input === undefined ? spawn(executable, args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] }) : spawn(executable, args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
+  const child = input === undefined && !options.interactive ? spawn(executable, args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] }) : spawn(executable, args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
+  if (options.interactive)
+    child.stdin?.on("error", () => {
+      return;
+    });
   const inputComplete = new Promise((resolveInput, rejectInput) => {
     if (input === undefined || child.stdin === null) {
       resolveInput();
@@ -467,7 +546,11 @@ async function runOwnedProcess(options, consumeOutput) {
   if (signal?.aborted)
     terminate();
   try {
-    const [code] = await Promise.all([closePromise, consumeOutput(child.stdout), inputComplete]);
+    const [code] = await Promise.all([
+      closePromise,
+      consumeOutput(child.stdout, child.stdin),
+      inputComplete
+    ]);
     if (signal?.aborted)
       throw abortError();
     if (spawnError)
@@ -825,6 +908,7 @@ function buildRipgrepArguments(request, cwd, validatedSearchPath) {
 }
 function patternArguments(request) {
   return [
+    ...request.wholeWord ? ["--word-regexp"] : [],
     ...request.literal ? ["--fixed-strings"] : [],
     request.ignoreCase === true ? "--ignore-case" : request.ignoreCase === false ? "--case-sensitive" : "--smart-case"
   ];
@@ -846,6 +930,7 @@ function createRipgrepRunner(options = {}) {
     if (signal?.aborted)
       throw abortError();
     const matches = [];
+    const retention = new SearchRetention(options.maxStoredBytes, options.maxStoredOccurrences);
     const fileCounts = new Map;
     const lossyPaths = new Set;
     let totalMatches = 0;
@@ -871,28 +956,35 @@ function createRipgrepRunner(options = {}) {
       if (rawPath.encoding === "utf-8")
         lossyPaths.add(path.absolutePath);
       const submatches = event.data.submatches ?? [];
-      const occurrences = createOccurrences(event.data.line_number, rawContent, submatches);
-      const primaryOccurrence = occurrences[0];
+      if (submatches.some((match) => match.end > rawContent.bytes.length))
+        throw new SignalGrepError("ripgrep emitted a submatch outside its matching line");
+      const primaryOccurrence = submatches[0];
       let focusStart = 0;
       let focusEnd = 0;
       if (primaryOccurrence) {
-        focusStart = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteStart, "utf-16");
-        focusEnd = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteEnd, "utf-16");
+        focusStart = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.start, "utf-16");
+        focusEnd = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.end, "utf-16");
       }
       const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
       const { text: lineContent, truncated: lineTruncated } = excerpt;
       totalMatches += 1;
+      if (!fileCounts.has(path.displayPath))
+        retention.file(path.displayPath, path.absolutePath);
       fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
       if (lineTruncated)
         truncatedLines += 1;
-      if (matches.length < maxStoredMatches) {
-        matches.push({
+      if (matches.length >= maxStoredMatches)
+        retention.noteLimit(`Matching-line retention reached the ${String(maxStoredMatches)} limit`);
+      if (matches.length < maxStoredMatches && retention.canRetainOccurrences(submatches.length)) {
+        const match = {
           ...path,
           lineNumber: event.data.line_number,
           lineContent,
           lineTruncated,
-          occurrences
-        });
+          occurrences: createOccurrences(event.data.line_number, rawContent, submatches)
+        };
+        if (retention.retain(match))
+          matches.push(match);
       }
     };
     try {
@@ -923,7 +1015,8 @@ function createRipgrepRunner(options = {}) {
         fileCounts,
         sourceRevisions,
         snapshotComplete: matches.length === totalMatches,
-        truncatedLines
+        truncatedLines,
+        retention: retention.details
       };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError")
@@ -1112,11 +1205,428 @@ function createCtagsStructureProvider(options = {}) {
 // src/service.ts
 import { createHash as createHash3 } from "node:crypto";
 
-// src/evidence-service.ts
-import { dirname as dirname3, resolve as resolve13 } from "node:path";
+// src/analysis-evidence.ts
+function sourceEvidence(document, range) {
+  const line = document.lineAt(range.start);
+  const lineRange = document.lineRange(line);
+  const lineStart = document.toCharacterOffset(lineRange.start);
+  const lineEnd = document.toCharacterOffset(lineRange.end);
+  const focus = document.toCharacterOffset(range.start);
+  const focusEnd = document.toCharacterOffset(range.end);
+  let start = Math.max(lineStart, focus - Math.floor(Math.max(0, MAX_LINE_CHARACTERS - (focusEnd - focus)) / 2));
+  let end = Math.min(lineEnd, start + MAX_LINE_CHARACTERS);
+  const startCode = document.text.charCodeAt(start);
+  const endCode = document.text.charCodeAt(end);
+  if (startCode >= 56320 && startCode <= 57343)
+    start--;
+  if (endCode >= 56320 && endCode <= 57343)
+    end--;
+  const excerptRange = { start: document.toByteOffset(start), end: document.toByteOffset(end) };
+  return {
+    range: { ...range },
+    line,
+    excerpt: `${start > lineStart ? "…" : ""}${document.text.slice(start, end)}${end < lineEnd ? "…" : ""}`,
+    excerptRange,
+    excerptTruncated: start > lineStart || end < lineEnd
+  };
+}
+function rangeEvidence(document, range) {
+  const start = document.toCharacterOffset(range.start);
+  const rangeEnd = document.toCharacterOffset(range.end);
+  let end = Math.min(rangeEnd, start + MAX_LINE_CHARACTERS);
+  const code = document.text.charCodeAt(end);
+  if (code >= 56320 && code <= 57343)
+    end -= 1;
+  return {
+    excerpt: `${document.text.slice(start, end)}${end < rangeEnd ? "…" : ""}`,
+    excerptRange: { start: range.start, end: document.toByteOffset(end) },
+    excerptTruncated: end < rangeEnd
+  };
+}
 
-// src/analysis-store.ts
-import { randomUUID } from "node:crypto";
+// src/semantic-sources.ts
+import { pathToFileURL } from "node:url";
+import { realpath as realpath3 } from "node:fs/promises";
+import { resolve as resolve5 } from "node:path";
+async function semanticSources(cwd, documents) {
+  const known = new Map;
+  const policy = new SearchPathPolicy(cwd);
+  for (const document of documents) {
+    const absolute = resolve5(cwd, document.path);
+    known.set(absolute, document);
+    known.set(await realpath3(absolute), document);
+  }
+  return async (path) => {
+    const absolute = resolve5(cwd, path);
+    policy.assertPath(absolute);
+    const direct = known.get(absolute);
+    if (direct)
+      return direct;
+    try {
+      return known.get(await realpath3(absolute));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+        return;
+      throw error;
+    }
+  };
+}
+async function semanticUri(cwd, path) {
+  return pathToFileURL(await realpath3(resolve5(cwd, path))).href;
+}
+
+// src/impact-bindings.ts
+import { resolve as resolve6 } from "node:path";
+
+// src/semantic-protocol.ts
+import { fileURLToPath } from "node:url";
+
+// src/owned-json-rpc.ts
+var MAX_RPC_FRAME_BYTES = 16 * 1024 * 1024;
+var MAX_RPC_TOTAL_BYTES = 64 * 1024 * 1024;
+function rpcRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+class JsonRpcChannel {
+  #stdin;
+  #pending = new Map;
+  #onRequest;
+  #nextId = 0;
+  #closed = false;
+  #inputEnded = false;
+  constructor(stdin, onRequest) {
+    this.#stdin = stdin;
+    this.#onRequest = onRequest;
+  }
+  async#send(message) {
+    if (this.#closed)
+      throw new SignalGrepError("Language-service connection closed");
+    const body = Buffer.from(JSON.stringify(message));
+    if (body.length > MAX_RPC_FRAME_BYTES)
+      throw new SignalGrepError("Language-service request exceeds the frame budget");
+    const frame = Buffer.concat([
+      Buffer.from(`Content-Length: ${String(body.length)}\r
+\r
+`),
+      body
+    ]);
+    await new Promise((resolve6, reject) => {
+      this.#stdin.write(frame, (error) => error ? reject(error) : resolve6());
+    });
+  }
+  async request(method, params) {
+    if (this.#pending.size >= 32)
+      throw new SignalGrepError("Language-service request concurrency exceeded");
+    const id = ++this.#nextId;
+    const deferred = Promise.withResolvers();
+    this.#pending.set(id, deferred);
+    try {
+      const [, response] = await Promise.all([
+        this.#send({ jsonrpc: "2.0", id, method, params }),
+        deferred.promise
+      ]);
+      return response;
+    } finally {
+      this.#pending.delete(id);
+    }
+  }
+  notify(method, params) {
+    return this.#send({ jsonrpc: "2.0", method, ...params === undefined ? {} : { params } });
+  }
+  async accept(value) {
+    if (!rpcRecord(value) || value.jsonrpc !== "2.0")
+      throw new SignalGrepError("Invalid language-service JSON-RPC message");
+    if (typeof value.method === "string") {
+      if (this.#inputEnded)
+        return;
+      if (value.id === undefined)
+        return;
+      if (typeof value.id !== "number" && typeof value.id !== "string")
+        throw new SignalGrepError("Invalid language-service request id");
+      const result = this.#onRequest(value.method, value.params);
+      await this.#send({ jsonrpc: "2.0", id: value.id, result });
+      return;
+    }
+    if (typeof value.id !== "number")
+      throw new SignalGrepError("Invalid language-service response id");
+    const pending = this.#pending.get(value.id);
+    if (!pending)
+      throw new SignalGrepError("Unexpected language-service response id");
+    if (value.error !== undefined) {
+      if (!rpcRecord(value.error) || typeof value.error.message !== "string")
+        throw new SignalGrepError("Invalid language-service error");
+      pending.reject(new SignalGrepError(`Language service: ${value.error.message}`));
+    } else if ("result" in value)
+      pending.resolve(value.result);
+    else
+      throw new SignalGrepError("Language-service response omitted its result");
+  }
+  endInput() {
+    if (this.#pending.size)
+      throw new Error("Cannot end JSON-RPC input with pending requests");
+    this.#inputEnded = true;
+    this.#stdin.end();
+  }
+  close() {
+    this.#closed = true;
+    for (const pending of this.#pending.values())
+      pending.reject(new SignalGrepError("Language service closed before responding"));
+    this.#pending.clear();
+  }
+}
+async function readMessages(stdout, channel) {
+  let buffered = Buffer.alloc(0);
+  let total = 0;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    for await (const chunk of stdout) {
+      total += chunk.byteLength;
+      if (total > MAX_RPC_TOTAL_BYTES)
+        throw new SignalGrepError("Language-service output exceeds the 64 MiB protocol budget");
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length) {
+        const boundary = buffered.indexOf(`\r
+\r
+`);
+        if (boundary < 0) {
+          if (buffered.length > 8192)
+            throw new SignalGrepError("Language-service header exceeds the framing budget");
+          break;
+        }
+        if (boundary > 8192)
+          throw new SignalGrepError("Language-service header exceeds the framing budget");
+        const headers = buffered.subarray(0, boundary).toString("ascii");
+        const fields = [...headers.matchAll(/^Content-Length:\s*(\d+)\s*$/gim)];
+        if (fields.length !== 1)
+          throw new SignalGrepError("Invalid language-service frame header");
+        const length = Number(fields[0]?.[1]);
+        if (!Number.isSafeInteger(length) || length < 0 || length > MAX_RPC_FRAME_BYTES)
+          throw new SignalGrepError("Language-service frame exceeds the 16 MiB limit");
+        const end = boundary + 4 + length;
+        if (buffered.length < end)
+          break;
+        const value = JSON.parse(decoder.decode(buffered.subarray(boundary + 4, end)));
+        buffered = buffered.subarray(end);
+        await channel.accept(value);
+      }
+    }
+    if (buffered.length)
+      throw new SignalGrepError("Language service closed with an incomplete frame");
+  } finally {
+    channel.close();
+  }
+}
+async function runOwnedJsonRpc(options, operation, onRequest) {
+  let completed;
+  const result = await runOwnedProcess({ ...options, interactive: true }, async (stdout, stdin) => {
+    if (!stdin)
+      throw new Error("Missing interactive language-service stdin");
+    const channel = new JsonRpcChannel(stdin, onRequest);
+    try {
+      await Promise.all([
+        readMessages(stdout, channel),
+        operation(channel).then((value) => {
+          completed = { value };
+          return;
+        })
+      ]);
+    } finally {
+      channel.close();
+    }
+  });
+  if (result.code !== 0)
+    throw new SignalGrepError(`Language-service process failed (${String(result.code)}): ${result.stderr}`);
+  if (!completed)
+    throw new Error("Language-service operation did not complete");
+  return completed.value;
+}
+
+// src/semantic-protocol.ts
+var SEMANTIC_MODES = [
+  "definitions",
+  "references",
+  "implementations",
+  "callers",
+  "callees",
+  "dependencies",
+  "dependents"
+];
+function isSemanticMode(mode) {
+  return SEMANTIC_MODES.some((candidate) => candidate === mode);
+}
+function readPosition(value) {
+  if (!rpcRecord(value) || typeof value.line !== "number" || !Number.isSafeInteger(value.line) || value.line < 0 || typeof value.character !== "number" || !Number.isSafeInteger(value.character) || value.character < 0)
+    throw new SignalGrepError("Invalid compiler source position");
+  return { line: value.line, character: value.character };
+}
+function lspRange(value) {
+  if (!rpcRecord(value))
+    throw new SignalGrepError("Invalid compiler source range");
+  const start = readPosition(value.start), end = readPosition(value.end);
+  if (end.line < start.line || end.line === start.line && end.character < start.character)
+    throw new SignalGrepError("Reversed compiler source range");
+  return { start, end };
+}
+function semanticLocation(value) {
+  if (!rpcRecord(value))
+    throw new SignalGrepError("Invalid compiler location");
+  const uri = value.targetUri ?? value.uri;
+  if (typeof uri !== "string" || !uri.startsWith("file:"))
+    throw new SignalGrepError("Compiler returned a non-file location");
+  return {
+    path: fileURLToPath(uri),
+    range: lspRange(value.targetSelectionRange ?? value.selectionRange ?? value.range)
+  };
+}
+function locations(value) {
+  if (value === null)
+    return [];
+  return (Array.isArray(value) ? value : [value]).map(semanticLocation);
+}
+function byteAt(document, position) {
+  const line = document.lineRange(position.line + 1);
+  const character = document.toCharacterOffset(line.start) + position.character;
+  const end = document.toCharacterOffset(line.end);
+  if (character > end || position.line + 1 < document.lineStarts.length && character === end)
+    throw new SignalGrepError("Compiler column is outside the source line");
+  return document.toByteOffset(character);
+}
+function byteRange(document, range) {
+  return { start: byteAt(document, range.start), end: byteAt(document, range.end) };
+}
+function lspPosition(document, character) {
+  const value = document.positionAt(document.toByteOffset(character));
+  return { line: value.line - 1, character: value.column - 1 };
+}
+
+// src/owned-task-queue.ts
+class OwnedTaskQueue {
+  #tail = Promise.resolve();
+  async run(operation, signal) {
+    if (signal?.aborted)
+      throw abortError();
+    const previous = this.#tail;
+    const completed = Promise.withResolvers();
+    this.#tail = previous.then(() => completed.promise);
+    const cancelled = Promise.withResolvers();
+    const abort = () => cancelled.reject(abortError());
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted)
+      abort();
+    try {
+      await Promise.race([previous, cancelled.promise]);
+      if (signal?.aborted)
+        throw abortError();
+      return await operation();
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      completed.resolve();
+    }
+  }
+}
+
+// src/typescript-client.ts
+import { createRequire } from "node:module";
+import { dirname, join as join2 } from "node:path";
+var compilerQueue = new OwnedTaskQueue;
+var TYPESCRIPT_QUERY_TIMEOUT_MS = 20000;
+var preferences = {
+  disableAutomaticTypeAcquisition: true,
+  tsserver: { automaticTypeAcquisition: { enabled: false } },
+  implicitProjectConfig: { checkJs: true, allowJs: true, typeAcquisition: { enabled: false } },
+  preferences: { includePackageJsonAutoImports: "off" }
+};
+function serverRequest(method, params) {
+  if (method === "workspace/configuration") {
+    if (!rpcRecord(params) || !Array.isArray(params.items))
+      throw new SignalGrepError("Invalid language-service configuration request");
+    return params.items.map(() => preferences);
+  }
+  if (method === "client/registerCapability" || method === "client/unregisterCapability" || method === "window/workDoneProgress/create")
+    return null;
+  if (method === "workspace/applyEdit")
+    return { applied: false, failureReason: "Search is read-only" };
+  throw new SignalGrepError(`Unsupported language-service client request: ${method}`);
+}
+function executablePath() {
+  const packageName = `@typescript/typescript-${process.platform}-${process.arch}`;
+  try {
+    const metadata = createRequire(import.meta.url).resolve(`${packageName}/package.json`);
+    return join2(dirname(metadata), "lib", process.platform === "win32" ? "tsc.exe" : "tsc");
+  } catch (error) {
+    throw new SignalGrepError(`TypeScript semantic provider is unavailable for ${process.platform}/${process.arch}; reinstall with optional dependencies enabled`, { cause: error });
+  }
+}
+async function runTypeScript(cwd, documents, operation, parent) {
+  const executable = executablePath();
+  const deadline = new AbortController;
+  const signal = parent ? AbortSignal.any([parent, deadline.signal]) : deadline.signal;
+  const timer = setTimeout(() => deadline.abort(), TYPESCRIPT_QUERY_TIMEOUT_MS);
+  try {
+    return await runOwnedJsonRpc({
+      executable,
+      args: ["--lsp", "--stdio"],
+      cwd,
+      signal,
+      env: { ...process.env, PATH: dirname(executable), GOMEMLIMIT: "256MiB" }
+    }, async (channel) => {
+      const initialized = await channel.request("initialize", {
+        processId: process.pid,
+        rootUri: await semanticUri(cwd, "."),
+        capabilities: {
+          workspace: {
+            configuration: true,
+            didChangeWatchedFiles: { dynamicRegistration: true }
+          },
+          textDocument: {
+            definition: { linkSupport: true },
+            implementation: { linkSupport: true },
+            callHierarchy: {}
+          },
+          general: { positionEncodings: ["utf-16"] }
+        },
+        initializationOptions: { runExternalCode: false, disablePushDiagnostics: true }
+      });
+      if (!rpcRecord(initialized) || !rpcRecord(initialized.capabilities))
+        throw new SignalGrepError("Language service omitted its capabilities");
+      await channel.notify("initialized", {});
+      await channel.notify("workspace/didChangeConfiguration", {
+        settings: { "js/ts": preferences, typescript: preferences, javascript: preferences }
+      });
+      for (const document of documents) {
+        const uri = await semanticUri(cwd, document.path);
+        await channel.notify("textDocument/didOpen", {
+          textDocument: {
+            uri,
+            languageId: /\.tsx$/i.test(document.path) ? "typescriptreact" : /\.jsx$/i.test(document.path) ? "javascriptreact" : /\.[cm]?ts$/i.test(document.path) ? "typescript" : "javascript",
+            version: 1,
+            text: document.text
+          }
+        });
+      }
+      const result = await operation(channel, initialized.capabilities);
+      await channel.request("shutdown", undefined);
+      channel.endInput();
+      return result;
+    }, serverRequest);
+  } catch (error) {
+    if (parent?.aborted)
+      throw abortError();
+    if (deadline.signal.aborted)
+      throw new SignalGrepError(`TypeScript semantic query exceeded the ${String(TYPESCRIPT_QUERY_TIMEOUT_MS)} ms deadline`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function withTypeScript(cwd, documents, operation, parent) {
+  return compilerQueue.run(() => runTypeScript(cwd, documents, operation, parent), parent);
+}
+
+// src/syntax.ts
+import { dirname as dirname2, extname } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/analysis-limits.ts
 var MAX_STRUCTURE_FILES = 200;
@@ -1142,1488 +1652,6 @@ var MAX_SOURCE_CONTINUATIONS = 20;
 var MAX_SOURCE_CONTINUATION_BYTES = 1024 * 1024;
 var MAX_IMPORT_HOPS = 8;
 var MAX_IMPORT_FILES = 20;
-
-// src/analysis-store.ts
-function boundedReasons(reasons) {
-  const unsupportedSuffix = ": syntax unsupported; this source remains unclassified";
-  const unsupported = reasons.filter((reason) => reason.endsWith(unsupportedSuffix)).map((reason) => reason.slice(0, -unsupportedSuffix.length));
-  const unique = [
-    ...new Set(reasons.filter((reason) => !reason.endsWith(unsupportedSuffix))),
-    ...unsupported.length ? [
-      `${String(unsupported.length)} matching file(s) skipped because syntax is unsupported${unsupported.length ? `; examples: ${unsupported.slice(0, 3).join(", ")}` : ""}`
-    ] : []
-  ];
-  const retained = [];
-  let bytes = 2;
-  let omitted = 0;
-  for (const reason of unique) {
-    const reasonBytes = Buffer.byteLength(JSON.stringify(reason)) + 1;
-    if (retained.length >= MAX_ANALYSIS_REASONS || bytes + reasonBytes > MAX_ANALYSIS_REASON_BYTES) {
-      omitted += 1;
-      continue;
-    }
-    retained.push(reason);
-    bytes += reasonBytes;
-  }
-  if (omitted === 0)
-    return retained;
-  let notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
-  while (retained.length > 0 && bytes + Buffer.byteLength(JSON.stringify(notice)) + 1 > MAX_ANALYSIS_REASON_BYTES) {
-    const removed = retained.pop();
-    if (removed === undefined)
-      break;
-    bytes -= Buffer.byteLength(JSON.stringify(removed)) + 1;
-    omitted += 1;
-    notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
-  }
-  retained.push(notice);
-  return retained;
-}
-
-class AnalysisStore {
-  #items = new Map;
-  #expired = new Set;
-  #now;
-  constructor(now = Date.now) {
-    this.#now = now;
-  }
-  clear() {
-    for (const id of this.#items.keys())
-      this.#rememberExpired(id);
-    this.#items.clear();
-  }
-  create(result, summarize, retentionPriority) {
-    this.#expire();
-    const bounded = {
-      ...result,
-      reasons: boundedReasons(result.reasons),
-      items: [],
-      coverage: { ...result.coverage, retention: "complete" }
-    };
-    let bytes = Buffer.byteLength(JSON.stringify(bounded));
-    const candidates = result.items.map((item, index) => ({ item, index })).toSorted((left, right) => (retentionPriority?.(left.item) ?? 0) - (retentionPriority?.(right.item) ?? 0) || left.index - right.index);
-    const retainedIndices = [];
-    const rebuildItems = () => {
-      const retained = new Set(retainedIndices);
-      bounded.items = result.items.filter((_item, index) => retained.has(index)).map((item) => structuredClone(item));
-    };
-    for (const candidate of candidates) {
-      const { item } = candidate;
-      const itemBytes = Buffer.byteLength(JSON.stringify(item)) + 1;
-      if (retainedIndices.length >= MAX_ANALYSIS_RESULTS || bytes + itemBytes > MAX_ANALYSIS_STORAGE_BYTES - ANALYSIS_METADATA_RESERVE_BYTES) {
-        bounded.partial = true;
-        if (bounded.coverage)
-          bounded.coverage.retention = "partial";
-        bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
-        break;
-      }
-      retainedIndices.push(candidate.index);
-      bytes += itemBytes;
-    }
-    rebuildItems();
-    if (summarize)
-      Object.assign(bounded, summarize(bounded.items));
-    bytes = Buffer.byteLength(JSON.stringify(bounded));
-    while (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024 && bounded.items.length > 0) {
-      retainedIndices.pop();
-      rebuildItems();
-      bounded.partial = true;
-      if (bounded.coverage)
-        bounded.coverage.retention = "partial";
-      if (!bounded.reasons.includes("Analysis storage limit: 50,000 items / 32 MiB; narrow the query"))
-        bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
-      if (summarize)
-        Object.assign(bounded, summarize(bounded.items));
-      bytes = Buffer.byteLength(JSON.stringify(bounded));
-    }
-    bounded.reasons = boundedReasons(bounded.reasons);
-    bytes = Buffer.byteLength(JSON.stringify(bounded));
-    if (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024)
-      throw new SignalGrepError("Analysis metadata exceeds the storage budget");
-    while (this.#items.size >= MAX_ANALYSIS_SNAPSHOTS || this.#totalBytes() + bytes > MAX_ANALYSIS_STORAGE_BYTES || this.#totalItems() + bounded.items.length > MAX_ANALYSIS_RESULTS) {
-      const oldest = [...this.#items.values()].toSorted((a, b) => a.touched - b.touched)[0];
-      if (!oldest)
-        throw new SignalGrepError("Analysis metadata exceeds the storage budget");
-      this.#items.delete(oldest.id);
-      this.#rememberExpired(oldest.id);
-    }
-    const id = randomUUID();
-    this.#items.set(id, { id, result: bounded, bytes, touched: this.#now() });
-    return `${id}.analysis.0`;
-  }
-  resolve(cursor) {
-    this.#expire();
-    const match = /^([a-f0-9-]+)\.analysis\.([0-9a-z]+)$/.exec(cursor);
-    if (!match)
-      throw new CursorError("Invalid analysis cursor");
-    const id = match[1];
-    const rawOffset = match[2];
-    if (!id || !rawOffset)
-      throw new CursorError("Invalid analysis cursor");
-    const offset = Number.parseInt(rawOffset, 36);
-    const stored = this.#items.get(id);
-    if (!stored)
-      throw new CursorError(this.#expired.has(id) ? "Analysis cursor expired or was evicted; run the query again" : "Analysis cursor was not found; run the query again", this.#expired.has(id) ? "E_CURSOR_EXPIRED" : "E_CURSOR_NOT_FOUND");
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset.toString(36) !== rawOffset || offset > stored.result.items.length)
-      throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
-    stored.touched = this.#now();
-    return { stored, offset };
-  }
-  item(cursor, index) {
-    const { stored } = this.resolve(cursor);
-    if (!Number.isSafeInteger(index) || index < 1)
-      throw new CursorError("matchIndex must be a positive analysis item index");
-    const item = stored.result.items[index - 1];
-    if (!item)
-      throw new CursorError("Analysis item is outside the retained result");
-    return structuredClone(item);
-  }
-  page(cursor) {
-    const { stored, offset } = this.resolve(cursor);
-    const { result } = stored;
-    const items = [];
-    const scope = result.scope ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.` : "";
-    const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
-    const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${result.termCounts ? `Term counts: ${JSON.stringify(result.termCounts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
-    const notice = result.reasons.length ? `
-${result.reasons.map((reason) => `[${reason}]`).join(`
-`)}` : "";
-    const rows = [];
-    let bytes = Buffer.byteLength(header + notice) + 1200;
-    let next = offset;
-    for (let index = offset;index < result.items.length && items.length < 30; index += 1) {
-      const item = result.items[index];
-      if (!item)
-        throw new Error("Analysis item unavailable");
-      const inspect = item.source && item.range ? {
-        mode: "inspect",
-        cursor: `${stored.id}.analysis.0`,
-        matchIndex: index + 1,
-        ...result.redact ? { redact: true } : {}
-      } : undefined;
-      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `
-${item.excerpt}` : ""}${item.details ? `
-Evidence: ${JSON.stringify(item.details)}` : ""}${inspect ? `
-Inspect: ${JSON.stringify(inspect)}` : ""}`;
-      const rowBytes = Buffer.byteLength(row) + 2;
-      if (bytes + rowBytes > MAX_RESULT_BYTES) {
-        if (items.length === 0)
-          throw new SignalGrepError("Analysis item exceeds the response limit; narrow its source");
-        break;
-      }
-      rows.push(row);
-      bytes += rowBytes;
-      next = index + 1;
-      items.push({ ...item, index: index + 1, ...inspect ? { inspect } : {} });
-    }
-    const nextRequest = next < result.items.length ? {
-      cursor: `${stored.id}.analysis.${next.toString(36)}`,
-      ...result.redact ? { redact: true } : {}
-    } : undefined;
-    const text = [
-      header + notice,
-      ...rows,
-      ...nextRequest ? [`Next request: ${JSON.stringify(nextRequest)}`] : []
-    ].join(`
-
-`);
-    if (Buffer.byteLength(text) > MAX_RESULT_BYTES)
-      throw new SignalGrepError("Analysis metadata exceeds the output limit");
-    return {
-      text,
-      details: {
-        version: 1,
-        mode: result.kind === "outline" || result.kind === "imports" || result.kind === "tests" || result.kind === "impact" ? result.kind : "matches",
-        status: result.partial ? "partial" : "complete",
-        snapshotComplete: !result.partial,
-        totalMatches: result.items.length,
-        storedMatches: result.items.length,
-        returnedMatches: items.length,
-        totalFiles: new Set(result.items.map((item) => item.path)).size,
-        cursor: nextRequest?.cursor ?? `${stored.id}.analysis.0`,
-        ...nextRequest ? { nextRequest } : {},
-        analysis: {
-          kind: result.kind,
-          unit: result.unit,
-          totalItems: result.items.length,
-          returnedItems: items.length,
-          items,
-          reasons: result.reasons,
-          ...result.filesRead !== undefined ? { filesRead: result.filesRead } : {},
-          ...result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {},
-          ...result.changes ? { changes: result.changes } : {},
-          ...result.counts ? { counts: result.counts } : {},
-          ...result.termCounts ? { termCounts: result.termCounts } : {},
-          ...result.scope ? { scope: result.scope } : {},
-          ...result.chunks !== undefined ? { chunks: result.chunks } : {},
-          ...result.coverage ? { coverage: result.coverage } : {},
-          ...result.stats ? { stats: result.stats } : {}
-        },
-        ...result.scope ? { scope: result.scope } : {},
-        ...result.redact ? { redactionRequested: true } : {}
-      }
-    };
-  }
-  #expire() {
-    for (const [id, item] of this.#items)
-      if (this.#now() - item.touched >= ANALYSIS_TTL_MS) {
-        this.#items.delete(id);
-        this.#rememberExpired(id);
-      }
-  }
-  #totalBytes() {
-    return [...this.#items.values()].reduce((n, item) => n + item.bytes, 0);
-  }
-  #totalItems() {
-    return [...this.#items.values()].reduce((n, item) => n + item.result.items.length, 0);
-  }
-  #rememberExpired(id) {
-    this.#expired.add(id);
-    while (this.#expired.size > MAX_ANALYSIS_SNAPSHOTS * 4) {
-      const oldest = this.#expired.values().next().value;
-      if (oldest === undefined)
-        break;
-      this.#expired.delete(oldest);
-    }
-  }
-}
-
-// src/git-repository.ts
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, relative as relative3, resolve as resolve5, sep as sep2 } from "node:path";
-
-// src/git-process.ts
-var GIT_READ_ARGUMENTS = [
-  "--no-pager",
-  "--no-replace-objects",
-  "--no-optional-locks",
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  "core.untrackedCache=false",
-  "-c",
-  "submodule.recurse=false"
-];
-var MINIMUM_NO_LAZY_FETCH_VERSION = [2, 45, 0];
-var gitCapabilities = new Map;
-function gitReadEnvironment() {
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_"))),
-    GIT_CONFIG_COUNT: "0",
-    GIT_NO_LAZY_FETCH: "1",
-    GIT_NO_REPLACE_OBJECTS: "1",
-    GIT_OPTIONAL_LOCKS: "0",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_PROTOCOL_FROM_USER: "0",
-    LC_ALL: "C"
-  };
-}
-function supportsNoLazyFetch(version) {
-  const match = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(version.trim());
-  if (!match)
-    throw new SignalGrepError("Git returned an unrecognized version string");
-  const actual = [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
-  for (let index = 0;index < MINIMUM_NO_LAZY_FETCH_VERSION.length; index += 1) {
-    const difference = (actual[index] ?? 0) - (MINIMUM_NO_LAZY_FETCH_VERSION[index] ?? 0);
-    if (difference !== 0)
-      return difference > 0;
-  }
-  return true;
-}
-async function gitReadArguments(executable, cwd, signal) {
-  const capabilityKey = `${executable}\x00${process.env.PATH ?? ""}`;
-  let supports = gitCapabilities.get(capabilityKey);
-  if (supports === undefined) {
-    const versionChunks = [];
-    const version = await runOwnedProcess({
-      executable,
-      args: ["--version"],
-      cwd,
-      env: gitReadEnvironment(),
-      ...signal ? { signal } : {}
-    }, async (stdout) => {
-      for await (const chunk of stdout)
-        versionChunks.push(Buffer.from(chunk));
-    });
-    if (version.code !== 0)
-      throw new SignalGrepError("Unable to determine the Git version");
-    supports = supportsNoLazyFetch(Buffer.concat(versionChunks).toString("utf8"));
-    gitCapabilities.set(capabilityKey, supports);
-  }
-  if (supports) {
-    return [...GIT_READ_ARGUMENTS, "--no-lazy-fetch"];
-  }
-  const partial = await runOwnedProcess({
-    executable,
-    args: [
-      ...GIT_READ_ARGUMENTS,
-      "config",
-      "--local",
-      "--get-regexp",
-      "^(extensions\\.partialClone|remote\\..*\\.promisor)$"
-    ],
-    cwd,
-    env: gitReadEnvironment(),
-    ...signal ? { signal } : {}
-  }, async (stdout) => {
-    for await (const chunk of stdout) {}
-  });
-  if (partial.code === 0) {
-    throw new SignalGrepError("Git 2.45 or newer is required for non-fetching reads from a partial/promisor clone");
-  }
-  if (partial.code !== 1) {
-    throw new SignalGrepError("Unable to verify whether this older Git repository is partial");
-  }
-  return [...GIT_READ_ARGUMENTS];
-}
-async function runGitRead(cwd, command, args, options = {}) {
-  const chunks = [];
-  if (options.input && options.input.byteLength > MAX_PROTOCOL_LINE_BYTES) {
-    throw new SignalGrepError(`Git input exceeds the ${String(MAX_PROTOCOL_LINE_BYTES)} byte protocol limit`);
-  }
-  let bytes = 0;
-  const maxBytes = options.maxBytes ?? MAX_PROTOCOL_LINE_BYTES;
-  const result = await runOwnedProcess({
-    executable: options.executable ?? "git",
-    args: [
-      ...await gitReadArguments(options.executable ?? "git", cwd, options.signal),
-      ...command === "ls-tree" ? ["--literal-pathspecs"] : [],
-      command,
-      ...args
-    ],
-    cwd,
-    env: gitReadEnvironment(),
-    ...options.signal ? { signal: options.signal } : {},
-    ...options.input ? { input: options.input } : {}
-  }, async (stdout) => {
-    for await (const chunk of stdout) {
-      bytes += chunk.byteLength;
-      if (bytes > maxBytes) {
-        throw new SignalGrepError(`Git ${command} output exceeds the ${String(maxBytes)} byte limit`);
-      }
-      chunks.push(Buffer.from(chunk));
-    }
-  });
-  if (result.code === null || !(options.allowedCodes ?? [0]).includes(result.code)) {
-    throw new SignalGrepError(`Git ${command} failed: ${result.stderr.trim() || `exit ${String(result.code)}`}`);
-  }
-  return { output: Buffer.concat(chunks), code: result.code };
-}
-function decodeGitPath(bytes) {
-  const value = bytes.toString("utf8");
-  if (!Buffer.from(value, "utf8").equals(bytes)) {
-    throw new SignalGrepError("Git path is not valid UTF-8; path-based source access is unavailable");
-  }
-  return value;
-}
-function splitGitRecords(output) {
-  if (output.length === 0)
-    return [];
-  if (output[output.length - 1] !== 0) {
-    throw new SignalGrepError("Git names protocol ended without a NUL delimiter");
-  }
-  const records = [];
-  let offset = 0;
-  for (let delimiter = output.indexOf(0);delimiter !== -1; delimiter = output.indexOf(0, offset)) {
-    records.push(output.subarray(offset, delimiter));
-    offset = delimiter + 1;
-  }
-  return records;
-}
-
-// src/git-repository.ts
-async function verifyWorktreeRevision(cwd, path, expected) {
-  try {
-    const current = await lstat(resolve5(cwd, path));
-    await assertExistingPathInsideCwd(resolve5(cwd, path), cwd);
-    if (current.isFile() && sameSourceRevision(sourceRevisionFromStats(current), expected))
-      return;
-  } catch (error) {
-    if (!(error instanceof Error && ("code" in error) && error.code === "ENOENT"))
-      throw error;
-  }
-  throw new SignalGrepError("Working source changed during Git comparison; retry a new search");
-}
-function gitPath(cwd, path) {
-  if (path.length === 0 || path.includes("\x00"))
-    throw new SignalGrepError("Git source path is invalid");
-  const absolute = resolve5(cwd, path);
-  const local = relative3(resolve5(cwd), absolute).split(sep2).join("/");
-  if (!isPathInsideCwd(absolute, cwd) || local.split("/").some((part) => part.toLowerCase() === ".git")) {
-    throw new SignalGrepError("Git source path must stay within the working directory and outside .git");
-  }
-  return local;
-}
-async function resolveGitCommit(cwd, ref, signal) {
-  if (ref.trim().length === 0 || ref.length > 1024 || ref.includes("\x00")) {
-    throw new SignalGrepError("Git commit reference must be a nonempty bounded string");
-  }
-  const { output } = await runGitRead(cwd, "rev-parse", ["--verify", "--end-of-options", `${ref}^{commit}`], {
-    ...signal ? { signal } : {},
-    maxBytes: 128
-  });
-  const commit = output.toString("ascii").trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit))
-    throw new SignalGrepError("Git returned an invalid commit identity");
-  return commit;
-}
-async function resolveGitRepository(cwd, signal) {
-  const { output } = await runGitRead(cwd, "rev-parse", ["--show-toplevel"], signal ? { signal, maxBytes: 4096 } : { maxBytes: 4096 });
-  const root = decodeGitPath(output).replace(/\r?\n$/, "");
-  if (!isAbsolute4(root))
-    throw new SignalGrepError("Git returned an invalid repository root");
-  return resolve5(root);
-}
-async function findGitRepository(cwd, signal) {
-  try {
-    return await resolveGitRepository(cwd, signal);
-  } catch (error) {
-    if (error instanceof SignalGrepError && error.message.includes("not a git repository")) {
-      return;
-    }
-    throw error;
-  }
-}
-async function readGitTree(cwd, commit, signal, path) {
-  const { output } = await runGitRead(cwd, "ls-tree", ["-r", "-z", "-l", commit, ...path ? ["--", gitPath(cwd, path)] : []], signal ? { signal } : {});
-  const entries = new Map;
-  for (const record of splitGitRecords(output)) {
-    if (entries.size === MAX_SOURCE_REVISION_FILES)
-      return { entries, limited: true };
-    const tab = record.indexOf(9);
-    const header = record.subarray(0, tab).toString("ascii").trim().split(/\s+/);
-    const [mode, type, blob, size] = header;
-    if (tab < 0 || !mode || !blob || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(blob) || !["blob", "commit"].includes(type ?? "")) {
-      throw new SignalGrepError("Git tree returned an invalid raw object entry");
-    }
-    const local = gitPath(cwd, decodeGitPath(record.subarray(tab + 1)));
-    const byteSize = type === "commit" ? 0 : Number(size);
-    if (!Number.isSafeInteger(byteSize) || byteSize < 0)
-      throw new SignalGrepError("Git tree returned an invalid blob size");
-    entries.set(local, { path: local, mode, blob, size: byteSize });
-  }
-  return { entries, limited: false };
-}
-async function worktreeNames(cwd, signal) {
-  const { output } = await runGitRead(cwd, "ls-files", ["-z", "--cached", "--others", "--exclude-standard"], signal ? { signal } : {});
-  const paths = new Set;
-  for (const record of splitGitRecords(output)) {
-    if (paths.size === MAX_SOURCE_REVISION_FILES)
-      return { paths: [...paths], limited: true };
-    paths.add(gitPath(cwd, decodeGitPath(record)));
-  }
-  return { paths: [...paths], limited: false };
-}
-async function visibleGitPaths(cwd, paths, signal, includePath) {
-  const result = [];
-  for (let start = 0;start < paths.length; start += 128) {
-    const batch = paths.slice(start, start + 128);
-    const { output } = await runGitRead(cwd, "check-ignore", ["--no-index", "-z", "--stdin"], {
-      input: Buffer.from(`${batch.map((path) => `./${path}`).join("\x00")}\x00`),
-      allowedCodes: [0, 1],
-      ...signal ? { signal } : {}
-    });
-    const ignored = new Set(splitGitRecords(output).map((record) => gitPath(cwd, decodeGitPath(record))));
-    for (const path of batch) {
-      if (signal?.aborted)
-        throw abortError();
-      if (!ignored.has(path) && (!includePath || await includePath(path)))
-        result.push(path);
-    }
-  }
-  return result;
-}
-function limitedSource(path, mode, reason) {
-  return { path, mode, sourceStatus: "unavailable", reason };
-}
-async function readGitBlob(cwd, commit, entry, budget, signal) {
-  const { path, mode, blob, size } = entry;
-  if (mode === "120000" || mode === "160000") {
-    return {
-      path,
-      mode,
-      sourceStatus: mode === "120000" ? "symlink" : "submodule",
-      reason: "Symlink and submodule contents are not followed"
-    };
-  }
-  if (size > MAX_SOURCE_FILE_BYTES)
-    return limitedSource(path, mode, `Source exceeds the ${String(MAX_SOURCE_FILE_BYTES)} byte file limit`);
-  if (budget.bytes + size > budget.maxBytes)
-    return limitedSource(path, mode, `Source reads exceed the ${String(budget.maxBytes)} byte request limit`);
-  const { output } = await runGitRead(cwd, "cat-file", ["blob", blob], {
-    maxBytes: size,
-    ...signal ? { signal } : {}
-  });
-  budget.bytes += output.length;
-  if (output.length !== size)
-    throw new SignalGrepError("Git blob size does not match its immutable tree entry");
-  const verifiedBlob = createHash(blob.length === 40 ? "sha1" : "sha256").update(`blob ${String(output.length)}\x00`).update(output).digest("hex");
-  if (verifiedBlob !== blob)
-    throw new SignalGrepError("Git blob bytes do not match their immutable object identity");
-  return {
-    path,
-    mode,
-    sourceStatus: output.includes(0) ? "binary" : "available",
-    ...output.includes(0) ? { reason: "Binary source contains NUL bytes" } : { content: output },
-    origin: { kind: "git", commit, blob },
-    contentHash: createHash("sha256").update(output).digest("hex")
-  };
-}
-async function readWorktreeSource(cwd, path, budget, signal) {
-  const absolute = resolve5(cwd, path);
-  if (signal?.aborted)
-    throw abortError();
-  let discovered = false;
-  try {
-    const before = await lstat(absolute);
-    discovered = true;
-    if (before.isSymbolicLink())
-      return {
-        path,
-        mode: "120000",
-        sourceStatus: "symlink",
-        reason: "Symlink source is not followed"
-      };
-    if (!before.isFile())
-      return {
-        path,
-        mode: "160000",
-        sourceStatus: before.isDirectory() ? "submodule" : "unavailable",
-        reason: "Non-regular source is not read"
-      };
-    const mode = (before.mode & 73) === 0 ? "100644" : "100755";
-    if (before.size > MAX_SOURCE_FILE_BYTES)
-      return limitedSource(path, mode, `Source exceeds the ${String(MAX_SOURCE_FILE_BYTES)} byte file limit`);
-    if (budget.bytes + before.size > budget.maxBytes)
-      return limitedSource(path, mode, `Source reads exceed the ${String(budget.maxBytes)} byte request limit`);
-    await assertExistingPathInsideCwd(absolute, cwd);
-    const handle = await open(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
-        throw new SignalGrepError("Working source changed before reading");
-      const buffer = Buffer.alloc(before.size + 1);
-      let bytes = 0;
-      while (bytes < buffer.length) {
-        if (signal?.aborted)
-          throw abortError();
-        const { bytesRead } = await handle.read(buffer, bytes, Math.min(64 * 1024, buffer.length - bytes), null);
-        if (bytesRead === 0)
-          break;
-        bytes += bytesRead;
-      }
-      budget.bytes += bytes;
-      const after = await lstat(absolute);
-      await assertExistingPathInsideCwd(absolute, cwd);
-      if (bytes !== before.size || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(after)) || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat()))) {
-        throw new SignalGrepError("Working source changed while reading; Git ranges and source cannot be mixed");
-      }
-      const content = buffer.subarray(0, bytes);
-      return {
-        path,
-        mode,
-        sourceStatus: content.includes(0) ? "binary" : "available",
-        ...content.includes(0) ? { reason: "Binary source contains NUL bytes" } : { content },
-        origin: {
-          kind: "worktree",
-          revision: sourceRevisionFromStats(after),
-          contentHash: createHash("sha256").update(content).digest("hex")
-        },
-        contentHash: createHash("sha256").update(content).digest("hex")
-      };
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    if (error instanceof Error && "code" in error) {
-      if (error.code === "ENOENT") {
-        if (discovered)
-          throw new SignalGrepError("Working source disappeared while reading; retry a new search");
-        return { path, mode: "000000", sourceStatus: "absent" };
-      }
-      if (["EACCES", "EPERM", "ELOOP", "ENOTDIR"].includes(String(error.code)))
-        return limitedSource(path, "000000", `Source unavailable: ${String(error.code)}`);
-    }
-    throw error;
-  }
-}
-
-// src/inspect.ts
-import { resolve as resolve6 } from "node:path";
-function resolveInspectionTarget(input, cwd, snapshots) {
-  let path = input.path?.replace(/^@/, "");
-  let line = input.line;
-  let retainedMatch;
-  if (input.matchIndex !== undefined) {
-    if (!input.cursor)
-      throw new SignalGrepError("matchIndex requires a cursor when mode=inspect");
-    if (input.path !== undefined || input.line !== undefined) {
-      throw new SignalGrepError("matchIndex replaces path and line when mode=inspect");
-    }
-    if (!Number.isSafeInteger(input.matchIndex) || input.matchIndex < 1) {
-      throw new SignalGrepError("matchIndex must be a positive integer when mode=inspect");
-    }
-    const { snapshot } = snapshots.resolve(input.cursor);
-    retainedMatch = snapshot.matches[input.matchIndex - 1];
-    if (!retainedMatch) {
-      throw new CursorError(`matchIndex is ${snapshot.snapshotComplete ? "outside this snapshot" : "not retained in this partial snapshot"}.`);
-    }
-    path = retainedMatch.displayPath;
-    line = retainedMatch.lineNumber;
-  }
-  if (!path)
-    throw new SignalGrepError("path is required when mode=inspect");
-  if (line === undefined || !Number.isSafeInteger(line) || line < 1) {
-    throw new SignalGrepError("line must be a positive integer when mode=inspect");
-  }
-  const absolutePath = retainedMatch?.absolutePath ?? resolve6(cwd, path);
-  new SearchPathPolicy(cwd).assertPath(absolutePath);
-  let expectedRevision;
-  if (input.cursor) {
-    const { snapshot } = snapshots.resolve(input.cursor);
-    retainedMatch ??= snapshot.matches.find((match) => match.absolutePath === absolutePath && match.lineNumber === line);
-    if (!retainedMatch) {
-      throw new CursorError("The requested line is not a retained match in this snapshot.");
-    }
-    expectedRevision = snapshot.sourceRevisions.get(absolutePath);
-  }
-  return {
-    path,
-    absolutePath,
-    line,
-    unverified: input.cursor !== undefined && expectedRevision === undefined,
-    ...retainedMatch ? { retainedMatch } : {},
-    ...expectedRevision ? { expectedRevision } : {}
-  };
-}
-
-// src/evidence-candidates.ts
-import { resolve as resolve11 } from "node:path";
-
-// src/historical-paths.ts
-import { lstat as lstat2, mkdir, mkdtemp, open as open2, rm, writeFile } from "node:fs/promises";
-import { constants as constants2 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join as join2, parse, relative as relative5, resolve as resolve8 } from "node:path";
-
-// src/workspace-files.ts
-import { relative as relative4, resolve as resolve7, sep as sep3 } from "node:path";
-class EnumerationLimit extends Error {
-}
-function workspaceRelativePath(cwd, path, policy = new SearchPathPolicy(cwd)) {
-  const absolute = resolve7(cwd, path);
-  policy.assertPath(absolute);
-  const local = relative4(resolve7(cwd), absolute);
-  if (local.split(sep3).some((part) => part.toLowerCase() === ".git"))
-    throw new SignalGrepError("Git internals are excluded from source candidates");
-  return isPathInsideCwd(absolute, cwd) ? local.split(sep3).join("/") : absolute.replaceAll("\\", "/");
-}
-async function listWorkspaceFiles(cwd, signal, options = {}) {
-  const absolutePath = resolve7(cwd, options.path ?? ".");
-  const policy = new SearchPathPolicy(cwd);
-  const searchPath = await policy.resolveSearchTarget(absolutePath);
-  const maxFiles = options.maxFiles ?? MAX_SOURCE_REVISION_FILES;
-  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1)
-    throw new SignalGrepError("Candidate file limit must be a positive integer");
-  const paths = new Set;
-  const reasons = new Set;
-  let bytes = 0;
-  try {
-    const result = await runOwnedProcess({
-      executable: "rg",
-      args: [
-        "--no-config",
-        "--files",
-        "--null",
-        ...options.ignore === false ? ["--no-ignore"] : [],
-        ...options.ignoreParents === false ? ["--no-ignore-parent"] : [],
-        ...fileScopeArguments({
-          hidden: options.hidden ?? true,
-          glob: options.glob ?? [],
-          exclude: options.exclude ?? []
-        }),
-        ...policy.ripgrepGlobArguments(searchPath),
-        "--",
-        searchPath
-      ],
-      cwd,
-      ...signal ? { signal } : {}
-    }, async (stdout) => {
-      let pending = Buffer.alloc(0);
-      for await (const chunk of stdout) {
-        if (signal?.aborted)
-          throw abortError();
-        bytes += chunk.byteLength;
-        if (bytes > MAX_PROTOCOL_LINE_BYTES)
-          throw new EnumerationLimit(`Candidate enumeration exceeds the ${String(MAX_PROTOCOL_LINE_BYTES)} byte protocol limit`);
-        pending = Buffer.concat([pending, chunk]);
-        let delimiter = pending.indexOf(0);
-        while (delimiter >= 0) {
-          const raw = pending.subarray(0, delimiter);
-          const decoded = raw.toString("utf8");
-          if (!Buffer.from(decoded).equals(raw))
-            reasons.add("Some candidate paths are not valid UTF-8");
-          else {
-            const local = workspaceRelativePath(cwd, decoded, policy);
-            if (!paths.has(local) && paths.size >= maxFiles)
-              throw new EnumerationLimit(`Candidate enumeration reached the ${String(maxFiles)} file limit`);
-            paths.add(local);
-          }
-          pending = pending.subarray(delimiter + 1);
-          delimiter = pending.indexOf(0);
-        }
-      }
-      if (pending.length > 0)
-        throw new SignalGrepError("Candidate enumeration ended without a NUL delimiter");
-    });
-    if (result.code !== 0 && result.code !== 1)
-      throw new SignalGrepError(result.stderr.trim() || `Candidate enumeration exited ${String(result.code)}`);
-  } catch (error) {
-    if (!(error instanceof EnumerationLimit))
-      throw error;
-    reasons.add(error.message);
-  }
-  return { paths: [...paths].toSorted(), partial: reasons.size > 0, reasons: [...reasons] };
-}
-
-// src/historical-paths.ts
-function partitionPaths(paths) {
-  const groups = [];
-  for (const path of paths) {
-    const group = groups.find((candidate) => !candidate.some((other) => path.startsWith(`${other}/`) || other.startsWith(`${path}/`)));
-    if (group)
-      group.push(path);
-    else
-      groups.push([path]);
-  }
-  return groups;
-}
-function relevantDirectories(cwd, paths) {
-  const directories = new Set;
-  for (const path of [cwd, ...paths.map((sourcePath) => dirname(resolve8(cwd, sourcePath)))]) {
-    let current = path;
-    for (;; ) {
-      directories.add(current);
-      const parent = dirname(current);
-      if (current === parent)
-        break;
-      current = parent;
-    }
-  }
-  return [...directories];
-}
-async function filterHistoricalPaths(cwd, paths, request, signal) {
-  if (!isPathInsideCwd(resolve8(cwd, request.path ?? "."), cwd)) {
-    throw new SignalGrepError("Historical path filtering requires a path inside cwd");
-  }
-  const selectedPath = workspaceRelativePath(cwd, request.path ?? ".");
-  const candidates = paths.filter((path) => selectedPath.length === 0 || path === selectedPath || path.startsWith(`${selectedPath}/`));
-  const reasons = new Set;
-  if (candidates.length > MAX_STRUCTURE_FILES)
-    reasons.add(`Historical path filtering reached the ${String(MAX_STRUCTURE_FILES)} candidate limit`);
-  const bounded = candidates.slice(0, MAX_STRUCTURE_FILES);
-  if (bounded.length === 0)
-    return { paths: [], partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead: 0 };
-  const root = await mkdtemp(join2(tmpdir(), "baoer_signal_grep-paths-"));
-  const absoluteCwd = resolve8(cwd);
-  const volumeRoot = parse(absoluteCwd).root;
-  const ignoreFiles = [];
-  let ignoreBytesRead = 0;
-  try {
-    for (const directory of relevantDirectories(absoluteCwd, bounded)) {
-      if (isPathInsideCwd(directory, absoluteCwd))
-        await assertExistingPathInsideCwd(directory, absoluteCwd);
-      for (const name of [".ignore", ".rgignore"]) {
-        if (signal?.aborted)
-          throw abortError();
-        const path = join2(directory, name);
-        let discovered = false;
-        try {
-          const before = await lstat2(path);
-          discovered = true;
-          if (!before.isFile())
-            throw new SignalGrepError("Current ignore rules are not regular files; historical path filtering is unavailable");
-          if (before.size > MAX_SOURCE_FILE_BYTES || ignoreBytesRead + before.size > MAX_STRUCTURE_BYTES)
-            throw new SignalGrepError("Current ignore rules exceed the source read budget");
-          const handle = await open2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
-          let bytes;
-          try {
-            if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
-              throw new SignalGrepError("Current ignore rules changed before reading");
-            const buffer = Buffer.alloc(before.size + 1);
-            let used = 0;
-            while (used < buffer.length) {
-              if (signal?.aborted)
-                throw abortError();
-              const chunk = await handle.read(buffer, used, Math.min(64 * 1024, buffer.length - used), null);
-              if (chunk.bytesRead === 0)
-                break;
-              used += chunk.bytesRead;
-            }
-            bytes = buffer.subarray(0, used);
-            const after = await lstat2(path);
-            if (used !== before.size || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(after)) || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
-              throw new SignalGrepError("Current ignore rules changed during historical path filtering");
-          } finally {
-            await handle.close();
-          }
-          ignoreBytesRead += bytes.length;
-          ignoreFiles.push({ local: relative5(volumeRoot, path), bytes });
-        } catch (error) {
-          if (!(error instanceof Error && ("code" in error) && error.code === "ENOENT"))
-            throw error;
-          if (discovered)
-            throw new SignalGrepError("Current ignore rules disappeared during historical path filtering");
-        }
-      }
-    }
-    if (ignoreFiles.length === 0 && request.glob.length === 0 && request.exclude.length === 0 && request.hidden) {
-      return { paths: bounded, partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead };
-    }
-    const visible = new Set;
-    for (const [index, group] of partitionPaths(bounded).entries()) {
-      const tree = join2(root, String(index));
-      const target = join2(tree, relative5(volumeRoot, absoluteCwd));
-      await mkdir(target, { recursive: true });
-      for (const path of group) {
-        const safe = workspaceRelativePath(absoluteCwd, path);
-        const placeholder = resolve8(target, safe);
-        await mkdir(dirname(placeholder), { recursive: true });
-        await writeFile(placeholder, "");
-      }
-      for (const ignore of ignoreFiles) {
-        const destination = join2(tree, ignore.local);
-        await mkdir(dirname(destination), { recursive: true });
-        await writeFile(destination, ignore.bytes);
-      }
-      const privacy = await listWorkspaceFiles(tree, signal, { ignoreParents: false });
-      const prefix = `${relative5(tree, target).split("\\").join("/")}/`;
-      const allowed = new Set(privacy.paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length)));
-      const scoped = await listWorkspaceFiles(target, signal, {
-        glob: request.glob,
-        exclude: request.exclude,
-        hidden: request.hidden,
-        ignore: false
-      });
-      for (const reason of [...privacy.reasons, ...scoped.reasons])
-        reasons.add(reason);
-      const included = new Set(group);
-      for (const path of scoped.paths)
-        if (included.has(path) && allowed.has(path))
-          visible.add(path);
-    }
-    return {
-      paths: [...visible].toSorted(),
-      partial: reasons.size > 0,
-      reasons: [...reasons],
-      ignoreBytesRead
-    };
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
-// src/git-diff.ts
-import { setImmediate } from "node:timers/promises";
-class GitDiffLimitError extends SignalGrepError {
-}
-
-class GitDiffBudget {
-  work = 0;
-  maxWork;
-  signal;
-  constructor(maxWork = MAX_GIT_DIFF_WORK, signal) {
-    this.maxWork = maxWork;
-    this.signal = signal;
-  }
-  tick() {
-    if (this.signal?.aborted)
-      throw abortError();
-    this.work += 1;
-    if (this.work > this.maxWork) {
-      throw new GitDiffLimitError(`Git line comparison exceeds the ${String(this.maxWork)} step limit`);
-    }
-    return this.work % 4096 === 0;
-  }
-}
-async function sourceLines(content, budget) {
-  const lines = [];
-  for (let start = 0;start < content.length; ) {
-    if (budget.tick())
-      await setImmediate();
-    const newline = content.indexOf(10, start);
-    const end = newline === -1 ? content.length : newline + 1;
-    lines.push(content.toString("latin1", start, end));
-    start = end;
-  }
-  return lines;
-}
-function sourceLineCount(content) {
-  if (content.length === 0)
-    return 0;
-  let count = content[content.length - 1] === 10 ? 0 : 1;
-  for (const byte of content)
-    if (byte === 10)
-      count += 1;
-  return count;
-}
-function diagonal(vector, distance, k) {
-  return vector[k + distance + 1] ?? -1;
-}
-function prependLine(ranges, line) {
-  const last = ranges.at(-1);
-  if (last && last.startLine === line + 1)
-    last.startLine = line;
-  else
-    ranges.push({ startLine: line, endLine: line });
-}
-function reconstruct(trace, oldLength, newLength, prefix) {
-  let x = oldLength;
-  let y = newLength;
-  const oldRanges = [];
-  const newRanges = [];
-  for (let distance = trace.length - 1;distance > 0; distance -= 1) {
-    const previous = trace[distance - 1];
-    if (!previous)
-      throw new Error("Missing Git line comparison trace");
-    const k = x - y;
-    const previousK = k === -distance || k !== distance && diagonal(previous, distance - 1, k - 1) < diagonal(previous, distance - 1, k + 1) ? k + 1 : k - 1;
-    const previousX = diagonal(previous, distance - 1, previousK);
-    const previousY = previousX - previousK;
-    while (x > previousX && y > previousY) {
-      x -= 1;
-      y -= 1;
-    }
-    if (x === previousX) {
-      prependLine(newRanges, prefix + y);
-      y -= 1;
-    } else {
-      prependLine(oldRanges, prefix + x);
-      x -= 1;
-    }
-  }
-  return { oldRanges: oldRanges.toReversed(), newRanges: newRanges.toReversed() };
-}
-async function changedLineRanges(oldContent, newContent, budget = new GitDiffBudget) {
-  if (budget.signal?.aborted)
-    throw abortError();
-  if (oldContent.equals(newContent))
-    return { oldRanges: [], newRanges: [] };
-  const oldLines = await sourceLines(oldContent, budget);
-  const newLines = await sourceLines(newContent, budget);
-  let prefix = 0;
-  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
-    if (budget.tick())
-      await setImmediate();
-    prefix += 1;
-  }
-  let oldEnd = oldLines.length;
-  let newEnd = newLines.length;
-  while (oldEnd > prefix && newEnd > prefix && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
-    if (budget.tick())
-      await setImmediate();
-    oldEnd -= 1;
-    newEnd -= 1;
-  }
-  const n = oldEnd - prefix;
-  const m = newEnd - prefix;
-  if (n === 0 || m === 0) {
-    return {
-      oldRanges: n === 0 ? [] : [{ startLine: prefix + 1, endLine: oldEnd }],
-      newRanges: m === 0 ? [] : [{ startLine: prefix + 1, endLine: newEnd }]
-    };
-  }
-  const trace = [];
-  for (let distance = 0;distance <= n + m; distance += 1) {
-    const current = new Int32Array(2 * distance + 3).fill(-1);
-    const previous = trace[distance - 1];
-    for (let k = -distance;k <= distance; k += 2) {
-      if (budget.tick())
-        await setImmediate();
-      let x = 0;
-      if (previous) {
-        x = k === -distance || k !== distance && diagonal(previous, distance - 1, k - 1) < diagonal(previous, distance - 1, k + 1) ? diagonal(previous, distance - 1, k + 1) : diagonal(previous, distance - 1, k - 1) + 1;
-      }
-      let y = x - k;
-      while (x < n && y < m && oldLines[prefix + x] === newLines[prefix + y]) {
-        if (budget.tick())
-          await setImmediate();
-        x += 1;
-        y += 1;
-      }
-      current[k + distance + 1] = x;
-      if (x >= n && y >= m) {
-        trace.push(current);
-        return reconstruct(trace, n, m, prefix);
-      }
-    }
-    trace.push(current);
-  }
-  throw new Error("Git line comparison did not produce an edit script");
-}
-async function sourceSimilarity(oldContent, newContent, budget) {
-  if (oldContent.equals(newContent))
-    return 100;
-  const maximum = Math.max(oldContent.length, newContent.length);
-  if (maximum === 0 || Math.min(oldContent.length, newContent.length) / maximum < 0.5)
-    return 0;
-  const counts = new Map;
-  for (const line of await sourceLines(oldContent, budget))
-    counts.set(line, (counts.get(line) ?? 0) + 1);
-  let commonBytes = 0;
-  for (const line of await sourceLines(newContent, budget)) {
-    const remaining = counts.get(line) ?? 0;
-    if (remaining === 0)
-      continue;
-    counts.set(line, remaining - 1);
-    commonBytes += line.length;
-  }
-  return Math.min(99, Math.floor(100 * commonBytes / maximum));
-}
-
-// src/git-source.ts
-import { setImmediate as setImmediate2 } from "node:timers/promises";
-function absent(path) {
-  return { path, mode: "000000", sourceStatus: "absent" };
-}
-function sameContents(left, right) {
-  return left.contentHash !== undefined && left.contentHash === right.contentHash;
-}
-function wholeFile(content) {
-  const lines = sourceLineCount(content);
-  return lines === 0 ? [] : [{ startLine: 1, endLine: lines }];
-}
-function validateLimit(value, label) {
-  if (!Number.isSafeInteger(value) || value < 1)
-    throw new SignalGrepError(`${label} must be a positive integer`);
-  return value;
-}
-function rememberBest(best, pair, score) {
-  const previous = best.get(pair);
-  if (!previous || score > previous.score)
-    best.set(pair, { score, count: 1 });
-  else if (score === previous.score)
-    previous.count += 1;
-}
-async function pairRenames(pairs, budget, reasons) {
-  const removed = pairs.filter((pair) => pair.new.sourceStatus === "absent" && pair.old.content);
-  const added = pairs.filter((pair) => pair.old.sourceStatus === "absent" && pair.new.content);
-  const scores = [];
-  const bestOld = new Map;
-  const bestNew = new Map;
-  try {
-    for (const oldPair of removed) {
-      for (const newPair of added) {
-        if (!oldPair.old.content || !newPair.new.content)
-          continue;
-        if (budget.tick())
-          await setImmediate2();
-        const score = sameContents(oldPair.old, newPair.new) ? 100 : await sourceSimilarity(oldPair.old.content, newPair.new.content, budget);
-        if (score >= 50) {
-          scores.push({ oldPair, newPair, score });
-          rememberBest(bestOld, oldPair, score);
-          rememberBest(bestNew, newPair, score);
-        }
-      }
-    }
-  } catch (error) {
-    if (!(error instanceof GitDiffLimitError))
-      throw error;
-    reasons.add(error.message);
-    reasons.add("Rename comparison is incomplete; unpaired additions/deletions remain explicit");
-    return pairs;
-  }
-  const consumed = new Set;
-  const renamed = [];
-  for (const entry of scores) {
-    const oldBest = bestOld.get(entry.oldPair);
-    const newBest = bestNew.get(entry.newPair);
-    if (oldBest?.score !== entry.score || newBest?.score !== entry.score || oldBest.count !== 1 || newBest.count !== 1)
-      continue;
-    consumed.add(entry.oldPair);
-    consumed.add(entry.newPair);
-    renamed.push({
-      old: entry.oldPair.old,
-      new: entry.newPair.new,
-      rename: {
-        method: entry.score === 100 ? "identical-content" : "line-similarity",
-        similarity: entry.score
-      }
-    });
-  }
-  if (scores.some((entry) => !consumed.has(entry.oldPair) && !consumed.has(entry.newPair))) {
-    reasons.add("Ambiguous rename candidates remain separate additions/deletions");
-  }
-  return [...pairs.filter((pair) => !consumed.has(pair)), ...renamed];
-}
-async function renderPair(pair, request, budget, reasons) {
-  const selected = request.side === "old" ? pair.old : pair.new;
-  const oldExists = pair.old.sourceStatus !== "absent";
-  const newExists = pair.new.sourceStatus !== "absent";
-  let changedRanges = [];
-  let rangeReason;
-  if (selected.content) {
-    try {
-      if (!oldExists || !newExists)
-        changedRanges = wholeFile(selected.content);
-      else if (pair.old.content && pair.new.content) {
-        const diff = await changedLineRanges(pair.old.content, pair.new.content, budget);
-        changedRanges = request.side === "old" ? diff.oldRanges : diff.newRanges;
-      } else {
-        rangeReason = "Changed lines unavailable because the opposite source cannot be compared as raw text";
-      }
-    } catch (error) {
-      if (!(error instanceof GitDiffLimitError))
-        throw error;
-      rangeReason = error.message;
-    }
-  }
-  if (rangeReason)
-    reasons.add(rangeReason);
-  for (const source of [pair.old, pair.new]) {
-    if (source.sourceStatus === "unavailable")
-      reasons.add(source.reason ?? "Source unavailable");
-  }
-  const unsupported = [pair.old, pair.new].some((source) => ["unavailable", "symlink", "submodule"].includes(source.sourceStatus));
-  const change = pair.rename ? "renamed" : !oldExists ? "added" : !newExists ? "deleted" : unsupported ? "unknown" : "modified";
-  const reason = selected.reason ?? rangeReason;
-  return {
-    path: selected.sourceStatus === "absent" ? request.side === "old" ? pair.new.path : pair.old.path : selected.path,
-    ...oldExists ? { oldPath: pair.old.path } : {},
-    ...newExists ? { newPath: pair.new.path } : {},
-    change,
-    sourceStatus: selected.sourceStatus,
-    ...selected.content ? { content: selected.content } : {},
-    ...selected.contentHash ? { contentHash: selected.contentHash } : {},
-    ...selected.origin ? { origin: selected.origin } : {},
-    changedRanges,
-    ranges: request.scope === "files" && selected.content ? wholeFile(selected.content) : changedRanges,
-    ...reason ? { reason } : {},
-    ...pair.rename ? { rename: pair.rename } : {}
-  };
-}
-async function readGitChanges(cwd, request, signal, options = {}) {
-  if (!["files", "lines"].includes(request.scope) || !["new", "old"].includes(request.side))
-    throw new SignalGrepError("Invalid Git scope or side");
-  if (request.target !== undefined && request.base === undefined)
-    throw new SignalGrepError("Git commit comparison requires an explicit base and target");
-  const maxFiles = validateLimit(options.maxFiles ?? MAX_STRUCTURE_FILES, "Git file limit");
-  const maxBytes = validateLimit(options.maxBytes ?? MAX_STRUCTURE_BYTES, "Git byte limit");
-  const maxDiffWork = validateLimit(options.maxDiffWork ?? MAX_GIT_DIFF_WORK, "Git diff work limit");
-  const base = await resolveGitCommit(cwd, request.base ?? "HEAD", signal);
-  const target = request.target === undefined ? undefined : await resolveGitCommit(cwd, request.target, signal);
-  const oldTree = await readGitTree(cwd, base, signal);
-  const newTree = target ? await readGitTree(cwd, target, signal) : undefined;
-  const diskNames = target ? undefined : await worktreeNames(cwd, signal);
-  const reasons = new Set;
-  if (oldTree.limited || newTree?.limited || diskNames?.limited)
-    reasons.add("Git candidate metadata limit reached");
-  const candidates = [
-    ...new Set([...oldTree.entries.keys(), ...newTree?.entries.keys() ?? diskNames?.paths ?? []])
-  ].filter((path) => {
-    if (!target)
-      return true;
-    const oldEntry = oldTree.entries.get(path);
-    const newEntry = newTree?.entries.get(path);
-    return !oldEntry || !newEntry || oldEntry.blob !== newEntry.blob || oldEntry.mode !== newEntry.mode;
-  }).toSorted();
-  let visible = await visibleGitPaths(cwd, candidates, signal, options.includePath);
-  let filterBytes = 0;
-  if (options.filterPaths) {
-    const allowed = new Set(visible);
-    const filtered = await options.filterPaths(visible);
-    visible = filtered.paths;
-    filterBytes = filtered.bytesRead ?? 0;
-    if (!Number.isSafeInteger(filterBytes) || filterBytes < 0 || filterBytes > maxBytes)
-      throw new SignalGrepError("Git path filtering exceeded its shared source read budget");
-    if (visible.some((path) => !allowed.has(path)))
-      throw new SignalGrepError("Git path filter expanded the authorized candidate set");
-    visible = [...new Set(visible)];
-  }
-  const readBudget = { bytes: filterBytes, maxBytes };
-  const diffBudget = new GitDiffBudget(maxDiffWork, signal);
-  const pairs = [];
-  let filesRead = 0;
-  let omittedFiles = 0;
-  for (const path of visible) {
-    if (signal?.aborted)
-      throw abortError();
-    const oldEntry = oldTree.entries.get(path);
-    const newEntry = newTree?.entries.get(path);
-    if (filesRead >= maxFiles || readBudget.bytes >= maxBytes) {
-      omittedFiles += 1;
-      continue;
-    }
-    filesRead += 1;
-    const oldSource = oldEntry ? await readGitBlob(cwd, base, oldEntry, readBudget, signal) : absent(path);
-    const newSource = target ? newEntry ? await readGitBlob(cwd, target, newEntry, readBudget, signal) : absent(path) : await readWorktreeSource(cwd, path, readBudget, signal);
-    if (oldSource.sourceStatus === "absent" && newSource.sourceStatus === "absent")
-      continue;
-    if (sameContents(oldSource, newSource) && (process.platform === "win32" || oldSource.mode === newSource.mode))
-      continue;
-    pairs.push({ old: oldSource, new: newSource });
-  }
-  if (omittedFiles > 0)
-    reasons.add(`Git read limits omitted ${String(omittedFiles)} candidate files (${String(maxFiles)} files / ${String(maxBytes)} bytes)`);
-  const paired = await pairRenames(pairs, diffBudget, reasons);
-  const files = [];
-  for (const pair of paired)
-    files.push(await renderPair(pair, request, diffBudget, reasons));
-  for (const pair of paired) {
-    if (pair.new.origin?.kind !== "worktree")
-      continue;
-    await verifyWorktreeRevision(cwd, pair.new.path, pair.new.origin.revision);
-  }
-  return {
-    base,
-    target: target ?? "worktree",
-    scope: request.scope,
-    side: request.side,
-    files: files.toSorted((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
-    partial: reasons.size > 0,
-    reasons: [...reasons],
-    filesRead,
-    bytesRead: readBudget.bytes,
-    diffWork: diffBudget.work,
-    omittedFiles
-  };
-}
-async function readGitSource(cwd, identity, signal, options = {}) {
-  const path = gitPath(cwd, identity.path);
-  if (!(await visibleGitPaths(cwd, [path], signal, options.includePath)).includes(path))
-    throw new SignalGrepError("Git source is excluded by current workspace privacy or path rules");
-  const selected = await filterHistoricalPaths(cwd, [path], { glob: [], exclude: [], hidden: true }, signal);
-  if (selected.partial || !selected.paths.includes(path))
-    throw new SignalGrepError("Git source is excluded or unverified by current .ignore/.rgignore rules");
-  const commit = await resolveGitCommit(cwd, identity.commit, signal);
-  const tree = await readGitTree(cwd, commit, signal, path);
-  const entry = tree.entries.get(path);
-  if (!entry)
-    throw new SignalGrepError("Git source path does not exist in the requested commit");
-  if (identity.blob !== undefined && identity.blob !== entry.blob)
-    throw new SignalGrepError("Git source blob does not match its commit and path");
-  return readGitBlob(cwd, commit, entry, { bytes: selected.ignoreBytesRead, maxBytes: options.maxBytes ?? MAX_STRUCTURE_BYTES }, signal);
-}
-
-// src/source-access.ts
-import { extname as extname2, resolve as resolve10 } from "node:path";
-
-// src/source-document.ts
-import { isUtf8 } from "node:buffer";
-import { createHash as createHash2 } from "node:crypto";
-import { open as open3, realpath as realpath3 } from "node:fs/promises";
-import { relative as relative6, resolve as resolve9 } from "node:path";
-class SourceDocumentError extends SignalGrepError {
-  reason;
-  constructor(reason, message) {
-    super(message);
-    this.reason = reason;
-    this.name = "SourceDocumentError";
-  }
-}
-function contentHash(bytes) {
-  return createHash2("sha256").update(bytes).digest("hex");
-}
-
-class SourceDocument {
-  reference;
-  bytes;
-  text;
-  utf8;
-  lineStarts = [0];
-  #byteOffsets;
-  constructor(reference, bytes) {
-    this.reference = reference;
-    this.bytes = bytes;
-    if (bytes.length > MAX_SOURCE_FILE_BYTES) {
-      throw new SourceDocumentError("file-too-large", "Source exceeds the 5 MiB file limit");
-    }
-    this.utf8 = isUtf8(bytes);
-    this.text = bytes.toString("utf8");
-    for (let index = bytes.indexOf(10);index >= 0; index = bytes.indexOf(10, index + 1)) {
-      this.lineStarts.push(index + 1);
-    }
-  }
-  get path() {
-    return this.reference.path;
-  }
-  toByteOffset(character) {
-    this.#requireUtf8();
-    if (!Number.isSafeInteger(character) || character < 0 || character > this.text.length) {
-      throw new SignalGrepError("Source character offset is outside the document");
-    }
-    const code = this.text.charCodeAt(character);
-    if (code >= 56320 && code <= 57343) {
-      throw new SignalGrepError("Source character offset splits a Unicode character");
-    }
-    const value = this.#offsets()[character];
-    if (value === undefined)
-      throw new Error("Missing source offset");
-    return value;
-  }
-  toCharacterOffset(byte) {
-    this.#requireUtf8();
-    this.checkRange({ start: byte, end: byte });
-    const offsets = this.#offsets();
-    let low = 0;
-    let high = offsets.length - 1;
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2);
-      const value = offsets[middle];
-      if (value === undefined)
-        throw new Error("Missing source offset");
-      if (value < byte)
-        low = middle + 1;
-      else
-        high = middle;
-    }
-    if (offsets[low] !== byte) {
-      throw new SignalGrepError("Source byte offset splits a Unicode character");
-    }
-    return low;
-  }
-  lineAt(byte) {
-    this.checkRange({ start: byte, end: byte });
-    let low = 0;
-    let high = this.lineStarts.length;
-    while (low + 1 < high) {
-      const middle = Math.floor((low + high) / 2);
-      const start = this.lineStarts[middle];
-      if (start === undefined)
-        throw new Error("Missing source line");
-      if (start <= byte)
-        low = middle;
-      else
-        high = middle;
-    }
-    return low + 1;
-  }
-  positionAt(byte) {
-    const line = this.lineAt(byte);
-    const start = this.lineStarts[line - 1];
-    if (start === undefined)
-      throw new Error("Missing source line");
-    return {
-      line,
-      column: this.toCharacterOffset(byte) - this.toCharacterOffset(start) + 1
-    };
-  }
-  lineRange(startLine, endLine = startLine) {
-    if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine || startLine > this.lineStarts.length) {
-      throw new SignalGrepError("Source line range is outside the document");
-    }
-    const start = this.lineStarts[startLine - 1];
-    if (start === undefined)
-      throw new Error("Missing source line");
-    return { start, end: this.lineStarts[endLine] ?? this.bytes.length };
-  }
-  slice(range) {
-    this.#requireUtf8();
-    this.checkRange(range);
-    this.toCharacterOffset(range.start);
-    this.toCharacterOffset(range.end);
-    return this.bytes.subarray(range.start, range.end).toString("utf8");
-  }
-  checkRange(range) {
-    if (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end < range.start || range.end > this.bytes.length) {
-      throw new SignalGrepError("Source byte range is outside the document");
-    }
-  }
-  #requireUtf8() {
-    if (!this.utf8) {
-      throw new SourceDocumentError("encoding", "Source is not losslessly representable as UTF-8");
-    }
-  }
-  #offsets() {
-    if (this.#byteOffsets)
-      return this.#byteOffsets;
-    const offsets = new Uint32Array(this.text.length + 1);
-    let character = 0;
-    let byte = 0;
-    for (const point of this.text) {
-      offsets[character] = byte;
-      if (point.length === 2)
-        offsets[character + 1] = byte;
-      character += point.length;
-      byte += Buffer.byteLength(point);
-    }
-    offsets[character] = byte;
-    this.#byteOffsets = offsets;
-    return offsets;
-  }
-}
-async function readWorkspaceDocument(path, cwd, signal, expected, readBudget = MAX_SOURCE_FILE_BYTES) {
-  if (signal?.aborted)
-    throw abortError();
-  if (expected?.kind === "git") {
-    throw new SignalGrepError("A Git source reference cannot be read from the worktree");
-  }
-  const absolute = resolve9(cwd, path);
-  const [canonical, canonicalCwd] = await Promise.all([
-    new SearchPathPolicy(cwd).resolveExistingPath(absolute),
-    realpath3(cwd)
-  ]);
-  if (!canonical)
-    throw new SourceDocumentError("source-unavailable", "Source is unavailable");
-  const before = await getSourceRevision(absolute);
-  if (!before)
-    throw new SourceDocumentError("source-unavailable", "Source is unavailable");
-  if (expected && !sameSourceRevision(before, expected.revision)) {
-    throw new SourceDocumentError("source-changed", "Source changed; start a new inspection");
-  }
-  if (before.size > Math.min(MAX_SOURCE_FILE_BYTES, readBudget)) {
-    throw new SourceDocumentError("file-too-large", "Source exceeds the 5 MiB file limit");
-  }
-  if (signal?.aborted)
-    throw abortError();
-  const handle = await open3(canonical, "r");
-  let bytes;
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile()) {
-      throw new SourceDocumentError("source-unavailable", "Source must be a regular file");
-    }
-    if (!sameSourceRevision(before, sourceRevisionFromStats(metadata))) {
-      throw new SourceDocumentError("source-changed", "Source was replaced before reading");
-    }
-    const buffer = Buffer.alloc(before.size);
-    let used = 0;
-    while (used < buffer.length) {
-      if (signal?.aborted)
-        throw abortError();
-      const read = await handle.read(buffer, used, buffer.length - used, used);
-      if (read.bytesRead === 0)
-        break;
-      used += read.bytesRead;
-    }
-    if (used !== before.size) {
-      throw new SourceDocumentError("source-changed", "Source changed during reading");
-    }
-    bytes = buffer.subarray(0, used);
-  } finally {
-    await handle.close();
-  }
-  const [after, finalPath] = await Promise.all([getSourceRevision(absolute), realpath3(absolute)]);
-  if (!after || canonical !== finalPath || !sameSourceRevision(before, after)) {
-    throw new SourceDocumentError("source-changed", "Source changed during reading");
-  }
-  if (signal?.aborted)
-    throw abortError();
-  const hash = contentHash(bytes);
-  if (expected && expected.contentHash !== hash) {
-    throw new SourceDocumentError("source-changed", "Source content changed; start a new inspection");
-  }
-  return new SourceDocument({
-    path: isPathInsideCwd(canonical, canonicalCwd) ? relative6(canonicalCwd, canonical).replaceAll("\\", "/") : canonical.replaceAll("\\", "/"),
-    origin: { kind: "worktree", revision: after, contentHash: hash }
-  }, bytes);
-}
-
-// src/syntax.ts
-import { dirname as dirname2, extname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 // src/syntax-tree.ts
 function syntaxField(analysis, node, field) {
@@ -3122,9 +2150,19 @@ function readResult(output, length) {
     nodes.push(readNode(value, nodes.length, nodes, length));
   if (result.status !== "ok" && result.status !== "parse-error" && result.status !== "limit")
     return invalidProtocol();
-  return { status: result.status, nodes };
+  const patternMatches = [];
+  if ("patternMatches" in result) {
+    if (!Array.isArray(result.patternMatches) || result.patternMatches.length > MAX_SYNTAX_NODES)
+      return invalidProtocol();
+    for (const match of result.patternMatches) {
+      if (!match || typeof match !== "object" || !("start" in match) || !("end" in match) || typeof match.start !== "number" || typeof match.end !== "number" || !Number.isSafeInteger(match.start) || !Number.isSafeInteger(match.end) || match.start < 0 || match.end < match.start || match.end > length)
+        return invalidProtocol();
+      patternMatches.push({ start: match.start, end: match.end });
+    }
+  }
+  return { status: result.status, nodes, patternMatches };
 }
-async function parseSyntax(path, text, signal) {
+async function parseSyntax(path, text, signal, pattern) {
   if (signal?.aborted)
     throw abortError();
   const language = syntaxLanguage(path);
@@ -3138,8 +2176,8 @@ async function parseSyntax(path, text, signal) {
       diagnostics: [{ kind: "invalid-unicode", start: 0, end: text.length }]
     };
   }
-  const worker = fileURLToPath(new URL("./syntax-worker.mjs", import.meta.url));
-  const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
+  const worker = fileURLToPath2(new URL("./syntax-worker.mjs", import.meta.url));
+  const config = fileURLToPath2(new URL("./syntax-worker.toml", import.meta.url));
   const args = process.versions.bun ? [`--config=${config}`, "--no-env-file", "--no-macros", "--no-install", worker] : [worker];
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
@@ -3162,7 +2200,7 @@ async function parseSyntax(path, text, signal) {
       cwd: dirname2(worker),
       env,
       signal: controller.signal,
-      input: Buffer.from(JSON.stringify({ language, text }))
+      input: Buffer.from(JSON.stringify({ language, text, pattern }))
     }, async (stdout) => {
       for await (const chunk of stdout) {
         bytes += chunk.byteLength;
@@ -3193,6 +2231,7 @@ async function parseSyntax(path, text, signal) {
       status: parsed.status,
       nodes: parsed.nodes,
       children,
+      ...parsed.patternMatches ? { patternMatches: parsed.patternMatches } : {},
       ...facts,
       diagnostics,
       limited: parsed.status === "limit"
@@ -3210,6 +2249,1292 @@ async function parseSyntax(path, text, signal) {
   }
 }
 
+// src/impact-bindings.ts
+async function bindImpactCandidates(target, files, occurrences, access) {
+  const syntax = await access.syntax(target.document);
+  const name = syntax.nodes.find((node) => node.start >= target.symbol.start && node.end <= target.symbol.end && target.document.text.slice(node.start, node.end) === target.symbol.name && node.kind.endsWith("identifier"));
+  if (!name)
+    throw new SignalGrepError("Impact compiler target has no exact identifier position");
+  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve6(access.cwd, file.document.path), file.document]));
+  documents.set(resolve6(access.cwd, target.document.path), target.document);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
+  const references = await withTypeScript(access.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
+    textDocument: { uri: await semanticUri(access.cwd, target.document.path) },
+    position: lspPosition(target.document, name.start),
+    context: { includeDeclaration: true }
+  })), access.signal);
+  const retained = new Map(occurrences.map((item) => [
+    `${resolve6(access.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
+    item
+  ]));
+  let bound = 0;
+  for (const reference of references) {
+    const document = await sourceAt(reference.path);
+    if (!document)
+      continue;
+    const range = byteRange(document, reference.range);
+    const key = `${resolve6(access.cwd, document.path)}:${String(range.start)}:${String(range.end)}`;
+    const existing = retained.get(key);
+    const line = document.lineAt(range.start);
+    const evidence = sourceEvidence(document, range);
+    const item = existing ?? {
+      path: document.path,
+      line,
+      source: document.reference,
+      range,
+      excerpt: evidence.excerpt
+    };
+    retained.set(key, {
+      ...item,
+      label: "Compiler-bound impact reference (static; runtime dispatch unproven)",
+      details: {
+        ...existing?.details,
+        excerptRange: evidence.excerptRange,
+        excerptTruncated: evidence.excerptTruncated,
+        kind: existing ? "impact-occurrence" : "impact-reference",
+        binding: "typescript-compiler",
+        bindingScope: "verified-candidate-documents",
+        certainty: "static",
+        score: 100,
+        rankingReason: "compiler reference to the selected symbol"
+      }
+    });
+    bound += 1;
+  }
+  for (const document of documents.values()) {
+    await access.refresh(document.path, document.reference);
+  }
+  return { items: [...retained.values()], bound };
+}
+
+// src/concept-search.ts
+import { dirname as dirname4 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// src/concept-model.ts
+var CONCEPT_MODEL = "Xenova/multilingual-e5-small";
+var CONCEPT_REVISION = "761b726dd34fb83930e26aab4e9ac3899aa1fa78";
+var MAX_CONCEPT_CHUNKS = 128;
+var MAX_CONCEPT_CHARS = 1000;
+var CONCEPT_TIMEOUT_MS = 90000;
+
+// src/request.ts
+function list(value) {
+  if (value === undefined)
+    return [];
+  return (Array.isArray(value) ? value : [value]).filter((item) => item.length > 0);
+}
+function boundedInteger(value, fallback, minimum, maximum, field) {
+  const candidate = value ?? fallback;
+  if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) {
+    throw new SignalGrepError(`${field} must be an integer from ${String(minimum)} through ${String(maximum)}`);
+  }
+  return candidate;
+}
+function normalizeRequest(input) {
+  if (input.scope !== undefined && input.scope !== "strict" && input.scope !== "expand")
+    throw new SignalGrepError("scope must be strict or expand");
+  const pattern = input.pattern;
+  if (pattern === undefined) {
+    throw new SignalGrepError("pattern is required when cursor is not provided");
+  }
+  const path = input.path?.replace(/^@/, "");
+  return {
+    pattern,
+    ...path ? { path } : {},
+    glob: list(input.glob),
+    exclude: list(input.exclude),
+    literal: input.literal ?? false,
+    ...input.ignoreCase === undefined ? {} : { ignoreCase: input.ignoreCase },
+    hidden: input.hidden ?? true,
+    context: boundedInteger(input.context, 0, 0, MAX_CONTEXT_LINES, "context"),
+    pageSize: boundedInteger(input.limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, "limit"),
+    redact: input.redact ?? false,
+    ...input.scope !== undefined ? { scope: input.scope } : {},
+    ...input.wholeWord !== undefined ? { wholeWord: input.wholeWord } : {}
+  };
+}
+
+// src/source-access.ts
+import { extname as extname2, resolve as resolve11 } from "node:path";
+
+// src/historical-paths.ts
+import { lstat, mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname as dirname3, join as join3, parse, relative as relative4, resolve as resolve8 } from "node:path";
+
+// src/workspace-files.ts
+import { relative as relative3, resolve as resolve7, sep as sep2 } from "node:path";
+class EnumerationLimit extends Error {
+}
+function workspaceRelativePath(cwd, path, policy = new SearchPathPolicy(cwd)) {
+  const absolute = resolve7(cwd, path);
+  policy.assertPath(absolute);
+  const local = relative3(resolve7(cwd), absolute);
+  if (local.split(sep2).some((part) => part.toLowerCase() === ".git"))
+    throw new SignalGrepError("Git internals are excluded from source candidates");
+  return isPathInsideCwd(absolute, cwd) ? local.split(sep2).join("/") : absolute.replaceAll("\\", "/");
+}
+async function listWorkspaceFiles(cwd, signal, options = {}) {
+  const absolutePath = resolve7(cwd, options.path ?? ".");
+  const policy = new SearchPathPolicy(cwd);
+  const searchPath = await policy.resolveSearchTarget(absolutePath);
+  const maxFiles = options.maxFiles ?? MAX_SOURCE_REVISION_FILES;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1)
+    throw new SignalGrepError("Candidate file limit must be a positive integer");
+  const paths = new Set;
+  const reasons = new Set;
+  let bytes = 0;
+  try {
+    const result = await runOwnedProcess({
+      executable: "rg",
+      args: [
+        "--no-config",
+        "--files",
+        "--null",
+        ...options.ignore === false ? ["--no-ignore"] : [],
+        ...options.ignoreParents === false ? ["--no-ignore-parent"] : [],
+        ...fileScopeArguments({
+          hidden: options.hidden ?? true,
+          glob: options.glob ?? [],
+          exclude: options.exclude ?? []
+        }),
+        ...policy.ripgrepGlobArguments(searchPath),
+        "--",
+        searchPath
+      ],
+      cwd,
+      ...signal ? { signal } : {}
+    }, async (stdout) => {
+      let pending = Buffer.alloc(0);
+      for await (const chunk of stdout) {
+        if (signal?.aborted)
+          throw abortError();
+        bytes += chunk.byteLength;
+        if (bytes > MAX_PROTOCOL_LINE_BYTES)
+          throw new EnumerationLimit(`Candidate enumeration exceeds the ${String(MAX_PROTOCOL_LINE_BYTES)} byte protocol limit`);
+        pending = Buffer.concat([pending, chunk]);
+        let delimiter = pending.indexOf(0);
+        while (delimiter >= 0) {
+          const raw = pending.subarray(0, delimiter);
+          const decoded = raw.toString("utf8");
+          if (!Buffer.from(decoded).equals(raw))
+            reasons.add("Some candidate paths are not valid UTF-8");
+          else {
+            const local = workspaceRelativePath(cwd, decoded, policy);
+            if (!paths.has(local) && paths.size >= maxFiles)
+              throw new EnumerationLimit(`Candidate enumeration reached the ${String(maxFiles)} file limit`);
+            paths.add(local);
+          }
+          pending = pending.subarray(delimiter + 1);
+          delimiter = pending.indexOf(0);
+        }
+      }
+      if (pending.length > 0)
+        throw new SignalGrepError("Candidate enumeration ended without a NUL delimiter");
+    });
+    if (result.code !== 0 && result.code !== 1)
+      throw new SignalGrepError(result.stderr.trim() || `Candidate enumeration exited ${String(result.code)}`);
+  } catch (error) {
+    if (!(error instanceof EnumerationLimit))
+      throw error;
+    reasons.add(error.message);
+  }
+  return { paths: [...paths].toSorted(), partial: reasons.size > 0, reasons: [...reasons] };
+}
+
+// src/historical-paths.ts
+function partitionPaths(paths) {
+  const groups = [];
+  for (const path of paths) {
+    const group = groups.find((candidate) => !candidate.some((other) => path.startsWith(`${other}/`) || other.startsWith(`${path}/`)));
+    if (group)
+      group.push(path);
+    else
+      groups.push([path]);
+  }
+  return groups;
+}
+function relevantDirectories(cwd, paths) {
+  const directories = new Set;
+  for (const path of [cwd, ...paths.map((sourcePath) => dirname3(resolve8(cwd, sourcePath)))]) {
+    let current = path;
+    for (;; ) {
+      directories.add(current);
+      const parent = dirname3(current);
+      if (current === parent)
+        break;
+      current = parent;
+    }
+  }
+  return [...directories];
+}
+async function filterHistoricalPaths(cwd, paths, request, signal) {
+  if (!isPathInsideCwd(resolve8(cwd, request.path ?? "."), cwd)) {
+    throw new SignalGrepError("Historical path filtering requires a path inside cwd");
+  }
+  const selectedPath = workspaceRelativePath(cwd, request.path ?? ".");
+  const candidates = paths.filter((path) => selectedPath.length === 0 || path === selectedPath || path.startsWith(`${selectedPath}/`));
+  const reasons = new Set;
+  if (candidates.length > MAX_STRUCTURE_FILES)
+    reasons.add(`Historical path filtering reached the ${String(MAX_STRUCTURE_FILES)} candidate limit`);
+  const bounded = candidates.slice(0, MAX_STRUCTURE_FILES);
+  if (bounded.length === 0)
+    return { paths: [], partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead: 0 };
+  const root = await mkdtemp(join3(tmpdir(), "baoer_signal_grep-paths-"));
+  const absoluteCwd = resolve8(cwd);
+  const volumeRoot = parse(absoluteCwd).root;
+  const ignoreFiles = [];
+  let ignoreBytesRead = 0;
+  try {
+    for (const directory of relevantDirectories(absoluteCwd, bounded)) {
+      if (isPathInsideCwd(directory, absoluteCwd))
+        await assertExistingPathInsideCwd(directory, absoluteCwd);
+      for (const name of [".ignore", ".rgignore"]) {
+        if (signal?.aborted)
+          throw abortError();
+        const path = join3(directory, name);
+        let discovered = false;
+        try {
+          const before = await lstat(path);
+          discovered = true;
+          if (!before.isFile())
+            throw new SignalGrepError("Current ignore rules are not regular files; historical path filtering is unavailable");
+          if (before.size > MAX_SOURCE_FILE_BYTES || ignoreBytesRead + before.size > MAX_STRUCTURE_BYTES)
+            throw new SignalGrepError("Current ignore rules exceed the source read budget");
+          const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+          let bytes;
+          try {
+            if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
+              throw new SignalGrepError("Current ignore rules changed before reading");
+            const buffer = Buffer.alloc(before.size + 1);
+            let used = 0;
+            while (used < buffer.length) {
+              if (signal?.aborted)
+                throw abortError();
+              const chunk = await handle.read(buffer, used, Math.min(64 * 1024, buffer.length - used), null);
+              if (chunk.bytesRead === 0)
+                break;
+              used += chunk.bytesRead;
+            }
+            bytes = buffer.subarray(0, used);
+            const after = await lstat(path);
+            if (used !== before.size || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(after)) || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
+              throw new SignalGrepError("Current ignore rules changed during historical path filtering");
+          } finally {
+            await handle.close();
+          }
+          ignoreBytesRead += bytes.length;
+          ignoreFiles.push({ local: relative4(volumeRoot, path), bytes });
+        } catch (error) {
+          if (!(error instanceof Error && ("code" in error) && error.code === "ENOENT"))
+            throw error;
+          if (discovered)
+            throw new SignalGrepError("Current ignore rules disappeared during historical path filtering");
+        }
+      }
+    }
+    if (ignoreFiles.length === 0 && request.glob.length === 0 && request.exclude.length === 0 && request.hidden) {
+      return { paths: bounded, partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead };
+    }
+    const visible = new Set;
+    for (const [index, group] of partitionPaths(bounded).entries()) {
+      const tree = join3(root, String(index));
+      const target = join3(tree, relative4(volumeRoot, absoluteCwd));
+      await mkdir(target, { recursive: true });
+      for (const path of group) {
+        const safe = workspaceRelativePath(absoluteCwd, path);
+        const placeholder = resolve8(target, safe);
+        await mkdir(dirname3(placeholder), { recursive: true });
+        await writeFile(placeholder, "");
+      }
+      for (const ignore of ignoreFiles) {
+        const destination = join3(tree, ignore.local);
+        await mkdir(dirname3(destination), { recursive: true });
+        await writeFile(destination, ignore.bytes);
+      }
+      const privacy = await listWorkspaceFiles(tree, signal, { ignoreParents: false });
+      const prefix = `${relative4(tree, target).split("\\").join("/")}/`;
+      const allowed = new Set(privacy.paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length)));
+      const scoped = await listWorkspaceFiles(target, signal, {
+        glob: request.glob,
+        exclude: request.exclude,
+        hidden: request.hidden,
+        ignore: false
+      });
+      for (const reason of [...privacy.reasons, ...scoped.reasons])
+        reasons.add(reason);
+      const included = new Set(group);
+      for (const path of scoped.paths)
+        if (included.has(path) && allowed.has(path))
+          visible.add(path);
+    }
+    return {
+      paths: [...visible].toSorted(),
+      partial: reasons.size > 0,
+      reasons: [...reasons],
+      ignoreBytesRead
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+// src/git-diff.ts
+import { setImmediate } from "node:timers/promises";
+class GitDiffLimitError extends SignalGrepError {
+}
+
+class GitDiffBudget {
+  work = 0;
+  maxWork;
+  signal;
+  constructor(maxWork = MAX_GIT_DIFF_WORK, signal) {
+    this.maxWork = maxWork;
+    this.signal = signal;
+  }
+  tick() {
+    if (this.signal?.aborted)
+      throw abortError();
+    this.work += 1;
+    if (this.work > this.maxWork) {
+      throw new GitDiffLimitError(`Git line comparison exceeds the ${String(this.maxWork)} step limit`);
+    }
+    return this.work % 4096 === 0;
+  }
+}
+async function sourceLines(content, budget) {
+  const lines = [];
+  for (let start = 0;start < content.length; ) {
+    if (budget.tick())
+      await setImmediate();
+    const newline = content.indexOf(10, start);
+    const end = newline === -1 ? content.length : newline + 1;
+    lines.push(content.toString("latin1", start, end));
+    start = end;
+  }
+  return lines;
+}
+function sourceLineCount(content) {
+  if (content.length === 0)
+    return 0;
+  let count = content[content.length - 1] === 10 ? 0 : 1;
+  for (const byte of content)
+    if (byte === 10)
+      count += 1;
+  return count;
+}
+function diagonal(vector, distance, k) {
+  return vector[k + distance + 1] ?? -1;
+}
+function prependLine(ranges, line) {
+  const last = ranges.at(-1);
+  if (last && last.startLine === line + 1)
+    last.startLine = line;
+  else
+    ranges.push({ startLine: line, endLine: line });
+}
+function reconstruct(trace, oldLength, newLength, prefix) {
+  let x = oldLength;
+  let y = newLength;
+  const oldRanges = [];
+  const newRanges = [];
+  for (let distance = trace.length - 1;distance > 0; distance -= 1) {
+    const previous = trace[distance - 1];
+    if (!previous)
+      throw new Error("Missing Git line comparison trace");
+    const k = x - y;
+    const previousK = k === -distance || k !== distance && diagonal(previous, distance - 1, k - 1) < diagonal(previous, distance - 1, k + 1) ? k + 1 : k - 1;
+    const previousX = diagonal(previous, distance - 1, previousK);
+    const previousY = previousX - previousK;
+    while (x > previousX && y > previousY) {
+      x -= 1;
+      y -= 1;
+    }
+    if (x === previousX) {
+      prependLine(newRanges, prefix + y);
+      y -= 1;
+    } else {
+      prependLine(oldRanges, prefix + x);
+      x -= 1;
+    }
+  }
+  return { oldRanges: oldRanges.toReversed(), newRanges: newRanges.toReversed() };
+}
+async function changedLineRanges(oldContent, newContent, budget = new GitDiffBudget) {
+  if (budget.signal?.aborted)
+    throw abortError();
+  if (oldContent.equals(newContent))
+    return { oldRanges: [], newRanges: [] };
+  const oldLines = await sourceLines(oldContent, budget);
+  const newLines = await sourceLines(newContent, budget);
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    if (budget.tick())
+      await setImmediate();
+    prefix += 1;
+  }
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (oldEnd > prefix && newEnd > prefix && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
+    if (budget.tick())
+      await setImmediate();
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  const n = oldEnd - prefix;
+  const m = newEnd - prefix;
+  if (n === 0 || m === 0) {
+    return {
+      oldRanges: n === 0 ? [] : [{ startLine: prefix + 1, endLine: oldEnd }],
+      newRanges: m === 0 ? [] : [{ startLine: prefix + 1, endLine: newEnd }]
+    };
+  }
+  const trace = [];
+  for (let distance = 0;distance <= n + m; distance += 1) {
+    const current = new Int32Array(2 * distance + 3).fill(-1);
+    const previous = trace[distance - 1];
+    for (let k = -distance;k <= distance; k += 2) {
+      if (budget.tick())
+        await setImmediate();
+      let x = 0;
+      if (previous) {
+        x = k === -distance || k !== distance && diagonal(previous, distance - 1, k - 1) < diagonal(previous, distance - 1, k + 1) ? diagonal(previous, distance - 1, k + 1) : diagonal(previous, distance - 1, k - 1) + 1;
+      }
+      let y = x - k;
+      while (x < n && y < m && oldLines[prefix + x] === newLines[prefix + y]) {
+        if (budget.tick())
+          await setImmediate();
+        x += 1;
+        y += 1;
+      }
+      current[k + distance + 1] = x;
+      if (x >= n && y >= m) {
+        trace.push(current);
+        return reconstruct(trace, n, m, prefix);
+      }
+    }
+    trace.push(current);
+  }
+  throw new Error("Git line comparison did not produce an edit script");
+}
+async function sourceSimilarity(oldContent, newContent, budget) {
+  if (oldContent.equals(newContent))
+    return 100;
+  const maximum = Math.max(oldContent.length, newContent.length);
+  if (maximum === 0 || Math.min(oldContent.length, newContent.length) / maximum < 0.5)
+    return 0;
+  const counts = new Map;
+  for (const line of await sourceLines(oldContent, budget))
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  let commonBytes = 0;
+  for (const line of await sourceLines(newContent, budget)) {
+    const remaining = counts.get(line) ?? 0;
+    if (remaining === 0)
+      continue;
+    counts.set(line, remaining - 1);
+    commonBytes += line.length;
+  }
+  return Math.min(99, Math.floor(100 * commonBytes / maximum));
+}
+
+// src/git-repository.ts
+import { createHash } from "node:crypto";
+import { constants as constants2 } from "node:fs";
+import { lstat as lstat2, open as open2 } from "node:fs/promises";
+import { isAbsolute as isAbsolute4, relative as relative5, resolve as resolve9, sep as sep3 } from "node:path";
+
+// src/git-process.ts
+var GIT_READ_ARGUMENTS = [
+  "--no-pager",
+  "--no-replace-objects",
+  "--no-optional-locks",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.untrackedCache=false",
+  "-c",
+  "submodule.recurse=false"
+];
+var MINIMUM_NO_LAZY_FETCH_VERSION = [2, 45, 0];
+var gitCapabilities = new Map;
+function gitReadEnvironment() {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_"))),
+    GIT_CONFIG_COUNT: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_PROTOCOL_FROM_USER: "0",
+    LC_ALL: "C"
+  };
+}
+function supportsNoLazyFetch(version) {
+  const match = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(version.trim());
+  if (!match)
+    throw new SignalGrepError("Git returned an unrecognized version string");
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+  for (let index = 0;index < MINIMUM_NO_LAZY_FETCH_VERSION.length; index += 1) {
+    const difference = (actual[index] ?? 0) - (MINIMUM_NO_LAZY_FETCH_VERSION[index] ?? 0);
+    if (difference !== 0)
+      return difference > 0;
+  }
+  return true;
+}
+async function gitReadArguments(executable, cwd, signal) {
+  const capabilityKey = `${executable}\x00${process.env.PATH ?? ""}`;
+  let supports = gitCapabilities.get(capabilityKey);
+  if (supports === undefined) {
+    const versionChunks = [];
+    const version = await runOwnedProcess({
+      executable,
+      args: ["--version"],
+      cwd,
+      env: gitReadEnvironment(),
+      ...signal ? { signal } : {}
+    }, async (stdout) => {
+      for await (const chunk of stdout)
+        versionChunks.push(Buffer.from(chunk));
+    });
+    if (version.code !== 0)
+      throw new SignalGrepError("Unable to determine the Git version");
+    supports = supportsNoLazyFetch(Buffer.concat(versionChunks).toString("utf8"));
+    gitCapabilities.set(capabilityKey, supports);
+  }
+  if (supports) {
+    return [...GIT_READ_ARGUMENTS, "--no-lazy-fetch"];
+  }
+  const partial = await runOwnedProcess({
+    executable,
+    args: [
+      ...GIT_READ_ARGUMENTS,
+      "config",
+      "--local",
+      "--get-regexp",
+      "^(extensions\\.partialClone|remote\\..*\\.promisor)$"
+    ],
+    cwd,
+    env: gitReadEnvironment(),
+    ...signal ? { signal } : {}
+  }, async (stdout) => {
+    for await (const chunk of stdout) {}
+  });
+  if (partial.code === 0) {
+    throw new SignalGrepError("Git 2.45 or newer is required for non-fetching reads from a partial/promisor clone");
+  }
+  if (partial.code !== 1) {
+    throw new SignalGrepError("Unable to verify whether this older Git repository is partial");
+  }
+  return [...GIT_READ_ARGUMENTS];
+}
+async function runGitRead(cwd, command, args, options = {}) {
+  const chunks = [];
+  if (options.input && options.input.byteLength > MAX_PROTOCOL_LINE_BYTES) {
+    throw new SignalGrepError(`Git input exceeds the ${String(MAX_PROTOCOL_LINE_BYTES)} byte protocol limit`);
+  }
+  let bytes = 0;
+  const maxBytes = options.maxBytes ?? MAX_PROTOCOL_LINE_BYTES;
+  const result = await runOwnedProcess({
+    executable: options.executable ?? "git",
+    args: [
+      ...await gitReadArguments(options.executable ?? "git", cwd, options.signal),
+      ...command === "ls-tree" ? ["--literal-pathspecs"] : [],
+      command,
+      ...args
+    ],
+    cwd,
+    env: gitReadEnvironment(),
+    ...options.signal ? { signal: options.signal } : {},
+    ...options.input ? { input: options.input } : {}
+  }, async (stdout) => {
+    for await (const chunk of stdout) {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
+        throw new SignalGrepError(`Git ${command} output exceeds the ${String(maxBytes)} byte limit`);
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+  });
+  if (result.code === null || !(options.allowedCodes ?? [0]).includes(result.code)) {
+    throw new SignalGrepError(`Git ${command} failed: ${result.stderr.trim() || `exit ${String(result.code)}`}`);
+  }
+  return { output: Buffer.concat(chunks), code: result.code };
+}
+function decodeGitPath(bytes) {
+  const value = bytes.toString("utf8");
+  if (!Buffer.from(value, "utf8").equals(bytes)) {
+    throw new SignalGrepError("Git path is not valid UTF-8; path-based source access is unavailable");
+  }
+  return value;
+}
+function splitGitRecords(output) {
+  if (output.length === 0)
+    return [];
+  if (output[output.length - 1] !== 0) {
+    throw new SignalGrepError("Git names protocol ended without a NUL delimiter");
+  }
+  const records = [];
+  let offset = 0;
+  for (let delimiter = output.indexOf(0);delimiter !== -1; delimiter = output.indexOf(0, offset)) {
+    records.push(output.subarray(offset, delimiter));
+    offset = delimiter + 1;
+  }
+  return records;
+}
+
+// src/git-repository.ts
+async function verifyWorktreeRevision(cwd, path, expected) {
+  try {
+    const current = await lstat2(resolve9(cwd, path));
+    await assertExistingPathInsideCwd(resolve9(cwd, path), cwd);
+    if (current.isFile() && sameSourceRevision(sourceRevisionFromStats(current), expected))
+      return;
+  } catch (error) {
+    if (!(error instanceof Error && ("code" in error) && error.code === "ENOENT"))
+      throw error;
+  }
+  throw new SignalGrepError("Working source changed during Git comparison; retry a new search");
+}
+function gitPath(cwd, path) {
+  if (path.length === 0 || path.includes("\x00"))
+    throw new SignalGrepError("Git source path is invalid");
+  const absolute = resolve9(cwd, path);
+  const local = relative5(resolve9(cwd), absolute).split(sep3).join("/");
+  if (!isPathInsideCwd(absolute, cwd) || local.split("/").some((part) => part.toLowerCase() === ".git")) {
+    throw new SignalGrepError("Git source path must stay within the working directory and outside .git");
+  }
+  return local;
+}
+async function resolveGitCommit(cwd, ref, signal) {
+  if (ref.trim().length === 0 || ref.length > 1024 || ref.includes("\x00")) {
+    throw new SignalGrepError("Git commit reference must be a nonempty bounded string");
+  }
+  const { output } = await runGitRead(cwd, "rev-parse", ["--verify", "--end-of-options", `${ref}^{commit}`], {
+    ...signal ? { signal } : {},
+    maxBytes: 128
+  });
+  const commit = output.toString("ascii").trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit))
+    throw new SignalGrepError("Git returned an invalid commit identity");
+  return commit;
+}
+async function resolveGitRepository(cwd, signal) {
+  const { output } = await runGitRead(cwd, "rev-parse", ["--show-toplevel"], signal ? { signal, maxBytes: 4096 } : { maxBytes: 4096 });
+  const root = decodeGitPath(output).replace(/\r?\n$/, "");
+  if (!isAbsolute4(root))
+    throw new SignalGrepError("Git returned an invalid repository root");
+  return resolve9(root);
+}
+async function findGitRepository(cwd, signal) {
+  try {
+    return await resolveGitRepository(cwd, signal);
+  } catch (error) {
+    if (error instanceof SignalGrepError && error.message.includes("not a git repository")) {
+      return;
+    }
+    throw error;
+  }
+}
+async function readGitTree(cwd, commit, signal, path) {
+  const { output } = await runGitRead(cwd, "ls-tree", ["-r", "-z", "-l", commit, ...path ? ["--", gitPath(cwd, path)] : []], signal ? { signal } : {});
+  const entries = new Map;
+  for (const record of splitGitRecords(output)) {
+    if (entries.size === MAX_SOURCE_REVISION_FILES)
+      return { entries, limited: true };
+    const tab = record.indexOf(9);
+    const header = record.subarray(0, tab).toString("ascii").trim().split(/\s+/);
+    const [mode, type, blob, size] = header;
+    if (tab < 0 || !mode || !blob || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(blob) || !["blob", "commit"].includes(type ?? "")) {
+      throw new SignalGrepError("Git tree returned an invalid raw object entry");
+    }
+    const local = gitPath(cwd, decodeGitPath(record.subarray(tab + 1)));
+    const byteSize = type === "commit" ? 0 : Number(size);
+    if (!Number.isSafeInteger(byteSize) || byteSize < 0)
+      throw new SignalGrepError("Git tree returned an invalid blob size");
+    entries.set(local, { path: local, mode, blob, size: byteSize });
+  }
+  return { entries, limited: false };
+}
+async function worktreeNames(cwd, signal) {
+  const { output } = await runGitRead(cwd, "ls-files", ["-z", "--cached", "--others", "--exclude-standard"], signal ? { signal } : {});
+  const paths = new Set;
+  for (const record of splitGitRecords(output)) {
+    if (paths.size === MAX_SOURCE_REVISION_FILES)
+      return { paths: [...paths], limited: true };
+    paths.add(gitPath(cwd, decodeGitPath(record)));
+  }
+  return { paths: [...paths], limited: false };
+}
+async function visibleGitPaths(cwd, paths, signal, includePath) {
+  const result = [];
+  for (let start = 0;start < paths.length; start += 128) {
+    const batch = paths.slice(start, start + 128);
+    const { output } = await runGitRead(cwd, "check-ignore", ["--no-index", "-z", "--stdin"], {
+      input: Buffer.from(`${batch.map((path) => `./${path}`).join("\x00")}\x00`),
+      allowedCodes: [0, 1],
+      ...signal ? { signal } : {}
+    });
+    const ignored = new Set(splitGitRecords(output).map((record) => gitPath(cwd, decodeGitPath(record))));
+    for (const path of batch) {
+      if (signal?.aborted)
+        throw abortError();
+      if (!ignored.has(path) && (!includePath || await includePath(path)))
+        result.push(path);
+    }
+  }
+  return result;
+}
+function limitedSource(path, mode, reason) {
+  return { path, mode, sourceStatus: "unavailable", reason };
+}
+async function readGitBlob(cwd, commit, entry, budget, signal) {
+  const { path, mode, blob, size } = entry;
+  if (mode === "120000" || mode === "160000") {
+    return {
+      path,
+      mode,
+      sourceStatus: mode === "120000" ? "symlink" : "submodule",
+      reason: "Symlink and submodule contents are not followed"
+    };
+  }
+  if (size > MAX_SOURCE_FILE_BYTES)
+    return limitedSource(path, mode, `Source exceeds the ${String(MAX_SOURCE_FILE_BYTES)} byte file limit`);
+  if (budget.bytes + size > budget.maxBytes)
+    return limitedSource(path, mode, `Source reads exceed the ${String(budget.maxBytes)} byte request limit`);
+  const { output } = await runGitRead(cwd, "cat-file", ["blob", blob], {
+    maxBytes: size,
+    ...signal ? { signal } : {}
+  });
+  budget.bytes += output.length;
+  if (output.length !== size)
+    throw new SignalGrepError("Git blob size does not match its immutable tree entry");
+  const verifiedBlob = createHash(blob.length === 40 ? "sha1" : "sha256").update(`blob ${String(output.length)}\x00`).update(output).digest("hex");
+  if (verifiedBlob !== blob)
+    throw new SignalGrepError("Git blob bytes do not match their immutable object identity");
+  return {
+    path,
+    mode,
+    sourceStatus: output.includes(0) ? "binary" : "available",
+    ...output.includes(0) ? { reason: "Binary source contains NUL bytes" } : { content: output },
+    origin: { kind: "git", commit, blob },
+    contentHash: createHash("sha256").update(output).digest("hex")
+  };
+}
+async function readWorktreeSource(cwd, path, budget, signal) {
+  const absolute = resolve9(cwd, path);
+  if (signal?.aborted)
+    throw abortError();
+  let discovered = false;
+  try {
+    const before = await lstat2(absolute);
+    discovered = true;
+    if (before.isSymbolicLink())
+      return {
+        path,
+        mode: "120000",
+        sourceStatus: "symlink",
+        reason: "Symlink source is not followed"
+      };
+    if (!before.isFile())
+      return {
+        path,
+        mode: "160000",
+        sourceStatus: before.isDirectory() ? "submodule" : "unavailable",
+        reason: "Non-regular source is not read"
+      };
+    const mode = (before.mode & 73) === 0 ? "100644" : "100755";
+    if (before.size > MAX_SOURCE_FILE_BYTES)
+      return limitedSource(path, mode, `Source exceeds the ${String(MAX_SOURCE_FILE_BYTES)} byte file limit`);
+    if (budget.bytes + before.size > budget.maxBytes)
+      return limitedSource(path, mode, `Source reads exceed the ${String(budget.maxBytes)} byte request limit`);
+    await assertExistingPathInsideCwd(absolute, cwd);
+    const handle = await open2(absolute, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+    try {
+      if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
+        throw new SignalGrepError("Working source changed before reading");
+      const buffer = Buffer.alloc(before.size + 1);
+      let bytes = 0;
+      while (bytes < buffer.length) {
+        if (signal?.aborted)
+          throw abortError();
+        const { bytesRead } = await handle.read(buffer, bytes, Math.min(64 * 1024, buffer.length - bytes), null);
+        if (bytesRead === 0)
+          break;
+        bytes += bytesRead;
+      }
+      budget.bytes += bytes;
+      const after = await lstat2(absolute);
+      await assertExistingPathInsideCwd(absolute, cwd);
+      if (bytes !== before.size || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(after)) || !sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat()))) {
+        throw new SignalGrepError("Working source changed while reading; Git ranges and source cannot be mixed");
+      }
+      const content = buffer.subarray(0, bytes);
+      return {
+        path,
+        mode,
+        sourceStatus: content.includes(0) ? "binary" : "available",
+        ...content.includes(0) ? { reason: "Binary source contains NUL bytes" } : { content },
+        origin: {
+          kind: "worktree",
+          revision: sourceRevisionFromStats(after),
+          contentHash: createHash("sha256").update(content).digest("hex")
+        },
+        contentHash: createHash("sha256").update(content).digest("hex")
+      };
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error instanceof Error && "code" in error) {
+      if (error.code === "ENOENT") {
+        if (discovered)
+          throw new SignalGrepError("Working source disappeared while reading; retry a new search");
+        return { path, mode: "000000", sourceStatus: "absent" };
+      }
+      if (["EACCES", "EPERM", "ELOOP", "ENOTDIR"].includes(String(error.code)))
+        return limitedSource(path, "000000", `Source unavailable: ${String(error.code)}`);
+    }
+    throw error;
+  }
+}
+
+// src/git-source.ts
+import { setImmediate as setImmediate2 } from "node:timers/promises";
+function absent(path) {
+  return { path, mode: "000000", sourceStatus: "absent" };
+}
+function sameContents(left, right) {
+  return left.contentHash !== undefined && left.contentHash === right.contentHash;
+}
+function wholeFile(content) {
+  const lines = sourceLineCount(content);
+  return lines === 0 ? [] : [{ startLine: 1, endLine: lines }];
+}
+function validateLimit(value, label) {
+  if (!Number.isSafeInteger(value) || value < 1)
+    throw new SignalGrepError(`${label} must be a positive integer`);
+  return value;
+}
+function rememberBest(best, pair, score) {
+  const previous = best.get(pair);
+  if (!previous || score > previous.score)
+    best.set(pair, { score, count: 1 });
+  else if (score === previous.score)
+    previous.count += 1;
+}
+async function pairRenames(pairs, budget, reasons) {
+  const removed = pairs.filter((pair) => pair.new.sourceStatus === "absent" && pair.old.content);
+  const added = pairs.filter((pair) => pair.old.sourceStatus === "absent" && pair.new.content);
+  const scores = [];
+  const bestOld = new Map;
+  const bestNew = new Map;
+  try {
+    for (const oldPair of removed) {
+      for (const newPair of added) {
+        if (!oldPair.old.content || !newPair.new.content)
+          continue;
+        if (budget.tick())
+          await setImmediate2();
+        const score = sameContents(oldPair.old, newPair.new) ? 100 : await sourceSimilarity(oldPair.old.content, newPair.new.content, budget);
+        if (score >= 50) {
+          scores.push({ oldPair, newPair, score });
+          rememberBest(bestOld, oldPair, score);
+          rememberBest(bestNew, newPair, score);
+        }
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof GitDiffLimitError))
+      throw error;
+    reasons.add(error.message);
+    reasons.add("Rename comparison is incomplete; unpaired additions/deletions remain explicit");
+    return pairs;
+  }
+  const consumed = new Set;
+  const renamed = [];
+  for (const entry of scores) {
+    const oldBest = bestOld.get(entry.oldPair);
+    const newBest = bestNew.get(entry.newPair);
+    if (oldBest?.score !== entry.score || newBest?.score !== entry.score || oldBest.count !== 1 || newBest.count !== 1)
+      continue;
+    consumed.add(entry.oldPair);
+    consumed.add(entry.newPair);
+    renamed.push({
+      old: entry.oldPair.old,
+      new: entry.newPair.new,
+      rename: {
+        method: entry.score === 100 ? "identical-content" : "line-similarity",
+        similarity: entry.score
+      }
+    });
+  }
+  if (scores.some((entry) => !consumed.has(entry.oldPair) && !consumed.has(entry.newPair))) {
+    reasons.add("Ambiguous rename candidates remain separate additions/deletions");
+  }
+  return [...pairs.filter((pair) => !consumed.has(pair)), ...renamed];
+}
+async function renderPair(pair, request, budget, reasons) {
+  const selected = request.side === "old" ? pair.old : pair.new;
+  const oldExists = pair.old.sourceStatus !== "absent";
+  const newExists = pair.new.sourceStatus !== "absent";
+  let changedRanges = [];
+  let rangeReason;
+  if (selected.content) {
+    try {
+      if (!oldExists || !newExists)
+        changedRanges = wholeFile(selected.content);
+      else if (pair.old.content && pair.new.content) {
+        const diff = await changedLineRanges(pair.old.content, pair.new.content, budget);
+        changedRanges = request.side === "old" ? diff.oldRanges : diff.newRanges;
+      } else {
+        rangeReason = "Changed lines unavailable because the opposite source cannot be compared as raw text";
+      }
+    } catch (error) {
+      if (!(error instanceof GitDiffLimitError))
+        throw error;
+      rangeReason = error.message;
+    }
+  }
+  if (rangeReason)
+    reasons.add(rangeReason);
+  for (const source of [pair.old, pair.new]) {
+    if (source.sourceStatus === "unavailable")
+      reasons.add(source.reason ?? "Source unavailable");
+  }
+  const unsupported = [pair.old, pair.new].some((source) => ["unavailable", "symlink", "submodule"].includes(source.sourceStatus));
+  const change = pair.rename ? "renamed" : !oldExists ? "added" : !newExists ? "deleted" : unsupported ? "unknown" : "modified";
+  const reason = selected.reason ?? rangeReason;
+  return {
+    path: selected.sourceStatus === "absent" ? request.side === "old" ? pair.new.path : pair.old.path : selected.path,
+    ...oldExists ? { oldPath: pair.old.path } : {},
+    ...newExists ? { newPath: pair.new.path } : {},
+    change,
+    sourceStatus: selected.sourceStatus,
+    ...selected.content ? { content: selected.content } : {},
+    ...selected.contentHash ? { contentHash: selected.contentHash } : {},
+    ...selected.origin ? { origin: selected.origin } : {},
+    changedRanges,
+    ranges: request.scope === "files" && selected.content ? wholeFile(selected.content) : changedRanges,
+    ...reason ? { reason } : {},
+    ...pair.rename ? { rename: pair.rename } : {}
+  };
+}
+async function readGitChanges(cwd, request, signal, options = {}) {
+  if (!["files", "lines"].includes(request.scope) || !["new", "old"].includes(request.side))
+    throw new SignalGrepError("Invalid Git scope or side");
+  if (request.target !== undefined && request.base === undefined)
+    throw new SignalGrepError("Git commit comparison requires an explicit base and target");
+  const maxFiles = validateLimit(options.maxFiles ?? MAX_STRUCTURE_FILES, "Git file limit");
+  const maxBytes = validateLimit(options.maxBytes ?? MAX_STRUCTURE_BYTES, "Git byte limit");
+  const maxDiffWork = validateLimit(options.maxDiffWork ?? MAX_GIT_DIFF_WORK, "Git diff work limit");
+  const base = await resolveGitCommit(cwd, request.base ?? "HEAD", signal);
+  const target = request.target === undefined ? undefined : await resolveGitCommit(cwd, request.target, signal);
+  const oldTree = await readGitTree(cwd, base, signal);
+  const newTree = target ? await readGitTree(cwd, target, signal) : undefined;
+  const diskNames = target ? undefined : await worktreeNames(cwd, signal);
+  const reasons = new Set;
+  if (oldTree.limited || newTree?.limited || diskNames?.limited)
+    reasons.add("Git candidate metadata limit reached");
+  const candidates = [
+    ...new Set([...oldTree.entries.keys(), ...newTree?.entries.keys() ?? diskNames?.paths ?? []])
+  ].filter((path) => {
+    if (!target)
+      return true;
+    const oldEntry = oldTree.entries.get(path);
+    const newEntry = newTree?.entries.get(path);
+    return !oldEntry || !newEntry || oldEntry.blob !== newEntry.blob || oldEntry.mode !== newEntry.mode;
+  }).toSorted();
+  let visible = await visibleGitPaths(cwd, candidates, signal, options.includePath);
+  let filterBytes = 0;
+  if (options.filterPaths) {
+    const allowed = new Set(visible);
+    const filtered = await options.filterPaths(visible);
+    visible = filtered.paths;
+    filterBytes = filtered.bytesRead ?? 0;
+    if (!Number.isSafeInteger(filterBytes) || filterBytes < 0 || filterBytes > maxBytes)
+      throw new SignalGrepError("Git path filtering exceeded its shared source read budget");
+    if (visible.some((path) => !allowed.has(path)))
+      throw new SignalGrepError("Git path filter expanded the authorized candidate set");
+    visible = [...new Set(visible)];
+  }
+  const readBudget = { bytes: filterBytes, maxBytes };
+  const diffBudget = new GitDiffBudget(maxDiffWork, signal);
+  const pairs = [];
+  let filesRead = 0;
+  let omittedFiles = 0;
+  for (const path of visible) {
+    if (signal?.aborted)
+      throw abortError();
+    const oldEntry = oldTree.entries.get(path);
+    const newEntry = newTree?.entries.get(path);
+    if (filesRead >= maxFiles || readBudget.bytes >= maxBytes) {
+      omittedFiles += 1;
+      continue;
+    }
+    filesRead += 1;
+    const oldSource = oldEntry ? await readGitBlob(cwd, base, oldEntry, readBudget, signal) : absent(path);
+    const newSource = target ? newEntry ? await readGitBlob(cwd, target, newEntry, readBudget, signal) : absent(path) : await readWorktreeSource(cwd, path, readBudget, signal);
+    if (oldSource.sourceStatus === "absent" && newSource.sourceStatus === "absent")
+      continue;
+    if (sameContents(oldSource, newSource) && (process.platform === "win32" || oldSource.mode === newSource.mode))
+      continue;
+    pairs.push({ old: oldSource, new: newSource });
+  }
+  if (omittedFiles > 0)
+    reasons.add(`Git read limits omitted ${String(omittedFiles)} candidate files (${String(maxFiles)} files / ${String(maxBytes)} bytes)`);
+  const paired = await pairRenames(pairs, diffBudget, reasons);
+  const files = [];
+  for (const pair of paired)
+    files.push(await renderPair(pair, request, diffBudget, reasons));
+  for (const pair of paired) {
+    if (pair.new.origin?.kind !== "worktree")
+      continue;
+    await verifyWorktreeRevision(cwd, pair.new.path, pair.new.origin.revision);
+  }
+  return {
+    base,
+    target: target ?? "worktree",
+    scope: request.scope,
+    side: request.side,
+    files: files.toSorted((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+    partial: reasons.size > 0,
+    reasons: [...reasons],
+    filesRead,
+    bytesRead: readBudget.bytes,
+    diffWork: diffBudget.work,
+    omittedFiles
+  };
+}
+async function readGitSource(cwd, identity, signal, options = {}) {
+  const path = gitPath(cwd, identity.path);
+  if (!(await visibleGitPaths(cwd, [path], signal, options.includePath)).includes(path))
+    throw new SignalGrepError("Git source is excluded by current workspace privacy or path rules");
+  const selected = await filterHistoricalPaths(cwd, [path], { glob: [], exclude: [], hidden: true }, signal);
+  if (selected.partial || !selected.paths.includes(path))
+    throw new SignalGrepError("Git source is excluded or unverified by current .ignore/.rgignore rules");
+  const commit = await resolveGitCommit(cwd, identity.commit, signal);
+  const tree = await readGitTree(cwd, commit, signal, path);
+  const entry = tree.entries.get(path);
+  if (!entry)
+    throw new SignalGrepError("Git source path does not exist in the requested commit");
+  if (identity.blob !== undefined && identity.blob !== entry.blob)
+    throw new SignalGrepError("Git source blob does not match its commit and path");
+  return readGitBlob(cwd, commit, entry, { bytes: selected.ignoreBytesRead, maxBytes: options.maxBytes ?? MAX_STRUCTURE_BYTES }, signal);
+}
+
+// src/source-document.ts
+import { isUtf8 } from "node:buffer";
+import { createHash as createHash2 } from "node:crypto";
+import { open as open3, realpath as realpath4 } from "node:fs/promises";
+import { relative as relative6, resolve as resolve10 } from "node:path";
+class SourceDocumentError extends SignalGrepError {
+  reason;
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+    this.name = "SourceDocumentError";
+  }
+}
+function contentHash(bytes) {
+  return createHash2("sha256").update(bytes).digest("hex");
+}
+
+class SourceDocument {
+  reference;
+  bytes;
+  text;
+  utf8;
+  lineStarts = [0];
+  #byteOffsets;
+  constructor(reference, bytes) {
+    this.reference = reference;
+    this.bytes = bytes;
+    if (bytes.length > MAX_SOURCE_FILE_BYTES) {
+      throw new SourceDocumentError("file-too-large", "Source exceeds the 5 MiB file limit");
+    }
+    this.utf8 = isUtf8(bytes);
+    this.text = bytes.toString("utf8");
+    for (let index = bytes.indexOf(10);index >= 0; index = bytes.indexOf(10, index + 1)) {
+      this.lineStarts.push(index + 1);
+    }
+  }
+  get path() {
+    return this.reference.path;
+  }
+  toByteOffset(character) {
+    this.#requireUtf8();
+    if (!Number.isSafeInteger(character) || character < 0 || character > this.text.length) {
+      throw new SignalGrepError("Source character offset is outside the document");
+    }
+    const code = this.text.charCodeAt(character);
+    if (code >= 56320 && code <= 57343) {
+      throw new SignalGrepError("Source character offset splits a Unicode character");
+    }
+    const value = this.#offsets()[character];
+    if (value === undefined)
+      throw new Error("Missing source offset");
+    return value;
+  }
+  toCharacterOffset(byte) {
+    this.#requireUtf8();
+    this.checkRange({ start: byte, end: byte });
+    const offsets = this.#offsets();
+    let low = 0;
+    let high = offsets.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const value = offsets[middle];
+      if (value === undefined)
+        throw new Error("Missing source offset");
+      if (value < byte)
+        low = middle + 1;
+      else
+        high = middle;
+    }
+    if (offsets[low] !== byte) {
+      throw new SignalGrepError("Source byte offset splits a Unicode character");
+    }
+    return low;
+  }
+  lineAt(byte) {
+    this.checkRange({ start: byte, end: byte });
+    let low = 0;
+    let high = this.lineStarts.length;
+    while (low + 1 < high) {
+      const middle = Math.floor((low + high) / 2);
+      const start = this.lineStarts[middle];
+      if (start === undefined)
+        throw new Error("Missing source line");
+      if (start <= byte)
+        low = middle;
+      else
+        high = middle;
+    }
+    return low + 1;
+  }
+  positionAt(byte) {
+    const line = this.lineAt(byte);
+    const start = this.lineStarts[line - 1];
+    if (start === undefined)
+      throw new Error("Missing source line");
+    return {
+      line,
+      column: this.toCharacterOffset(byte) - this.toCharacterOffset(start) + 1
+    };
+  }
+  lineRange(startLine, endLine = startLine) {
+    if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine || startLine > this.lineStarts.length) {
+      throw new SignalGrepError("Source line range is outside the document");
+    }
+    const start = this.lineStarts[startLine - 1];
+    if (start === undefined)
+      throw new Error("Missing source line");
+    return { start, end: this.lineStarts[endLine] ?? this.bytes.length };
+  }
+  slice(range) {
+    this.#requireUtf8();
+    this.checkRange(range);
+    this.toCharacterOffset(range.start);
+    this.toCharacterOffset(range.end);
+    return this.bytes.subarray(range.start, range.end).toString("utf8");
+  }
+  checkRange(range) {
+    if (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end < range.start || range.end > this.bytes.length) {
+      throw new SignalGrepError("Source byte range is outside the document");
+    }
+  }
+  #requireUtf8() {
+    if (!this.utf8) {
+      throw new SourceDocumentError("encoding", "Source is not losslessly representable as UTF-8");
+    }
+  }
+  #offsets() {
+    if (this.#byteOffsets)
+      return this.#byteOffsets;
+    const offsets = new Uint32Array(this.text.length + 1);
+    let character = 0;
+    let byte = 0;
+    for (const point of this.text) {
+      offsets[character] = byte;
+      if (point.length === 2)
+        offsets[character + 1] = byte;
+      character += point.length;
+      byte += Buffer.byteLength(point);
+    }
+    offsets[character] = byte;
+    this.#byteOffsets = offsets;
+    return offsets;
+  }
+}
+async function readWorkspaceDocument(path, cwd, signal, expected, readBudget = MAX_SOURCE_FILE_BYTES) {
+  if (signal?.aborted)
+    throw abortError();
+  if (expected?.kind === "git") {
+    throw new SignalGrepError("A Git source reference cannot be read from the worktree");
+  }
+  const absolute = resolve10(cwd, path);
+  const [canonical, canonicalCwd] = await Promise.all([
+    new SearchPathPolicy(cwd).resolveExistingPath(absolute),
+    realpath4(cwd)
+  ]);
+  if (!canonical)
+    throw new SourceDocumentError("source-unavailable", "Source is unavailable");
+  const before = await getSourceRevision(absolute);
+  if (!before)
+    throw new SourceDocumentError("source-unavailable", "Source is unavailable");
+  if (expected && !sameSourceRevision(before, expected.revision)) {
+    throw new SourceDocumentError("source-changed", "Source changed; start a new inspection");
+  }
+  if (before.size > Math.min(MAX_SOURCE_FILE_BYTES, readBudget)) {
+    throw new SourceDocumentError("file-too-large", "Source exceeds the 5 MiB file limit");
+  }
+  if (signal?.aborted)
+    throw abortError();
+  const handle = await open3(canonical, "r");
+  let bytes;
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) {
+      throw new SourceDocumentError("source-unavailable", "Source must be a regular file");
+    }
+    if (!sameSourceRevision(before, sourceRevisionFromStats(metadata))) {
+      throw new SourceDocumentError("source-changed", "Source was replaced before reading");
+    }
+    const buffer = Buffer.alloc(before.size);
+    let used = 0;
+    while (used < buffer.length) {
+      if (signal?.aborted)
+        throw abortError();
+      const read = await handle.read(buffer, used, buffer.length - used, used);
+      if (read.bytesRead === 0)
+        break;
+      used += read.bytesRead;
+    }
+    if (used !== before.size) {
+      throw new SourceDocumentError("source-changed", "Source changed during reading");
+    }
+    bytes = buffer.subarray(0, used);
+  } finally {
+    await handle.close();
+  }
+  const [after, finalPath] = await Promise.all([getSourceRevision(absolute), realpath4(absolute)]);
+  if (!after || canonical !== finalPath || !sameSourceRevision(before, after)) {
+    throw new SourceDocumentError("source-changed", "Source changed during reading");
+  }
+  if (signal?.aborted)
+    throw abortError();
+  const hash = contentHash(bytes);
+  if (expected && expected.contentHash !== hash) {
+    throw new SourceDocumentError("source-changed", "Source content changed; start a new inspection");
+  }
+  return new SourceDocument({
+    path: isPathInsideCwd(canonical, canonicalCwd) ? relative6(canonicalCwd, canonical).replaceAll("\\", "/") : canonical.replaceAll("\\", "/"),
+    origin: { kind: "worktree", revision: after, contentHash: hash }
+  }, bytes);
+}
+
 // src/source-access.ts
 function noop() {}
 
@@ -3221,7 +3546,7 @@ class SyntaxQueue {
   async parse(document, signal) {
     return (await this.parseWithMetrics(document, signal)).analysis;
   }
-  async parseWithMetrics(document, signal) {
+  async parseWithMetrics(document, signal, pattern) {
     const combined = signal ? AbortSignal.any([signal, this.#generation.signal]) : this.#generation.signal;
     if (combined.aborted)
       throw abortError();
@@ -3238,14 +3563,14 @@ class SyntaxQueue {
         throw new SourceDocumentError("encoding", "Syntax requires lossless UTF-8 source");
       const origin = document.reference.origin;
       const revision = origin.kind === "worktree" ? origin.contentHash : origin.blob;
-      const key = `${extname2(document.path).toLowerCase()}\x00${revision}`;
+      const key = `${extname2(document.path).toLowerCase()}\x00${revision}\x00${pattern ?? ""}`;
       const cached = this.#cache.get(key);
       if (cached) {
         this.#cache.delete(key);
         this.#cache.set(key, cached);
         return { analysis: cached.analysis, cacheHit: true };
       }
-      const analysis = await parseSyntax(document.path, document.text, combined);
+      const analysis = await parseSyntax(document.path, document.text, combined, pattern);
       const entry = { analysis, nodes: analysis.nodes.length };
       this.#cache.set(key, entry);
       this.#cachedNodes += entry.nodes;
@@ -3312,10 +3637,10 @@ class SourceAccess {
   async load(path, expected) {
     if (this.signal?.aborted)
       throw abortError();
-    if (expected && resolve10(this.cwd, expected.path) !== resolve10(this.cwd, path)) {
+    if (expected && resolve11(this.cwd, expected.path) !== resolve11(this.cwd, path)) {
       throw new SignalGrepError("Source reference path does not match the requested file");
     }
-    const key = JSON.stringify([resolve10(this.cwd, path), expected?.origin]);
+    const key = JSON.stringify([resolve11(this.cwd, path), expected?.origin]);
     const existing = this.#documents.get(key);
     if (existing)
       return existing;
@@ -3345,7 +3670,7 @@ class SourceAccess {
     if (remaining <= 0)
       throw new SourceBudgetError("Structural scan reached the 32 MiB read limit");
     if (expected?.origin.kind !== "git") {
-      const metadata = await getSourceRevision(resolve10(this.cwd, path));
+      const metadata = await getSourceRevision(resolve11(this.cwd, path));
       if (metadata && metadata.size > remaining)
         throw new SourceBudgetError("Next source exceeds the remaining 32 MiB structural read budget");
     }
@@ -3378,6 +3703,9 @@ class SourceAccess {
     }
     return pending;
   }
+  async pattern(document, pattern) {
+    return (await this.#queue.parseWithMetrics(document, this.signal, pattern)).analysis;
+  }
   releaseSyntax(document) {
     this.#syntax.delete(document);
   }
@@ -3386,7 +3714,970 @@ class SourceAccess {
   }
 }
 
+// src/concept-search.ts
+var inferenceQueue = new OwnedTaskQueue;
+function passage(document, start) {
+  let end = Math.min(document.text.length, start + MAX_CONCEPT_CHARS);
+  if (end < document.text.length) {
+    const newline = document.text.lastIndexOf(`
+`, end);
+    if (newline > start + MAX_CONCEPT_CHARS / 2)
+      end = newline + 1;
+    const code = document.text.charCodeAt(end);
+    if (code >= 56320 && code <= 57343)
+      end -= 1;
+  }
+  const range = { start: document.toByteOffset(start), end: document.toByteOffset(end) };
+  return {
+    value: {
+      document,
+      range,
+      text: `${document.path.slice(0, 200)}
+${document.text.slice(start, end)}`
+    },
+    next: end
+  };
+}
+async function similarities(query, passages, parent) {
+  const worker = fileURLToPath3(new URL("./concept-worker.mjs", import.meta.url));
+  const config = fileURLToPath3(new URL("./syntax-worker.toml", import.meta.url));
+  const controller = new AbortController;
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  const timer = setTimeout(() => controller.abort(), CONCEPT_TIMEOUT_MS);
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  const buffers = [];
+  let bytes = 0;
+  try {
+    const processResult = await runOwnedProcess({
+      executable: process.execPath,
+      args: process.versions.bun ? [
+        `--config=${config}`,
+        "--no-env-file",
+        "--no-macros",
+        "--no-install",
+        worker,
+        "--infer"
+      ] : [worker, "--infer"],
+      cwd: dirname4(worker),
+      env,
+      signal,
+      input: Buffer.from(JSON.stringify({ query, passages: passages.map((item) => item.text) }))
+    }, async (stdout) => {
+      for await (const chunk of stdout) {
+        bytes += chunk.byteLength;
+        if (bytes > 32768)
+          throw new SignalGrepError("Concept worker exceeded its 32 KiB response budget");
+        buffers.push(Buffer.from(chunk));
+      }
+    });
+    if (processResult.code !== 0)
+      throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${processResult.stderr.trim()}`);
+    const value = JSON.parse(Buffer.concat(buffers).toString("utf8"));
+    if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || !Array.isArray(value.truncated) || value.truncated.some((index) => typeof index !== "number" || !Number.isSafeInteger(index) || index < -1 || index >= passages.length) || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
+      throw new SignalGrepError("Invalid concept inference response");
+    return {
+      scores: value.scores.filter((score) => typeof score === "number"),
+      truncated: value.truncated.filter((index) => typeof index === "number"),
+      peakRssBytes: value.peakRssBytes
+    };
+  } catch (error) {
+    if (parent?.aborted)
+      throw abortError();
+    if (controller.signal.aborted)
+      throw new SignalGrepError(`Concept inference exceeded the ${String(CONCEPT_TIMEOUT_MS)} ms deadline`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function runConceptSearch(input, access) {
+  const query = input.query;
+  if (!query?.trim() || query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
+    throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
+  const started = performance.now();
+  const request = normalizeRequest({ ...input, pattern: "" });
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
+    ...request.path ? { path: request.path } : {},
+    glob: request.glob,
+    exclude: request.exclude,
+    hidden: request.hidden
+  });
+  const result = {
+    kind: "concept",
+    unit: "evidence-items",
+    items: [],
+    partial: files.partial,
+    reasons: [...files.reasons],
+    redact: input.redact ?? false
+  };
+  const documents = [];
+  for (const path of files.paths) {
+    try {
+      const document = await access.load(path);
+      if (!document.utf8)
+        throw new SourceDocumentError("encoding", "Not lossless UTF-8");
+      if (document.text.trim())
+        documents.push({ document, next: 0 });
+    } catch (error) {
+      if (error instanceof SourceBudgetError) {
+        result.partial = true;
+        result.reasons.push(error.message);
+        break;
+      }
+      if (!(error instanceof SourceDocumentError))
+        throw error;
+      result.partial = true;
+      result.reasons.push(`${path}: ${error.message}`);
+    }
+  }
+  const passages = [];
+  while (passages.length < MAX_CONCEPT_CHUNKS && documents.some((item) => item.next < item.document.text.length)) {
+    for (const item of documents) {
+      if (passages.length >= MAX_CONCEPT_CHUNKS)
+        break;
+      if (item.next >= item.document.text.length)
+        continue;
+      const chunk = passage(item.document, item.next);
+      passages.push(chunk.value);
+      item.next = chunk.next;
+    }
+  }
+  if (documents.some((item) => item.next < item.document.text.length)) {
+    result.partial = true;
+    result.reasons.push(`Concept coverage reached ${String(MAX_CONCEPT_CHUNKS)} passages of at most ${String(MAX_CONCEPT_CHARS)} characters; narrow path/glob to cover remaining source`);
+  }
+  if (passages.length) {
+    const inferred = await similarities(query, passages, access.signal);
+    if (inferred.truncated.length) {
+      result.partial = true;
+      result.reasons.push(`Model token limit: ${String(inferred.truncated.length)} query/passages exceeded 512 tokens; ranking used their prefixes`);
+    }
+    result.items = passages.map((item, index) => {
+      const similarity = inferred.scores[index];
+      if (similarity === undefined)
+        throw new Error("Missing concept similarity");
+      const evidence = rangeEvidence(item.document, item.range);
+      return {
+        path: item.document.path,
+        line: item.document.lineAt(item.range.start),
+        source: item.document.reference,
+        range: item.range,
+        label: `Concept candidate (cosine ${similarity.toFixed(4)})`,
+        excerpt: evidence.excerpt,
+        details: {
+          kind: "concept-candidate",
+          certainty: "candidate",
+          score: similarity,
+          rankingReason: "local multilingual E5 cosine similarity; relevance candidate, no binding or execution claim",
+          model: CONCEPT_MODEL,
+          revision: CONCEPT_REVISION,
+          tokenTruncated: inferred.truncated.includes(index),
+          excerptRange: evidence.excerptRange,
+          excerptTruncated: evidence.excerptTruncated
+        }
+      };
+    }).toSorted((a, b) => b.details.score - a.details.score || a.path.localeCompare(b.path) || a.line - b.line);
+    result.stats = {
+      inferencePeakRssBytes: inferred.peakRssBytes,
+      passagesRanked: passages.length
+    };
+  }
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
+  result.stats = {
+    ...result.stats,
+    elapsedMs: Math.round(performance.now() - started),
+    filesEnumerated: files.paths.length
+  };
+  result.coverage = {
+    conceptCandidates: result.partial ? "partial" : "complete",
+    compilerBindings: "not-applicable"
+  };
+  result.scope = {
+    path: request.path ?? ".",
+    requestedPath: request.path ?? ".",
+    glob: request.glob,
+    exclude: request.exclude,
+    hidden: request.hidden,
+    expandedToProjectRoot: false,
+    assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide"
+  };
+  return result;
+}
+function conceptSearch(input, access) {
+  return inferenceQueue.run(() => runConceptSearch(input, access), access.signal);
+}
+
+// src/structural-search.ts
+async function structuralSearch(input, access) {
+  if (!input.pattern?.trim() || Buffer.byteLength(input.pattern) > 4096 || !input.pattern.isWellFormed())
+    throw new SignalGrepError("Structural pattern must be nonempty, well-formed and at most 4 KiB; ast-grep $NAME/$$$ARGS metavariables are supported");
+  const request = normalizeRequest({ ...input, pattern: "" });
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
+    ...request.path ? { path: request.path } : {},
+    glob: request.glob,
+    exclude: request.exclude,
+    hidden: request.hidden
+  });
+  const result = {
+    kind: "structure",
+    unit: "occurrences",
+    items: [],
+    partial: files.partial,
+    reasons: [...files.reasons],
+    redact: input.redact ?? false
+  };
+  let retainedBytes = 0;
+  const supported = files.paths.filter((path) => syntaxLanguage(path));
+  if (files.paths.length && !supported.length)
+    throw new SignalGrepError("Structural patterns require admitted JS/TS/TSX/Go source; no supported source files were found");
+  result.stats = {
+    filesEnumerated: files.paths.length,
+    filesSkipped: files.paths.length - supported.length
+  };
+  for (const path of files.paths) {
+    if (!syntaxLanguage(path))
+      continue;
+    try {
+      const document = await access.load(path);
+      const syntax = await access.pattern(document, input.pattern);
+      if (syntax.status !== "ok") {
+        result.partial = true;
+        result.reasons.push(`${path}: syntax ${syntax.status}; structural matches withheld`);
+        continue;
+      }
+      for (const match of syntax.patternMatches ?? []) {
+        const range = {
+          start: document.toByteOffset(match.start),
+          end: document.toByteOffset(match.end)
+        };
+        const evidence = rangeEvidence(document, range);
+        const item = {
+          path: document.path,
+          line: document.lineAt(range.start),
+          source: document.reference,
+          range,
+          label: "AST pattern match",
+          excerpt: evidence.excerpt,
+          details: {
+            kind: "structural-match",
+            certainty: "syntax",
+            score: 90,
+            rankingReason: "AST structure and repeated metavariable equality",
+            excerptRange: evidence.excerptRange,
+            excerptTruncated: evidence.excerptTruncated
+          }
+        };
+        const bytes = Buffer.byteLength(JSON.stringify(item));
+        if (result.items.length >= MAX_ANALYSIS_RESULTS || retainedBytes + bytes > MAX_ANALYSIS_STORAGE_BYTES - 65536) {
+          result.partial = true;
+          result.reasons.push("Structural evidence storage limit reached: 50,000 items / 32 MiB");
+          break;
+        }
+        result.items.push(item);
+        retainedBytes += bytes;
+      }
+      if (result.items.length >= MAX_ANALYSIS_RESULTS || result.reasons.at(-1)?.startsWith("Structural evidence storage"))
+        break;
+    } catch (error) {
+      if (error instanceof SourceBudgetError) {
+        result.partial = true;
+        result.reasons.push(error.message);
+        break;
+      }
+      if (!(error instanceof SourceDocumentError))
+        throw error;
+      result.partial = true;
+      result.reasons.push(`${path}: ${error.message}`);
+    }
+  }
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
+  result.coverage = { astPatterns: result.partial ? "partial" : "complete" };
+  result.scope = {
+    path: request.path ?? ".",
+    requestedPath: request.path ?? ".",
+    glob: request.glob,
+    exclude: request.exclude,
+    hidden: request.hidden,
+    expandedToProjectRoot: false,
+    assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide"
+  };
+  return result;
+}
+
+// src/evidence-ranking.ts
+function rankEvidence(items, priority) {
+  const tiers = new Map;
+  const ordered = items.toSorted((a, b) => priority(a) - priority(b) || a.path.localeCompare(b.path) || a.line - b.line || (a.range?.start ?? 0) - (b.range?.start ?? 0));
+  for (const item of ordered) {
+    const score = priority(item);
+    let files = tiers.get(score);
+    if (!files) {
+      files = new Map;
+      tiers.set(score, files);
+    }
+    let entries = files.get(item.path);
+    if (!entries) {
+      entries = [];
+      files.set(item.path, entries);
+    }
+    entries.push(item);
+  }
+  const result = [];
+  for (const files of tiers.values()) {
+    const groups = [...files.values()];
+    const depth = Math.max(0, ...groups.map((group) => group.length));
+    for (let index = 0;index < depth; index += 1)
+      for (const group of groups) {
+        const item = group[index];
+        if (item)
+          result.push({
+            ...item,
+            details: {
+              ...item.details,
+              rankingOrder: "evidence tier, then round-robin files, then source position"
+            }
+          });
+      }
+  }
+  return result;
+}
+
+// src/semantic-navigation.ts
+import { resolve as resolve13 } from "node:path";
+
+// src/semantic-project.ts
+import { resolve as resolve12 } from "node:path";
+async function semanticProject(access, targetPath) {
+  const files = await listWorkspaceFiles(access.cwd, access.signal);
+  const paths = files.paths.filter((path) => {
+    const language = syntaxLanguage(path);
+    return language && language !== "go";
+  });
+  const target = resolve12(access.cwd, targetPath);
+  if (!paths.some((path) => resolve12(access.cwd, path) === target))
+    throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
+  paths.sort((a, b) => Number(resolve12(access.cwd, b) === target) - Number(resolve12(access.cwd, a) === target) || a.localeCompare(b));
+  const documents = new Map;
+  const reasons = [...files.reasons];
+  const metadata = [];
+  for (const path of [
+    ...paths,
+    ...files.paths.filter((candidate) => /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/.test(candidate))
+  ]) {
+    try {
+      const document = await access.load(path);
+      if (!document.utf8)
+        throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
+      if (paths.includes(path))
+        documents.set(resolve12(access.cwd, path), document);
+      else
+        metadata.push(document);
+    } catch (error) {
+      if (error instanceof SourceBudgetError) {
+        reasons.push(error.message);
+        break;
+      }
+      if (!(error instanceof SourceDocumentError))
+        throw error;
+      reasons.push(`${path}: ${error.message}`);
+    }
+  }
+  const primary = documents.get(target);
+  if (!primary)
+    throw new SignalGrepError("Semantic target could not be read within the source budget");
+  const recheck = async () => {
+    for (const document of [...documents.values(), ...metadata]) {
+      if (document.reference.origin.kind !== "worktree")
+        throw new Error("Expected worktree semantic source");
+      await access.refresh(document.path, document.reference);
+    }
+    const after = await listWorkspaceFiles(access.cwd, access.signal);
+    if (JSON.stringify(after) !== JSON.stringify(files))
+      throw new SignalGrepError("Workspace file set changed during semantic query; retry");
+  };
+  const result = {
+    kind: "references",
+    unit: "relationships",
+    items: [],
+    partial: reasons.length > 0,
+    reasons,
+    filesRead: access.filesRead,
+    bytesRead: access.bytesRead,
+    coverage: {
+      admittedSources: reasons.length ? "partial" : "complete",
+      runtimeDispatch: "not-applicable"
+    },
+    stats: { filesEnumerated: paths.length, filesSkipped: paths.length - documents.size }
+  };
+  return { documents, primary, result, recheck };
+}
+
+// src/semantic-navigation.ts
+var semanticRequestQueue = new OwnedTaskQueue;
+async function selection(input, access, document) {
+  if (input.column !== undefined) {
+    if (input.line === undefined || !Number.isSafeInteger(input.column) || input.column < 1 || input.symbol !== undefined)
+      throw new SignalGrepError("Semantic column requires line and no symbol; both are 1-based UTF-16 positions");
+    const position = { line: input.line - 1, character: input.column - 1 };
+    byteAt(document, position);
+    return position;
+  }
+  const syntax = await access.syntax(document);
+  if (syntax.status !== "ok")
+    throw new SignalGrepError("Selecting a semantic symbol requires valid syntax; supply an exact line+column position");
+  const candidates = syntax.nodes.filter((node) => /^(?:identifier|property_identifier|type_identifier|shorthand_property_identifier(?:_pattern)?)$/.test(node.kind) && (input.symbol === undefined || document.text.slice(node.start, node.end) === input.symbol) && (input.line === undefined || document.lineAt(document.toByteOffset(node.start)) === input.line));
+  if (input.line === undefined && input.symbol === undefined)
+    throw new SignalGrepError("Semantic navigation requires path and line+column, or an unambiguous symbol");
+  if (candidates.length !== 1)
+    throw new SignalGrepError(`Semantic target is ${candidates.length ? "ambiguous" : "absent"}; supply an exact 1-based line and UTF-16 column`);
+  const candidate = candidates[0];
+  if (!candidate)
+    throw new Error("Missing semantic candidate");
+  return lspPosition(document, candidate.start);
+}
+function itemFor(document, location, relation) {
+  const range = byteRange(document, location.range);
+  const line = document.lineAt(range.start);
+  const evidence = sourceEvidence(document, range);
+  return {
+    path: document.path,
+    line,
+    range,
+    source: document.reference,
+    label: `Compiler-bound ${relation}`,
+    excerpt: evidence.excerpt,
+    details: {
+      kind: "semantic",
+      excerptRange: evidence.excerptRange,
+      excerptTruncated: evidence.excerptTruncated || range.end > evidence.excerptRange.end,
+      relation,
+      binding: "typescript-compiler",
+      certainty: "static",
+      runtimeDispatch: "unproven",
+      score: 100,
+      rankingReason: "compiler binding with verified source range",
+      position: { line: location.range.start.line + 1, column: location.range.start.character + 1 },
+      nextRequest: {
+        mode: relation === "definitions" ? "references" : "definitions",
+        path: document.path,
+        line: location.range.start.line + 1,
+        column: location.range.start.character + 1
+      }
+    }
+  };
+}
+async function queryLocations(channel, mode, params) {
+  if (mode === "callers" || mode === "callees") {
+    const prepared = await channel.request("textDocument/prepareCallHierarchy", params);
+    if (prepared === null)
+      return [];
+    if (!Array.isArray(prepared))
+      throw new SignalGrepError("Invalid compiler call hierarchy");
+    const found = [];
+    for (const item of prepared) {
+      const calls = await channel.request(mode === "callers" ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls", { item });
+      if (calls === null)
+        continue;
+      if (!Array.isArray(calls))
+        throw new SignalGrepError("Invalid compiler call relationships");
+      for (const call of calls) {
+        if (!rpcRecord(call))
+          throw new SignalGrepError("Invalid compiler call relationship");
+        found.push(semanticLocation(mode === "callers" ? call.from : call.to));
+      }
+    }
+    return found;
+  }
+  const method = mode === "definitions" ? "definition" : mode === "implementations" ? "implementation" : "references";
+  if (!rpcRecord(params))
+    throw new Error("Expected semantic request parameters");
+  return locations(await channel.request(`textDocument/${method}`, {
+    ...params,
+    ...method === "references" ? { context: { includeDeclaration: true } } : {}
+  }));
+}
+async function runSemanticNavigation(input, access) {
+  if (!input.path || !isSemanticMode(input.mode))
+    throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
+  const project = await semanticProject(access, input.path);
+  const { result, documents, primary } = project;
+  result.kind = input.mode;
+  result.redact = input.redact ?? false;
+  const mode = input.mode;
+  const graph = mode === "dependencies" || mode === "dependents";
+  if (graph && (input.line !== undefined || input.column !== undefined || input.symbol !== undefined))
+    throw new SignalGrepError("File dependencies/dependents accept path without line, column or symbol");
+  const position = graph ? undefined : await selection(input, access, primary);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
+  const add = async (location, relation) => {
+    const document = await sourceAt(location.path);
+    if (document)
+      result.items.push(itemFor(document, location, relation));
+    else {
+      result.partial = true;
+      result.reasons.push("Compiler returned a location outside admitted source coverage; dependency/ignored/over-budget source was not exposed");
+    }
+  };
+  await withTypeScript(access.cwd, [...documents.values()], async (channel) => {
+    if (!graph) {
+      const found = await queryLocations(channel, mode, {
+        textDocument: { uri: await semanticUri(access.cwd, primary.path) },
+        position
+      });
+      for (const location of found) {
+        await add(location, mode);
+      }
+      return;
+    }
+    for (const document of mode === "dependencies" ? [primary] : documents.values()) {
+      const syntax = await access.syntax(document);
+      if (syntax.status !== "ok") {
+        result.partial = true;
+        result.reasons.push(`${document.path}: module syntax ${syntax.status}`);
+        continue;
+      }
+      const uri = await semanticUri(access.cwd, document.path);
+      const specifiers = syntax.nodes.filter((node) => node.kind === "string" && node.parent !== null && (() => {
+        const parent = syntax.nodes[node.parent];
+        if (!parent)
+          return false;
+        if (parent.kind === "import_statement" || parent.kind === "export_statement")
+          return true;
+        if (parent.kind !== "arguments" || parent.parent === null)
+          return false;
+        const call = syntax.nodes[parent.parent];
+        return call?.kind === "call_expression" && /^(?:import|require)\s*\(/.test(document.text.slice(call.start, node.start));
+      })());
+      for (const specifier of specifiers) {
+        const resolved = locations(await channel.request("textDocument/definition", {
+          textDocument: { uri },
+          position: lspPosition(document, specifier.start + 1)
+        }));
+        if (!resolved.length) {
+          result.partial = true;
+          result.reasons.push(`${document.path}: unresolved module ${document.text.slice(specifier.start, specifier.end)}`);
+        }
+        for (const target of resolved) {
+          const targetDocument = await sourceAt(target.path);
+          if (mode === "dependencies") {
+            await add(target, "dependency");
+          } else if (targetDocument === primary) {
+            await add({
+              path: resolve13(access.cwd, document.path),
+              range: {
+                start: lspPosition(document, specifier.start),
+                end: lspPosition(document, specifier.end)
+              }
+            }, "dependent");
+          }
+        }
+      }
+      access.releaseSyntax(document);
+    }
+  }, access.signal);
+  await project.recheck();
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
+  result.items = rankEvidence([
+    ...new Map(result.items.map((item) => [
+      `${item.path}:${String(item.range?.start)}:${String(item.range?.end)}`,
+      item
+    ])).values()
+  ], () => 0);
+  result.reasons = [...new Set(result.reasons)];
+  result.coverage = {
+    ...result.coverage,
+    compilerBindings: result.partial ? "partial" : "complete"
+  };
+  return result;
+}
+function navigateSemantics(input, access) {
+  return semanticRequestQueue.run(() => runSemanticNavigation(input, access), access.signal);
+}
+
+// src/evidence-service.ts
+import { dirname as dirname5, resolve as resolve17 } from "node:path";
+
+// src/analysis-store.ts
+import { randomUUID } from "node:crypto";
+
+// src/analysis-term-pages.ts
+var MAX_INLINE_TERM_COUNT_BYTES = 4 * 1024;
+function termCountRequest(id, offset, redact) {
+  return {
+    cursor: `${id}.analysis-terms.${offset.toString(36)}`,
+    ...redact ? { redact: true } : {}
+  };
+}
+function analysisTermPage(result, id, offset) {
+  const all = result.termCounts ?? [];
+  const terms = [];
+  const rows = [];
+  let bytes = 0;
+  for (let index = offset;index < all.length; index++) {
+    const term = all[index];
+    if (!term)
+      throw new Error("Term inventory index unavailable");
+    const row = `Term #${String(index + 1)} ${JSON.stringify(term.term)}: ${String(term.retainedOccurrences)} retained occurrences`;
+    const size = Buffer.byteLength(row) + 2;
+    if (bytes + size > 8 * 1024)
+      break;
+    rows.push(row);
+    terms.push(term);
+    bytes += size;
+  }
+  const nextOffset = offset + terms.length;
+  const nextRequest = nextOffset < all.length ? termCountRequest(id, nextOffset, result.redact) : undefined;
+  const matchesRequest = { cursor: `${id}.analysis.0`, ...result.redact ? { redact: true } : {} };
+  return {
+    text: [
+      `Term inventory ${String(offset + 1)}-${String(nextOffset)} of ${String(all.length)} (${result.partial ? "PARTIAL evidence" : "complete evidence"}). Counts refer to retained occurrences.`,
+      ...rows,
+      ...nextRequest ? [`Next request: ${JSON.stringify(nextRequest)}`] : [],
+      `Matches request: ${JSON.stringify(matchesRequest)}`
+    ].join(`
+
+`),
+    details: {
+      version: 1,
+      mode: "matches",
+      status: result.partial ? "partial" : "complete",
+      snapshotComplete: !result.partial,
+      totalMatches: result.items.length,
+      storedMatches: result.items.length,
+      returnedMatches: 0,
+      totalFiles: new Set(result.items.map((item) => item.path)).size,
+      cursor: nextRequest?.cursor ?? matchesRequest.cursor,
+      ...nextRequest ? { nextRequest } : {},
+      ...result.redact ? { redactionRequested: true } : {},
+      analysis: {
+        kind: result.kind,
+        unit: result.unit,
+        totalItems: result.items.length,
+        returnedItems: 0,
+        items: [],
+        reasons: result.reasons,
+        termCounts: terms,
+        termCountsOffset: offset,
+        totalTerms: all.length,
+        ...nextRequest ? { termCountsNextRequest: nextRequest } : {},
+        ...result.coverage ? { coverage: result.coverage } : {}
+      }
+    }
+  };
+}
+
+// src/analysis-store.ts
+function boundedReasons(reasons) {
+  const unsupportedSuffix = ": syntax unsupported; this source remains unclassified";
+  const unsupported = reasons.filter((reason) => reason.endsWith(unsupportedSuffix)).map((reason) => reason.slice(0, -unsupportedSuffix.length));
+  const unique = [
+    ...new Set(reasons.filter((reason) => !reason.endsWith(unsupportedSuffix))),
+    ...unsupported.length ? [
+      `${String(unsupported.length)} matching file(s) skipped because syntax is unsupported${unsupported.length ? `; examples: ${unsupported.slice(0, 3).join(", ")}` : ""}`
+    ] : []
+  ];
+  const retained = [];
+  let bytes = 2;
+  let omitted = 0;
+  for (const reason of unique) {
+    const reasonBytes = Buffer.byteLength(JSON.stringify(reason)) + 1;
+    if (retained.length >= MAX_ANALYSIS_REASONS || bytes + reasonBytes > MAX_ANALYSIS_REASON_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    retained.push(reason);
+    bytes += reasonBytes;
+  }
+  if (omitted === 0)
+    return retained;
+  let notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
+  while (retained.length > 0 && bytes + Buffer.byteLength(JSON.stringify(notice)) + 1 > MAX_ANALYSIS_REASON_BYTES) {
+    const removed = retained.pop();
+    if (removed === undefined)
+      break;
+    bytes -= Buffer.byteLength(JSON.stringify(removed)) + 1;
+    omitted += 1;
+    notice = `${String(omitted)} additional analysis reasons omitted within the ${String(MAX_ANALYSIS_REASONS)}-reason / ${String(MAX_ANALYSIS_REASON_BYTES)}-byte diagnostic limit`;
+  }
+  retained.push(notice);
+  return retained;
+}
+
+class AnalysisStore {
+  #items = new Map;
+  #expired = new Set;
+  #now;
+  constructor(now = Date.now) {
+    this.#now = now;
+  }
+  clear() {
+    for (const id of this.#items.keys())
+      this.#rememberExpired(id);
+    this.#items.clear();
+  }
+  create(result, summarize, retentionPriority) {
+    this.#expire();
+    const bounded = {
+      ...result,
+      reasons: boundedReasons(result.reasons),
+      items: [],
+      coverage: { ...result.coverage, retention: "complete" }
+    };
+    let bytes = Buffer.byteLength(JSON.stringify(bounded));
+    const candidates = result.items.map((item, index) => ({ item, index })).toSorted((left, right) => (retentionPriority?.(left.item) ?? 0) - (retentionPriority?.(right.item) ?? 0) || left.index - right.index);
+    const retainedIndices = [];
+    const rebuildItems = () => {
+      const retained = new Set(retainedIndices);
+      bounded.items = result.items.filter((_item, index) => retained.has(index)).map((item) => structuredClone(item));
+    };
+    for (const candidate of candidates) {
+      const { item } = candidate;
+      const itemBytes = Buffer.byteLength(JSON.stringify(item)) + 1;
+      if (retainedIndices.length >= MAX_ANALYSIS_RESULTS || bytes + itemBytes > MAX_ANALYSIS_STORAGE_BYTES - ANALYSIS_METADATA_RESERVE_BYTES) {
+        bounded.partial = true;
+        if (bounded.coverage)
+          bounded.coverage.retention = "partial";
+        bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
+        break;
+      }
+      retainedIndices.push(candidate.index);
+      bytes += itemBytes;
+    }
+    rebuildItems();
+    if (summarize)
+      Object.assign(bounded, summarize(bounded.items));
+    bytes = Buffer.byteLength(JSON.stringify(bounded));
+    while (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024 && bounded.items.length > 0) {
+      retainedIndices.pop();
+      rebuildItems();
+      bounded.partial = true;
+      if (bounded.coverage)
+        bounded.coverage.retention = "partial";
+      if (!bounded.reasons.includes("Analysis storage limit: 50,000 items / 32 MiB; narrow the query"))
+        bounded.reasons.push("Analysis storage limit: 50,000 items / 32 MiB; narrow the query");
+      if (summarize)
+        Object.assign(bounded, summarize(bounded.items));
+      bytes = Buffer.byteLength(JSON.stringify(bounded));
+    }
+    bounded.reasons = boundedReasons(bounded.reasons);
+    bytes = Buffer.byteLength(JSON.stringify(bounded));
+    if (bytes > MAX_ANALYSIS_STORAGE_BYTES - 1024)
+      throw new SignalGrepError("Analysis metadata exceeds the storage budget");
+    while (this.#items.size >= MAX_ANALYSIS_SNAPSHOTS || this.#totalBytes() + bytes > MAX_ANALYSIS_STORAGE_BYTES || this.#totalItems() + bounded.items.length > MAX_ANALYSIS_RESULTS) {
+      const oldest = [...this.#items.values()].toSorted((a, b) => a.touched - b.touched)[0];
+      if (!oldest)
+        throw new SignalGrepError("Analysis metadata exceeds the storage budget");
+      this.#items.delete(oldest.id);
+      this.#rememberExpired(oldest.id);
+    }
+    const id = randomUUID();
+    this.#items.set(id, { id, result: bounded, bytes, touched: this.#now() });
+    return `${id}.analysis.0`;
+  }
+  resolve(cursor) {
+    this.#expire();
+    const match = /^([a-f0-9-]+)\.(analysis|analysis-terms)\.([0-9a-z]+)$/.exec(cursor);
+    if (!match)
+      throw new CursorError("Invalid analysis cursor");
+    const id = match[1];
+    const kind = match[2];
+    const rawOffset = match[3];
+    if (kind !== "analysis" && kind !== "analysis-terms")
+      throw new CursorError("Invalid analysis cursor");
+    if (!id || !rawOffset)
+      throw new CursorError("Invalid analysis cursor");
+    const offset = Number.parseInt(rawOffset, 36);
+    const stored = this.#items.get(id);
+    if (!stored)
+      throw new CursorError(this.#expired.has(id) ? "Analysis cursor expired or was evicted; run the query again" : "Analysis cursor was not found; run the query again", this.#expired.has(id) ? "E_CURSOR_EXPIRED" : "E_CURSOR_NOT_FOUND");
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset.toString(36) !== rawOffset || (kind === "analysis" ? offset > stored.result.items.length : offset >= (stored.result.termCounts?.length ?? 0)))
+      throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
+    stored.touched = this.#now();
+    return { stored, offset, kind };
+  }
+  item(cursor, index) {
+    const { stored, kind } = this.resolve(cursor);
+    if (kind !== "analysis")
+      throw new CursorError("Term inventories do not contain source items", "E_CURSOR_WRONG_KIND");
+    if (!Number.isSafeInteger(index) || index < 1)
+      throw new CursorError("matchIndex must be a positive analysis item index");
+    const item = stored.result.items[index - 1];
+    if (!item)
+      throw new CursorError("Analysis item is outside the retained result");
+    return structuredClone(item);
+  }
+  page(cursor) {
+    const { stored, offset, kind } = this.resolve(cursor);
+    const { result } = stored;
+    if (kind === "analysis-terms")
+      return analysisTermPage(result, stored.id, offset);
+    const pagedTerms = result.termCounts && Buffer.byteLength(JSON.stringify(result.termCounts)) > MAX_INLINE_TERM_COUNT_BYTES;
+    const inlineTerms = pagedTerms ? undefined : result.termCounts;
+    const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
+    const items = [];
+    const scope = result.scope ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.` : "";
+    const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
+    const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
+    const notice = result.reasons.length ? `
+${result.reasons.map((reason) => `[${reason}]`).join(`
+`)}` : "";
+    const rows = [];
+    let bytes = Buffer.byteLength(header + notice) + 1200;
+    let next = offset;
+    for (let index = offset;index < result.items.length && items.length < 30; index += 1) {
+      const item = result.items[index];
+      if (!item)
+        throw new Error("Analysis item unavailable");
+      const inspect = item.source && item.range ? {
+        mode: "inspect",
+        cursor: `${stored.id}.analysis.0`,
+        matchIndex: index + 1,
+        ...result.redact ? { redact: true } : {}
+      } : undefined;
+      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `
+${item.excerpt}` : ""}${item.details ? `
+Evidence: ${JSON.stringify(item.details)}` : ""}${inspect ? `
+Inspect: ${JSON.stringify(inspect)}` : ""}`;
+      const rowBytes = Buffer.byteLength(row) + 2;
+      if (bytes + rowBytes > MAX_RESULT_BYTES) {
+        if (items.length === 0)
+          throw new SignalGrepError("Analysis item exceeds the response limit; narrow its source");
+        break;
+      }
+      rows.push(row);
+      bytes += rowBytes;
+      next = index + 1;
+      items.push({ ...item, index: index + 1, ...inspect ? { inspect } : {} });
+    }
+    const nextRequest = next < result.items.length ? {
+      cursor: `${stored.id}.analysis.${next.toString(36)}`,
+      ...result.redact ? { redact: true } : {}
+    } : undefined;
+    const text = [
+      header + notice,
+      ...rows,
+      ...nextRequest ? [`Next request: ${JSON.stringify(nextRequest)}`] : []
+    ].join(`
+
+`);
+    if (Buffer.byteLength(text) > MAX_RESULT_BYTES)
+      throw new SignalGrepError("Analysis metadata exceeds the output limit");
+    return {
+      text,
+      details: {
+        version: 1,
+        mode: isSemanticMode(result.kind) || result.kind === "concept" || result.kind === "structure" || result.kind === "files" || result.kind === "outline" || result.kind === "imports" || result.kind === "tests" || result.kind === "impact" ? result.kind : "matches",
+        status: result.partial ? "partial" : "complete",
+        snapshotComplete: !result.partial,
+        totalMatches: result.items.length,
+        storedMatches: result.items.length,
+        returnedMatches: items.length,
+        totalFiles: new Set(result.items.map((item) => item.path)).size,
+        cursor: nextRequest?.cursor ?? `${stored.id}.analysis.0`,
+        ...nextRequest ? { nextRequest } : {},
+        analysis: {
+          kind: result.kind,
+          unit: result.unit,
+          totalItems: result.items.length,
+          returnedItems: items.length,
+          items,
+          reasons: result.reasons,
+          ...result.filesRead !== undefined ? { filesRead: result.filesRead } : {},
+          ...result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {},
+          ...result.changes ? { changes: result.changes } : {},
+          ...result.counts ? { counts: result.counts } : {},
+          ...inlineTerms ? { termCounts: inlineTerms } : {},
+          ...termsRequest ? { totalTerms: result.termCounts?.length ?? 0, termCountsNextRequest: termsRequest } : {},
+          ...result.scope ? { scope: result.scope } : {},
+          ...result.chunks !== undefined ? { chunks: result.chunks } : {},
+          ...result.coverage ? { coverage: result.coverage } : {},
+          ...result.stats ? { stats: result.stats } : {}
+        },
+        ...result.scope ? { scope: result.scope } : {},
+        ...result.redact ? { redactionRequested: true } : {}
+      }
+    };
+  }
+  #expire() {
+    for (const [id, item] of this.#items)
+      if (this.#now() - item.touched >= ANALYSIS_TTL_MS) {
+        this.#items.delete(id);
+        this.#rememberExpired(id);
+      }
+  }
+  #totalBytes() {
+    return [...this.#items.values()].reduce((n, item) => n + item.bytes, 0);
+  }
+  #totalItems() {
+    return [...this.#items.values()].reduce((n, item) => n + item.result.items.length, 0);
+  }
+  #rememberExpired(id) {
+    this.#expired.add(id);
+    while (this.#expired.size > MAX_ANALYSIS_SNAPSHOTS * 4) {
+      const oldest = this.#expired.values().next().value;
+      if (oldest === undefined)
+        break;
+      this.#expired.delete(oldest);
+    }
+  }
+}
+
+// src/inspect.ts
+import { resolve as resolve14 } from "node:path";
+function resolveInspectionTarget(input, cwd, snapshots) {
+  let path = input.path?.replace(/^@/, "");
+  let line = input.line;
+  let retainedMatch;
+  if (input.matchIndex !== undefined) {
+    if (!input.cursor)
+      throw new SignalGrepError("matchIndex requires a cursor when mode=inspect");
+    if (input.path !== undefined || input.line !== undefined) {
+      throw new SignalGrepError("matchIndex replaces path and line when mode=inspect");
+    }
+    if (!Number.isSafeInteger(input.matchIndex) || input.matchIndex < 1) {
+      throw new SignalGrepError("matchIndex must be a positive integer when mode=inspect");
+    }
+    const { snapshot } = snapshots.resolve(input.cursor);
+    retainedMatch = snapshot.matches[input.matchIndex - 1];
+    if (!retainedMatch) {
+      throw new CursorError(`matchIndex is ${snapshot.snapshotComplete ? "outside this snapshot" : "not retained in this partial snapshot"}.`);
+    }
+    path = retainedMatch.displayPath;
+    line = retainedMatch.lineNumber;
+  }
+  if (!path)
+    throw new SignalGrepError("path is required when mode=inspect");
+  if (line === undefined || !Number.isSafeInteger(line) || line < 1) {
+    throw new SignalGrepError("line must be a positive integer when mode=inspect");
+  }
+  const absolutePath = retainedMatch?.absolutePath ?? resolve14(cwd, path);
+  new SearchPathPolicy(cwd).assertPath(absolutePath);
+  let expectedRevision;
+  if (input.cursor) {
+    const { snapshot } = snapshots.resolve(input.cursor);
+    retainedMatch ??= snapshot.matches.find((match) => match.absolutePath === absolutePath && match.lineNumber === line);
+    if (!retainedMatch) {
+      throw new CursorError("The requested line is not a retained match in this snapshot.");
+    }
+    expectedRevision = snapshot.sourceRevisions.get(absolutePath);
+  }
+  return {
+    path,
+    absolutePath,
+    line,
+    unverified: input.cursor !== undefined && expectedRevision === undefined,
+    ...retainedMatch ? { retainedMatch } : {},
+    ...expectedRevision ? { expectedRevision } : {}
+  };
+}
+
 // src/evidence-candidates.ts
+import { resolve as resolve15 } from "node:path";
 class CandidateLimit extends SignalGrepError {
 }
 function record(value) {
@@ -3548,7 +4839,7 @@ async function ordinaryCandidates(options) {
 async function collectEvidenceCandidates(options) {
   if (!options.changes)
     return ordinaryCandidates(options);
-  if (options.request.path && !isPathInsideCwd(resolve11(options.cwd, options.request.path), options.cwd)) {
+  if (options.request.path && !isPathInsideCwd(resolve15(options.cwd, options.request.path), options.cwd)) {
     throw new SignalGrepError("Git changes for paths outside cwd are not supported; relaunch Pi from that repository or a common parent");
   }
   const reasons = new Set;
@@ -5021,32 +6312,6 @@ function selectImpactTarget(document, syntax, input) {
   };
 }
 
-// src/analysis-evidence.ts
-function sourceEvidence(document, range) {
-  const line = document.lineAt(range.start);
-  const lineRange = document.lineRange(line);
-  const lineStart = document.toCharacterOffset(lineRange.start);
-  const lineEnd = document.toCharacterOffset(lineRange.end);
-  const focus = document.toCharacterOffset(range.start);
-  const focusEnd = document.toCharacterOffset(range.end);
-  let start = Math.max(lineStart, focus - Math.floor(Math.max(0, MAX_LINE_CHARACTERS - (focusEnd - focus)) / 2));
-  let end = Math.min(lineEnd, start + MAX_LINE_CHARACTERS);
-  const startCode = document.text.charCodeAt(start);
-  const endCode = document.text.charCodeAt(end);
-  if (startCode >= 56320 && startCode <= 57343)
-    start--;
-  if (endCode >= 56320 && endCode <= 57343)
-    end--;
-  const excerptRange = { start: document.toByteOffset(start), end: document.toByteOffset(end) };
-  return {
-    range: { ...range },
-    line,
-    excerpt: `${start > lineStart ? "…" : ""}${document.text.slice(start, end)}${end < lineEnd ? "…" : ""}`,
-    excerptRange,
-    excerptTruncated: start > lineStart || end < lineEnd
-  };
-}
-
 // src/impact-analysis.ts
 var CATEGORY_ORDER = [
   "declaration",
@@ -5096,6 +6361,8 @@ function occurrenceItem(file, range, target, category, roles) {
       kind: "impact-occurrence",
       impactCategory: category,
       binding: "unproven",
+      score: category === "call" || category === "declaration" ? 70 : category === "comment" || category === "string" ? 20 : 40,
+      rankingReason: `exact spelling with ${category} syntax; binding unproven`,
       target: {
         path: target.document.path,
         name: target.symbol.name,
@@ -5149,6 +6416,8 @@ async function classifyImpactOccurrences(files, target, owner) {
 function itemOrder(item) {
   if (item.details?.kind === "impact-target")
     return -1;
+  if (item.details?.binding === "typescript-compiler")
+    return -0.5;
   if (item.details?.kind === "impact-occurrence") {
     const category = item.details.impactCategory;
     const index = CATEGORY_ORDER.findIndex((value) => value === category);
@@ -5169,10 +6438,10 @@ function mergeImpactItems(target, occurrences, tests) {
       delete details.relationItems;
     return { ...item, details };
   });
-  return [target, ...occurrences, ...stableTests].map((item, insertion) => ({ item, insertion })).toSorted((left, right) => itemOrder(left.item) - itemOrder(right.item) || left.item.path.localeCompare(right.item.path) || left.item.line - right.item.line || (left.item.range?.start ?? 0) - (right.item.range?.start ?? 0) || left.insertion - right.insertion).map(({ item }) => item);
+  return rankEvidence([target, ...occurrences, ...stableTests], itemOrder);
 }
 function impactRetentionPriority(item) {
-  return item.details?.kind === "impact-target" || item.details?.kind === "impact-occurrence" ? 0 : 1;
+  return item.details?.kind === "impact-target" || item.details?.kind === "impact-occurrence" || item.details?.kind === "impact-reference" ? 0 : 1;
 }
 function impactRetentionExhausted(items) {
   if (items.length >= MAX_ANALYSIS_RESULTS)
@@ -5183,6 +6452,8 @@ function impactRetentionExhausted(items) {
 function retainedImpactCounts(items) {
   const counts = {
     targets: 0,
+    compilerBoundReferences: 0,
+    additionalAliasReferences: 0,
     retainedExactOccurrences: 0,
     testUses: 0,
     testCases: 0,
@@ -5190,6 +6461,10 @@ function retainedImpactCounts(items) {
   };
   for (const item of items) {
     const kind = item.details?.kind;
+    if (item.details?.binding === "typescript-compiler")
+      counts.compilerBoundReferences = (counts.compilerBoundReferences ?? 0) + 1;
+    if (kind === "impact-reference")
+      counts.additionalAliasReferences = (counts.additionalAliasReferences ?? 0) + 1;
     if (kind === "impact-target")
       counts.targets = (counts.targets ?? 0) + 1;
     else if (kind === "impact-occurrence") {
@@ -5297,35 +6572,115 @@ function retainedTermCounts(terms, items) {
   return terms.map((term) => ({ term, retainedOccurrences: counts.get(term) ?? 0 }));
 }
 
-// src/request.ts
-function list(value) {
-  if (value === undefined)
-    return [];
-  return (Array.isArray(value) ? value : [value]).filter((item) => item.length > 0);
-}
-function boundedInteger(value, fallback, minimum, maximum, field) {
-  const candidate = value ?? fallback;
-  if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) {
-    throw new SignalGrepError(`${field} must be an integer from ${String(minimum)} through ${String(maximum)}`);
+// src/owned-parallel.ts
+async function runOwnedParallel(start, parent) {
+  const controller = new AbortController;
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  const operations = start(signal).map(async (operation) => {
+    try {
+      return await operation;
+    } catch (error) {
+      controller.abort();
+      throw error;
+    }
+  });
+  try {
+    return await Promise.all(operations);
+  } catch (error) {
+    await Promise.allSettled(operations);
+    throw error;
   }
-  return candidate;
 }
-function normalizeRequest(input) {
-  const pattern = input.pattern;
-  if (pattern === undefined) {
-    throw new SignalGrepError("pattern is required when cursor is not provided");
+
+// src/file-discovery.ts
+import { posix as posix4 } from "node:path";
+var graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+function subsequenceScore(text, query) {
+  const characters = Array.from(graphemes.segment(text), (item) => item.segment);
+  const queryCharacters = Array.from(graphemes.segment(query), (item) => item.segment);
+  let next = 0;
+  let first = -1;
+  let last = 0;
+  for (const character of queryCharacters) {
+    const index = characters.indexOf(character, next);
+    if (index < 0)
+      return;
+    if (first < 0)
+      first = index;
+    last = index;
+    next = index + 1;
   }
-  const path = input.path?.replace(/^@/, "");
+  return Math.round(40 * queryCharacters.length / Math.max(1, last - first + 1));
+}
+function scoreFilePath(path, query) {
+  if (!query)
+    return { score: 0, reason: "all admitted files" };
+  const normalized = path.toLowerCase();
+  const needle = query.toLowerCase();
+  const basename = posix4.basename(normalized);
+  if (basename === needle)
+    return { score: 100, reason: "exact filename" };
+  if (basename.slice(0, basename.length - posix4.extname(basename).length) === needle)
+    return { score: 95, reason: "exact filename stem" };
+  if (basename.includes(needle))
+    return { score: 85, reason: "filename substring" };
+  if (normalized.includes(needle))
+    return { score: 70, reason: "path substring" };
+  const scores = needle.trim().split(/\s+/).map((term) => subsequenceScore(normalized, term));
+  if (scores.some((score) => score === undefined))
+    return;
   return {
-    pattern,
-    ...path ? { path } : {},
-    glob: list(input.glob),
-    exclude: list(input.exclude),
-    literal: input.literal ?? false,
-    ...input.ignoreCase === undefined ? {} : { ignoreCase: input.ignoreCase },
-    hidden: input.hidden ?? true,
-    context: boundedInteger(input.context, 0, 0, MAX_CONTEXT_LINES, "context"),
-    pageSize: boundedInteger(input.limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, "limit"),
+    score: Math.min(...scores.map((score) => score ?? 0)),
+    reason: "ordered fuzzy path characters; candidate, not an exact filename"
+  };
+}
+async function discoverFiles(input, cwd, signal) {
+  const query = input.query ?? "";
+  if (query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
+    throw new SignalGrepError("File query must be well-formed single-line text of at most 256 characters");
+  const request = normalizeRequest({ ...input, pattern: "" });
+  const files = await listWorkspaceFiles(cwd, signal, {
+    ...request.path ? { path: request.path } : {},
+    glob: request.glob,
+    exclude: request.exclude,
+    hidden: request.hidden
+  });
+  const selected = files.paths.flatMap((path) => {
+    const rank = scoreFilePath(path, query);
+    return rank ? [{ path, ...rank }] : [];
+  }).toSorted((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+  const policy = new SearchPathPolicy(cwd);
+  for (let offset = 0;offset < selected.length; offset += 16) {
+    await Promise.all(selected.slice(offset, offset + 16).map((item) => policy.assertExistingPath(item.path)));
+    signal?.throwIfAborted();
+  }
+  return {
+    kind: "files",
+    unit: "files",
+    partial: files.partial,
+    reasons: files.reasons,
+    items: selected.map((item) => ({
+      path: item.path,
+      line: 1,
+      label: `File candidate (${item.reason})`,
+      details: {
+        kind: "file",
+        score: item.score,
+        rankingReason: item.reason,
+        inspect: { mode: "inspect", path: item.path, line: 1 }
+      }
+    })),
+    coverage: { fileEnumeration: files.partial ? "partial" : "complete" },
+    stats: { filesEnumerated: files.paths.length },
+    scope: {
+      path: request.path ?? ".",
+      requestedPath: request.path ?? ".",
+      glob: request.glob,
+      exclude: request.exclude,
+      hidden: request.hidden,
+      expandedToProjectRoot: false,
+      assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide"
+    },
     redact: input.redact ?? false
   };
 }
@@ -5526,7 +6881,7 @@ class SourceContinuations {
 }
 
 // src/source-inspection.ts
-import { resolve as resolve12 } from "node:path";
+import { resolve as resolve16 } from "node:path";
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -5592,7 +6947,7 @@ async function prepare(target, access, structure) {
     }
   } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range) {
     const result = await structure.inspect({
-      absolutePath: resolve12(access.cwd, target.path),
+      absolutePath: resolve16(access.cwd, target.path),
       cwd: access.cwd,
       line: target.line,
       expectedRevision: document.reference.origin.revision
@@ -5769,7 +7124,7 @@ ${preview.text}`);
     if (block.remaining.length)
       block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve12(access.cwd, block.document.path));
+      const current = await getSourceRevision(resolve16(access.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -6148,7 +7503,7 @@ function findFunctionConjunctions(document, analysis, terms, changedRanges) {
 
 // src/evidence-service.ts
 function isEvidenceRequest(input) {
-  return input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || (input.cursor?.includes(".analysis.") ?? false);
+  return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
 function rejectFields(input, fields, operation, cursor = false) {
   const present = fields.filter((field) => input[field] !== undefined);
@@ -6156,6 +7511,9 @@ function rejectFields(input, fields, operation, cursor = false) {
     throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; copy the complete returned request`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; copy the complete returned request`);
 }
 var searchFields = [
+  "query",
+  "scope",
+  "wholeWord",
   "pattern",
   "anyOf",
   "allOf",
@@ -6192,7 +7550,7 @@ function validateTerms(input) {
   }
   if (!Array.isArray(terms) || terms.length < 2 || terms.length > 3 || terms.some((term) => typeof term !== "string" || !term.trim() || /[\r\n\0]/.test(term)) || new Set(terms).size !== terms.length)
     throw new SignalGrepError("allOf requires 2–3 distinct, nonempty, single-line literal terms");
-  if (input.pattern !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined)
+  if (input.pattern !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined || input.wholeWord !== undefined)
     throw new SignalGrepError("allOf is an explicit case-sensitive literal conjunction; omit pattern, roles, literal and ignoreCase");
   if (input.within !== undefined && input.within !== "file" && input.within !== "function")
     throw new SignalGrepError("within must be file or function");
@@ -6244,10 +7602,10 @@ function searchScope(request) {
   };
 }
 async function navigationRoot(cwd, path, signal) {
-  const absolute = resolve13(cwd, path);
+  const absolute = resolve17(cwd, path);
   if (isPathInsideCwd(absolute, cwd))
-    return resolve13(cwd);
-  return await findGitRepository(dirname3(absolute), signal) ?? dirname3(absolute);
+    return resolve17(cwd);
+  return await findGitRepository(dirname5(absolute), signal) ?? dirname5(absolute);
 }
 
 class EvidenceService {
@@ -6293,7 +7651,7 @@ class EvidenceService {
       maxFiles: access.maxFiles
     });
     const candidates = await collect(request);
-    if (input.changes || request.path === undefined || candidates.files.length > 0 || candidates.partial) {
+    if (input.changes || request.scope === "strict" || request.path === undefined || candidates.files.length > 0 || candidates.partial) {
       return { candidates, request };
     }
     const { path: requestedPath, ...projectRequest } = request;
@@ -6306,6 +7664,12 @@ class EvidenceService {
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
     const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+    if (isSemanticMode(input.mode)) {
+      rejectFields(input, [...searchFields, ...inspectFields, "cursor", "matchIndex"], `mode=${input.mode}`);
+      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access)));
+    }
+    if (input.column !== undefined)
+      throw new SignalGrepError("column requires semantic navigation");
     if (input.sourceCursor !== undefined) {
       if (typeof input.sourceCursor !== "string" || !input.sourceCursor.trim())
         throw new CursorError("A nonempty sourceCursor is required");
@@ -6330,9 +7694,54 @@ class EvidenceService {
       const targets = this.#inspectionTargets(input, cwd);
       return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
+    if (input.mode === "concept") {
+      rejectFields(input, [
+        ...searchFields.filter((field) => !["query", "glob", "exclude", "hidden"].includes(field)),
+        ...inspectFields,
+        "cursor",
+        "line",
+        "symbol",
+        "matchIndex"
+      ], "mode=concept");
+      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access)));
+    }
+    if (input.mode === "structure") {
+      rejectFields(input, [
+        ...searchFields.filter((field) => !["pattern", "glob", "exclude", "hidden"].includes(field)),
+        ...inspectFields,
+        "cursor",
+        "line",
+        "symbol",
+        "matchIndex"
+      ], "mode=structure");
+      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access)));
+    }
+    if (input.mode === "files") {
+      rejectFields(input, [
+        "pattern",
+        "cursor",
+        "line",
+        "matchIndex",
+        "symbol",
+        "maxFilesToParse",
+        "wholeWord",
+        "scope",
+        "literal",
+        "ignoreCase",
+        "context",
+        "limit",
+        "anyOf",
+        "allOf",
+        "within",
+        "roles",
+        "changes",
+        ...inspectFields
+      ], "mode=files");
+      return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
+    }
     if (input.mode === "impact")
       return this.#impact(input, access);
-    if (input.cursor?.includes(".analysis.") && !input.mode?.match(/^(outline|imports|tests)$/)) {
+    if (input.cursor?.includes(".analysis") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       this.#analyses.resolve(input.cursor);
       rejectFields(input, [
         ...searchFields,
@@ -6349,49 +7758,49 @@ class EvidenceService {
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
       return this.#navigate(input, access);
-    rejectFields(input, [...inspectFields, "line", "matchIndex", "symbol", "cursor"], "Evidence search");
+    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor"], "Evidence search");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
-      if (input.pattern !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined)
+      if (input.pattern !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined || input.wholeWord !== undefined)
         throw new SignalGrepError("anyOf is an explicit case-sensitive literal union; omit pattern, allOf, within, roles, literal and ignoreCase");
       if (input.mode !== undefined && input.mode !== "auto" && input.mode !== "matches")
         throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
       const chunks = Array.from({ length: Math.ceil(anyOf.length / MAX_ANY_OF_TERMS) }, (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS));
       const { path: _inputPath, ...unscopedInput } = input;
-      const runChunks = async (expandedFromPath) => Promise.all(chunks.map(async (chunk) => {
-        const request2 = normalizeRequest({
-          ...expandedFromPath === undefined ? input : unscopedInput,
-          pattern: chunk.map(escapeRegexLiteral).join("|"),
-          literal: false,
-          ignoreCase: false
+      let chunkAccess = access;
+      const runChunks = async (expandedFromPath) => runOwnedParallel((groupSignal) => {
+        chunkAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
+        return chunks.map(async (chunk) => {
+          const request2 = normalizeRequest({
+            ...expandedFromPath === undefined ? input : unscopedInput,
+            pattern: chunk.map(escapeRegexLiteral).join("|"),
+            literal: false,
+            ignoreCase: false
+          });
+          const effectiveRequest = expandedFromPath === undefined ? request2 : { ...request2, expandedFromPath };
+          const candidates2 = await collectEvidenceCandidates({
+            request: effectiveRequest,
+            ...input.changes ? { changes: input.changes } : {},
+            cwd,
+            signal: groupSignal,
+            access: chunkAccess,
+            runRipgrep: this.#runner,
+            maxFiles: fileLimit
+          });
+          return { chunk, request: effectiveRequest, candidates: candidates2 };
         });
-        const effectiveRequest = expandedFromPath === undefined ? request2 : { ...request2, expandedFromPath };
-        const candidates2 = await collectEvidenceCandidates({
-          request: effectiveRequest,
-          ...input.changes ? { changes: input.changes } : {},
-          cwd,
-          ...signal ? { signal } : {},
-          access,
-          runRipgrep: this.#runner,
-          maxFiles: fileLimit
-        });
-        return { chunk, request: effectiveRequest, candidates: candidates2 };
-      }));
+      }, signal);
       let chunkResults = await runChunks();
-      if (!input.changes && input.path !== undefined && chunkResults.every(({ candidates: candidates2 }) => !candidates2.partial && candidates2.files.length === 0)) {
+      if (!input.changes && input.path !== undefined && input.scope !== "strict" && chunkResults.every(({ candidates: candidates2 }) => !candidates2.partial && candidates2.files.length === 0)) {
         chunkResults = await runChunks(input.path.replace(/^@/, ""));
       }
       const reasons = new Set;
       let partial = false;
-      let filesRead = 0;
-      let bytesRead = 0;
       let changes;
       const candidateFiles = new Map;
       const invalidatedPaths = new Set;
       for (const { candidates: candidates2 } of chunkResults) {
         partial ||= candidates2.partial;
-        filesRead += candidates2.filesRead;
-        bytesRead += candidates2.bytesRead;
         changes ??= candidates2.changes;
         for (const reason of candidates2.reasons)
           reasons.add(reason);
@@ -6424,8 +7833,8 @@ class EvidenceService {
         items: expanded.items,
         partial,
         reasons: [...reasons],
-        filesRead,
-        bytesRead,
+        filesRead: chunkAccess.filesRead,
+        bytesRead: chunkAccess.bytesRead,
         ...changes ? { changes } : {},
         scope,
         chunks: {
@@ -6639,6 +8048,8 @@ class EvidenceService {
       maxFiles: access.maxFiles
     });
     const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
+    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access);
+    occurrences.items = bound.items;
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
     let testItems = [];
@@ -6652,14 +8063,14 @@ class EvidenceService {
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
       const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
-      const allowed = new Set(files.paths.map((file) => resolve13(access.cwd, file)));
-      const primaryPath = resolve13(access.cwd, document.path);
+      const allowed = new Set(files.paths.map((file) => resolve17(access.cwd, file)));
+      const primaryPath = resolve17(access.cwd, document.path);
       const host = {
         cwd: access.cwd,
         ...access.signal ? { signal: access.signal } : {},
         normalizePath: (file) => workspaceRelativePath(access.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve13(access.cwd, file);
+          const absolutePath = resolve17(access.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
@@ -6705,6 +8116,7 @@ class EvidenceService {
         budgetExhausted: testStats?.budgetExhausted ?? [...reasons].some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       },
       coverage: {
+        compilerCandidateBindings: candidates.partial ? "partial" : "complete",
         exactOccurrences: candidates.partial ? "partial" : "complete",
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage
@@ -6806,14 +8218,14 @@ class EvidenceService {
       }));
     const root = await navigationRoot(access.cwd, document.path, access.signal);
     const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
-    const allowed = new Set(files.paths.map((file) => resolve13(access.cwd, file)));
-    const primaryPath = resolve13(access.cwd, document.path);
+    const allowed = new Set(files.paths.map((file) => resolve17(access.cwd, file)));
+    const primaryPath = resolve17(access.cwd, document.path);
     const host = {
       cwd: access.cwd,
       ...access.signal ? { signal: access.signal } : {},
       normalizePath: (file) => workspaceRelativePath(access.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve13(access.cwd, file);
+        const absolutePath = resolve17(access.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
@@ -6854,7 +8266,7 @@ class EvidenceService {
 }
 
 // src/service.ts
-import { resolve as resolve14 } from "node:path";
+import { resolve as resolve18 } from "node:path";
 
 // src/format.ts
 import { readFile as readFile2 } from "node:fs/promises";
@@ -7303,15 +8715,21 @@ class SnapshotStore {
   #ttlMs;
   #maxSnapshots;
   #maxTotalStoredMatches;
+  #maxTotalStoredBytes;
+  #maxTotalStoredOccurrences;
   #now;
   constructor(options = {}) {
     this.#ttlMs = options.ttlMs ?? 10 * 60 * 1000;
     this.#maxSnapshots = options.maxSnapshots ?? 20;
     this.#maxTotalStoredMatches = options.maxTotalStoredMatches ?? 1e5;
+    this.#maxTotalStoredBytes = options.maxTotalStoredBytes ?? MAX_SEARCH_STORAGE_BYTES;
+    this.#maxTotalStoredOccurrences = options.maxTotalStoredOccurrences ?? MAX_STORED_OCCURRENCES;
     this.#now = options.now ?? Date.now;
   }
   create(scan) {
     this.sweep();
+    if (this.#scanBytes(scan) > this.#maxTotalStoredBytes || this.#scanOccurrences(scan) > this.#maxTotalStoredOccurrences)
+      throw new SignalGrepError("Search snapshot exceeds the session storage budget");
     const now = this.#now();
     const snapshot = {
       ...scan,
@@ -7380,7 +8798,7 @@ class SnapshotStore {
     return this.#totalStoredMatches();
   }
   #evictToBounds() {
-    while (this.#snapshots.size > this.#maxSnapshots || this.#totalStoredMatches() > this.#maxTotalStoredMatches) {
+    while (this.#snapshots.size > this.#maxSnapshots || this.#totalStoredMatches() > this.#maxTotalStoredMatches || [...this.#snapshots.values()].reduce((total, scan) => total + this.#scanBytes(scan), 0) > this.#maxTotalStoredBytes || [...this.#snapshots.values()].reduce((total, scan) => total + this.#scanOccurrences(scan), 0) > this.#maxTotalStoredOccurrences) {
       let oldest;
       for (const snapshot of this.#snapshots.values()) {
         if (!oldest || snapshot.lastAccessedAt < oldest.lastAccessedAt)
@@ -7397,6 +8815,16 @@ class SnapshotStore {
     for (const snapshot of this.#snapshots.values())
       total += snapshot.matches.length;
     return total;
+  }
+  #scanBytes(scan) {
+    return scan.retention?.accountedBytes ?? Buffer.byteLength(JSON.stringify({
+      matches: scan.matches,
+      fileCounts: [...scan.fileCounts],
+      sourceRevisions: [...scan.sourceRevisions]
+    }));
+  }
+  #scanOccurrences(scan) {
+    return scan.retention?.retainedOccurrences ?? scan.matches.reduce((total, match) => total + match.occurrences.length, 0);
   }
   #rememberExpired(id) {
     this.#expired.add(id);
@@ -7430,7 +8858,7 @@ function cursorPathSelection(input, cwd) {
     const label = rawPath.replace(/^@/, "");
     if (label.length === 0)
       throw new SignalGrepError("Cursor paths cannot be empty");
-    const absolutePath = resolve14(cwd, label);
+    const absolutePath = resolve18(cwd, label);
     policy.assertPath(absolutePath);
     if (absolutePaths.has(absolutePath))
       continue;
@@ -7451,6 +8879,7 @@ function baseDetails(snapshot, mode) {
     totalFiles: snapshot.fileCounts.size,
     returnedMatches: 0,
     snapshotComplete: snapshot.snapshotComplete,
+    ...snapshot.retention ? { retention: snapshot.retention } : {},
     scope: searchScope2(snapshot.request),
     ...snapshot.request.redact ? { redactionRequested: true } : {},
     ...snapshot.truncatedLines > 0 ? { lineContentTruncated: snapshot.truncatedLines } : {},
@@ -7487,7 +8916,8 @@ function scopeExpansionNote(scope, totalMatches) {
 function completenessNote(snapshot) {
   if (snapshot.snapshotComplete)
     return "complete snapshot";
-  return `PARTIAL snapshot: retained ${snapshot.matches.length} of ${snapshot.totalMatches} matches; narrow the search to retrieve all matches`;
+  const reasons = snapshot.retention?.reasons.join("; ");
+  return `PARTIAL snapshot: retained ${snapshot.matches.length} of ${snapshot.totalMatches} matches; ${reasons ? `${reasons}; ` : ""}narrow the search to retrieve all matches`;
 }
 function sourceVerificationNote(details) {
   return details.sourceUnverifiedFileCount ? `
@@ -7526,6 +8956,12 @@ function attachContextBudget(result, budget, totalMatches) {
 }
 function rejectCursorOnlyOptions(input) {
   const ignored = [];
+  if (input.scope !== undefined)
+    ignored.push("scope");
+  if (input.wholeWord !== undefined)
+    ignored.push("wholeWord");
+  if (input.query !== undefined)
+    ignored.push("query");
   if (input.pattern !== undefined)
     ignored.push("pattern");
   if (input.glob !== undefined)
@@ -7588,6 +9024,10 @@ class SignalGrepService {
     const contextBudget = selectContextBudget(input, mode, options.contextBudget);
     if (isEvidenceRequest(input))
       return this.#evidence.search(input, cwd, signal);
+    if (input.column !== undefined)
+      throw new SignalGrepError("column requires semantic navigation");
+    if (input.query !== undefined)
+      throw new SignalGrepError("query requires a discovery mode");
     if (input.maxFilesToParse !== undefined) {
       throw new SignalGrepError("maxFilesToParse is only valid for structural analysis requests");
     }
@@ -7606,7 +9046,7 @@ class SignalGrepService {
       throw new SignalGrepError("line requires mode=inspect");
     const request = normalizeRequest(input);
     let scan = await this.#runRipgrep(request, cwd, signal);
-    if (scan.totalMatches === 0 && request.path !== undefined) {
+    if (scan.totalMatches === 0 && request.path !== undefined && request.scope !== "strict") {
       const { path: requestedPath, ...projectRequest } = request;
       scan = await this.#runRipgrep({ ...projectRequest, expandedFromPath: requestedPath }, cwd, signal);
     }
@@ -7619,6 +9059,8 @@ class SignalGrepService {
           text: emptyResultText(details.scope ?? searchScope2(snapshot.request)),
           details
         };
+      } else if (snapshot.matches.length === 0) {
+        result = await this.#summary(snapshot, mode, cwd, signal);
       } else if (mode === "summary") {
         result = await this.#summary(snapshot, mode, cwd, signal);
       } else if (mode === "matches") {
@@ -7681,14 +9123,14 @@ class SignalGrepService {
       }
       return this.#summary(snapshot, mode, cwd, signal, offset);
     }
-    const selection = cursorPathSelection(input, cwd);
-    const requestedSelectionKey = selection?.key ?? "all";
+    const selection2 = cursorPathSelection(input, cwd);
+    const requestedSelectionKey = selection2?.key ?? "all";
     if (kind === "matches" && selectionKey !== requestedSelectionKey) {
       throw new CursorError("A match cursor must continue with the same path selection.", "E_CURSOR_OPTIONS_CONFLICT");
     }
     const pageOffset = kind === "summary" ? 0 : offset;
-    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection);
-    return this.#finalize(snapshot, result, kind === "summary" || selection !== undefined);
+    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection2);
+    return this.#finalize(snapshot, result, kind === "summary" || selection2 !== undefined);
   }
   #finalize(snapshot, result, retainSnapshot = false) {
     if (!result.details.cursor && !retainSnapshot && !this.#reusableSummarySnapshots.has(snapshot)) {
@@ -7700,7 +9142,7 @@ class SignalGrepService {
     this.#reusableSummarySnapshots.add(snapshot);
     const summary = formatSummary(snapshot, this.#summaryFileLimit, offset, budget?.resultTokenBudget);
     const details = baseDetails(snapshot, mode);
-    const cursor = snapshot.matches.length > 0 ? this.#snapshots.cursor(snapshot, summary.nextOffset, "summary") : undefined;
+    const cursor = snapshot.fileCounts.size > 0 ? this.#snapshots.cursor(snapshot, summary.nextOffset, "summary") : undefined;
     const fileRange = summary.shown > 0 ? `Files ${String(summary.offset + 1)}-${String(summary.nextOffset)} of ${String(snapshot.fileCounts.size)}, ordered by match count.` : "No retained file summaries are available.";
     const omitted = summary.omitted > 0 ? `
 … ${String(summary.omitted)} lower-ranked files remain.` : "";
@@ -7722,7 +9164,7 @@ ${sampleText}` : "";
       matchIndices: indices.slice(0, MAX_INSPECT_TARGETS),
       ...redaction
     } : undefined;
-    const matchesRequest = cursor && summary.shownPaths.length ? { cursor, paths: summary.shownPaths.slice(0, 1), ...redaction } : undefined;
+    const matchesRequest = cursor && snapshot.matches.length > 0 && summary.shownPaths.length ? { cursor, paths: summary.shownPaths.slice(0, 1), ...redaction } : undefined;
     const followUp = cursor ? `
 
 Snapshot cursor="${cursor}".${inspectRequest ? `
@@ -7747,35 +9189,35 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${followUp}${sourceVerifica
       }
     };
   }
-  async#page(snapshot, offset, mode, signal, selection) {
+  async#page(snapshot, offset, mode, signal, selection2) {
     if (offset === snapshot.matches.length) {
       throw new CursorError("Cursor is already at the end of the retained snapshot.");
     }
-    const pageOptions = selection ? {
-      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection.labels })),
-      include: (match) => selection.absolutePaths.has(match.absolutePath)
+    const pageOptions = selection2 ? {
+      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection2.labels })),
+      include: (match) => selection2.absolutePaths.has(match.absolutePath)
     } : {};
     const page = await formatMatchPage(snapshot, offset, signal, pageOptions);
-    if (page.returnedMatches === 0 && selection) {
+    if (page.returnedMatches === 0 && selection2) {
       throw new CursorError("No retained matches exist for the selected paths.");
     }
     const missingPaths = [];
-    if (selection) {
+    if (selection2) {
       const matchedAbsolutePaths = new Set;
       for (const match of snapshot.matches) {
-        if (selection.absolutePaths.has(match.absolutePath)) {
+        if (selection2.absolutePaths.has(match.absolutePath)) {
           matchedAbsolutePaths.add(match.absolutePath);
         }
       }
-      const selectedAbsolutePaths = [...selection.absolutePaths];
-      for (const [index, label] of selection.labels.entries()) {
+      const selectedAbsolutePaths = [...selection2.absolutePaths];
+      for (const [index, label] of selection2.labels.entries()) {
         const absolutePath = selectedAbsolutePaths[index];
         if (absolutePath !== undefined && !matchedAbsolutePaths.has(absolutePath)) {
           missingPaths.push(label);
         }
       }
     }
-    return this.#pageResult(snapshot, offset, mode, page, selection?.labels, missingPaths, selection?.key ?? "all");
+    return this.#pageResult(snapshot, offset, mode, page, selection2?.labels, missingPaths, selection2?.key ?? "all");
   }
   #pageResult(snapshot, offset, mode, page, selectedPaths, selectionMissingPaths = [], selectionKey = "all") {
     if (page.returnedMatches === 0) {
@@ -7785,7 +9227,7 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${followUp}${sourceVerifica
     const firstMatch = page.firstMatchIndex ?? offset;
     const lastMatch = page.lastMatchIndex ?? firstMatch;
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
-    const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
+    const selection2 = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor ? `
 
 Continue with cursor="${cursor}".
@@ -7810,7 +9252,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
     return {
       text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}
 
-[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${next}${sourceVerificationNote(details)}`,
+[Matches ${range} of ${snapshot.totalMatches}${selection2}; ${completenessNote(snapshot)}.]${next}${sourceVerificationNote(details)}`,
       details: {
         ...details,
         returnedMatches: page.returnedMatches,
@@ -7837,16 +9279,20 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
 function signalGrepPromptGuidelines() {
   return [
     `Use baoer_signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
-    `An omitted path searches the project cwd. If an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
+    `An omitted path searches the project cwd. Use scope:"strict" for a question restricted to one path; otherwise, if an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
     `For external source navigation, imports/tests/impact use the containing Git repository when detected, otherwise the target file's directory.`,
     `Use sufficient exact-match evidence directly; do not inspect or reread it only to obtain a citation, since returned matches already have path/line numbers. When definitions repeat, follow the relevant imports/callers before choosing the authoritative file.`,
     `Use the file samples in baoer_signal_grep summaries to choose evidence. Reuse the visible cursor with path or paths for matching lines; mode=summary pages the remaining files. Match counts are not relevance scores.`,
     `When source context is missing, use one baoer_signal_grep batch before reading whole files: {mode:"inspect",cursor:"<returned cursor>",matchIndices:[1,2]} or {mode:"inspect",targets:[{path:"src/example.ts",line:42}]}, at most ${String(MAX_INSPECT_TARGETS)} locations. Copy actual returned selectors. Inspection chooses its own bounded window: omit pattern, context, limit, glob, exclude, literal, ignoreCase and hidden.`,
     `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
-    `Use anyOf:["term1","term2"] when every exact occurrence of 2-64 literals is needed in one version-bound result. It is case-sensitive, reports retained counts per input term, and runs requests above eight terms as bounded parallel chunks.`,
+    `Use anyOf:["term1","term2"] when every exact occurrence of 2-64 literals is needed in one version-bound result. It is case-sensitive, reports retained counts per input term, and runs requests above eight terms as bounded parallel chunks. Large term-count inventories have separate termCountsNextRequest pages; copy those requests to retrieve the complete term map.`,
     `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
     `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
-    `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Same spelling does not prove binding, and returned tests have not been run.`,
+    `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Compiler-confirmed references in verified candidate documents are ranked first; remaining same spelling does not prove binding, and returned tests have not been run. Use references for a dedicated workspace reference inventory.`,
+    `Use mode:"files" plus query for unknown filenames and fuzzy paths. Use wholeWord:true for a single-pattern whole-word search. exclude contains file globs, not content negation.`,
+    `Use JS/TS modes definitions, references, implementations, callers or callees with path+line+column (1-based UTF-16), or an unambiguous symbol. Returned evidence includes exact positions and executable next requests. The compiler resolves project aliases, package exports and workspace packages; static relationships do not prove runtime dispatch. dependencies/dependents take only a workspace file path.`,
+    `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
+    `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
     `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
@@ -7854,6 +9300,7 @@ function signalGrepPromptGuidelines() {
 function signalGrepMcpInstructions() {
   return [
     "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
+    "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence.",
     ...signalGrepPromptGuidelines()
   ].join(`
 `);
@@ -7868,8 +9315,22 @@ function stringEnum(values, options) {
     ...options?.description ? { description: options.description } : {}
   });
 }
-var SIGNAL_GREP_DESCRIPTION = "Search project content with bounded, verifiable evidence. For an ordinary new search, supply pattern and optional path; a zero-result subpath automatically expands to the project root. Use anyOf for an exact multi-term inventory or mode=impact for one symbol's same-spelling and related-test evidence. Normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. Explicit absolute paths and .. traversal may target locations outside cwd, except protected external system areas and .git internals; ordinary Git changes search remains cwd-scoped. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Coverage dimensions and source changes are explicit.";
+var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. files+query discovers filenames; structure+pattern matches AST shapes. JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
 var signalGrepSchema = Type.Object({
+  column: Type.Optional(Type.Integer({
+    minimum: 1,
+    description: "1-based UTF-16 column for exact compiler navigation; requires path and line."
+  })),
+  query: Type.Optional(Type.String({
+    maxLength: 256,
+    description: "With mode=files, a filename/path/fuzzy query (optional); with mode=concept, a required natural-language question. Both preserve their requested path. Concept requires an explicitly installed local model."
+  })),
+  scope: Type.Optional(stringEnum(["strict", "expand"], {
+    description: "Content search scope: strict never expands a zero-result path; expand (default) retries from project cwd. Applies to ordinary, multi-term and role searches."
+  })),
+  wholeWord: Type.Optional(Type.Boolean({
+    description: "Single-pattern search only: require ripgrep Unicode word boundaries around the match. Works with regex or literal=true."
+  })),
   anyOf: Type.Optional(Type.Array(Type.String({ maxLength: MAX_LITERAL_TERM_BYTES }), {
     minItems: MIN_ANY_OF_TERMS,
     maxItems: MAX_ANY_OF_TOTAL_TERMS,
@@ -7915,13 +9376,13 @@ var signalGrepSchema = Type.Object({
     description: "Missing-source continuation token. Copy nextRequest exactly: mode=inspect plus sourceCursor only. Same token replays the same page; changed or expired sources fail clearly."
   })),
   symbol: Type.Optional(Type.String({
-    description: "Optional binding name for imports or tests navigation, or an exact impact target name; never a whole-program call graph."
+    description: "Binding name for imports/tests/impact; semantic modes accept it only when it identifies one source occurrence. Prefer exact path+line+column when the name repeats."
   })),
   pattern: Type.Optional(Type.String({
-    description: "New search only: regex, or plain text with literal=true. Required for ordinary search; use allOf for explicit AND or anyOf for an exact literal union. Omit for inspect, outline, imports, tests, impact and cursor continuation."
+    description: "Ordinary search: regex or literal=true text. mode=structure: ast-grep code pattern, at most 4 KiB, including $NAME and $$$ARGS metavariables; no regex/literal options. Omit for discovery, semantic navigation, inspection and cursors."
   })),
   path: Type.Optional(Type.String({
-    description: "Search root or inspection file. A zero-result search root is retried from project cwd. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped."
+    description: "Search root or source file. A zero-result content search expands from cwd unless scope=strict. Compiler navigation stays within admitted workspace sources. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped."
   })),
   paths: Type.Optional(Type.Array(Type.String(), {
     minItems: 1,
@@ -7932,7 +9393,7 @@ var signalGrepSchema = Type.Object({
     description: "Include glob or globs, for example '*.ts' or 'src/**'."
   })),
   exclude: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
-    description: "Exclude glob or globs. A leading ! is optional."
+    description: "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional."
   })),
   literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text." })),
   ignoreCase: Type.Optional(Type.Boolean({
@@ -7957,8 +9418,27 @@ var signalGrepSchema = Type.Object({
     maximum: MAX_PAGE_SIZE,
     description: "New search only: explicit detail-page match limit (max 100). Normally omit to preserve automatic summarization; not valid for inspect."
   })),
-  mode: Type.Optional(stringEnum(["auto", "summary", "matches", "inspect", "outline", "imports", "tests", "impact"], {
-    description: "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never pattern/context/limit. outline lists JS/TS/TSX symbols; imports follows static ESM binding links; tests finds related test candidates. impact selects one JS/TS/TSX symbol and inventories exact same-spelling candidates and related-test evidence without claiming binding. Navigation and impact use path with optional line/symbol, or cursor+matchIndex, without search options."
+  mode: Type.Optional(stringEnum([
+    "auto",
+    "summary",
+    "matches",
+    "inspect",
+    "outline",
+    "imports",
+    "tests",
+    "impact",
+    "files",
+    "structure",
+    "concept",
+    "definitions",
+    "references",
+    "implementations",
+    "callers",
+    "callees",
+    "dependencies",
+    "dependents"
+  ], {
+    description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. Compiler results are static evidence; concept and related-test results remain candidates."
   })),
   line: Type.Optional(Type.Number({
     description: "1-indexed source line for path inspection/navigation/impact. Omit with matchIndex, matchIndices or targets."
@@ -7994,8 +9474,14 @@ var SIGNAL_GREP_TOOL = {
   inputSchema: signalGrepSchema,
   outputSchema: {
     type: "object",
-    properties: { details: { type: "object" } },
-    required: ["details"]
+    properties: {
+      text: {
+        type: "string",
+        description: "Complete formatted result page, including source evidence, limits and continuation requests."
+      },
+      details: { type: "object" }
+    },
+    required: ["text", "details"]
   },
   annotations: {
     title: "baoer_signal_grep",
@@ -8051,7 +9537,7 @@ function createSignalGrepMcpServer(service, cwd) {
       const result = await service.search(input, cwd, extra.signal);
       return {
         content: [{ type: "text", text: result.text }],
-        structuredContent: { details: result.details }
+        structuredContent: { text: result.text, details: result.details }
       };
     } catch (error) {
       return toolError(error);
@@ -8349,14 +9835,14 @@ async function startSignalGrepMcpServer(options = {}) {
   const host = options.host ?? DEFAULT_MCP_HOST;
   const port = options.port ?? DEFAULT_MCP_PORT;
   try {
-    await new Promise((resolve15, reject) => {
+    await new Promise((resolve19, reject) => {
       const onError = (error) => {
         httpServer.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         httpServer.off("error", onError);
-        resolve15();
+        resolve19();
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
@@ -8378,8 +9864,8 @@ async function startSignalGrepMcpServer(options = {}) {
     closePromise = (async () => {
       state.closing = true;
       clearInterval(sweepTimer);
-      const stopListening = new Promise((resolve15, reject) => {
-        httpServer.close((error) => error ? reject(error) : resolve15());
+      const stopListening = new Promise((resolve19, reject) => {
+        httpServer.close((error) => error ? reject(error) : resolve19());
       });
       const initialCleanup = await Promise.allSettled([
         ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),

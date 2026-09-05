@@ -54,6 +54,8 @@ jobs:
           tool: ripgrep
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - name: Verify generated artifacts
+        run: git diff --exit-code -- src plugins
       - run: bun run pack:check
       - name: Install npm with trusted publishing support
         run: npm install --global npm@11.15.0

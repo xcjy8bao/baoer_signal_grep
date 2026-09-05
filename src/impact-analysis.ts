@@ -1,3 +1,4 @@
+import { rankEvidence } from "./evidence-ranking.js";
 import {
   ANALYSIS_METADATA_RESERVE_BYTES,
   MAX_ANALYSIS_RESULTS,
@@ -90,6 +91,13 @@ function occurrenceItem(
       kind: "impact-occurrence",
       impactCategory: category,
       binding: "unproven",
+      score:
+        category === "call" || category === "declaration"
+          ? 70
+          : category === "comment" || category === "string"
+            ? 20
+            : 40,
+      rankingReason: `exact spelling with ${category} syntax; binding unproven`,
       target: {
         path: target.document.path,
         name: target.symbol.name,
@@ -160,6 +168,7 @@ export async function classifyImpactOccurrences(
 
 function itemOrder(item: AnalysisItem): number {
   if (item.details?.kind === "impact-target") return -1;
+  if (item.details?.binding === "typescript-compiler") return -0.5;
   if (item.details?.kind === "impact-occurrence") {
     const category = item.details.impactCategory;
     const index = CATEGORY_ORDER.findIndex((value) => value === category);
@@ -181,22 +190,14 @@ export function mergeImpactItems(
     if (details.kind === "test-case") delete details.relationItems;
     return { ...item, details };
   });
-  return [target, ...occurrences, ...stableTests]
-    .map((item, insertion) => ({ item, insertion }))
-    .toSorted(
-      (left, right) =>
-        itemOrder(left.item) - itemOrder(right.item) ||
-        left.item.path.localeCompare(right.item.path) ||
-        left.item.line - right.item.line ||
-        (left.item.range?.start ?? 0) - (right.item.range?.start ?? 0) ||
-        left.insertion - right.insertion,
-    )
-    .map(({ item }) => item);
+  return rankEvidence([target, ...occurrences, ...stableTests], itemOrder);
 }
 
 /** Exact target/occurrence evidence owns storage before derived test candidates. */
 export function impactRetentionPriority(item: AnalysisItem): number {
-  return item.details?.kind === "impact-target" || item.details?.kind === "impact-occurrence"
+  return item.details?.kind === "impact-target" ||
+    item.details?.kind === "impact-occurrence" ||
+    item.details?.kind === "impact-reference"
     ? 0
     : 1;
 }
@@ -215,6 +216,8 @@ export function retainedImpactCounts(
 ): Pick<AnalysisResultSet, "counts"> {
   const counts: Record<string, number> = {
     targets: 0,
+    compilerBoundReferences: 0,
+    additionalAliasReferences: 0,
     retainedExactOccurrences: 0,
     testUses: 0,
     testCases: 0,
@@ -222,6 +225,10 @@ export function retainedImpactCounts(
   };
   for (const item of items) {
     const kind = item.details?.kind;
+    if (item.details?.binding === "typescript-compiler")
+      counts.compilerBoundReferences = (counts.compilerBoundReferences ?? 0) + 1;
+    if (kind === "impact-reference")
+      counts.additionalAliasReferences = (counts.additionalAliasReferences ?? 0) + 1;
     if (kind === "impact-target") counts.targets = (counts.targets ?? 0) + 1;
     else if (kind === "impact-occurrence") {
       counts.retainedExactOccurrences = (counts.retainedExactOccurrences ?? 0) + 1;

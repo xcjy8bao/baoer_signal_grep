@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { excerptText } from "./excerpt.js";
+import { SearchRetention } from "./search-retention.js";
 import { consumeCappedLines } from "./capped-lines.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { runOwnedProcess } from "./owned-process.js";
@@ -43,6 +44,8 @@ export interface RipgrepRunnerOptions {
   maxStoredMatches?: number;
   maxEventBytes?: number;
   maxSourceRevisionFiles?: number;
+  maxStoredBytes?: number;
+  maxStoredOccurrences?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -223,8 +226,11 @@ export function buildRipgrepArguments(
   return args;
 }
 
-export function patternArguments(request: Pick<SearchRequest, "literal" | "ignoreCase">): string[] {
+export function patternArguments(
+  request: Pick<SearchRequest, "literal" | "ignoreCase" | "wholeWord">,
+): string[] {
   return [
+    ...(request.wholeWord ? ["--word-regexp"] : []),
     ...(request.literal ? ["--fixed-strings"] : []),
     request.ignoreCase === true
       ? "--ignore-case"
@@ -257,6 +263,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     if (signal?.aborted) throw abortError();
 
     const matches: MatchRecord[] = [];
+    const retention = new SearchRetention(options.maxStoredBytes, options.maxStoredOccurrences);
     const fileCounts = new Map<string, number>();
     const lossyPaths = new Set<string>();
     let totalMatches = 0;
@@ -281,28 +288,35 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       const path = displayPath(rawPath.text, cwd);
       if (rawPath.encoding === "utf-8") lossyPaths.add(path.absolutePath);
       const submatches = event.data.submatches ?? [];
-      const occurrences = createOccurrences(event.data.line_number, rawContent, submatches);
-      const primaryOccurrence = occurrences[0];
+      if (submatches.some((match) => match.end > rawContent.bytes.length))
+        throw new SignalGrepError("ripgrep emitted a submatch outside its matching line");
+      const primaryOccurrence = submatches[0];
       let focusStart = 0;
       let focusEnd = 0;
       if (primaryOccurrence) {
-        focusStart = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteStart, "utf-16");
-        focusEnd = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.byteEnd, "utf-16");
+        focusStart = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.start, "utf-16");
+        focusEnd = byteOffsetToCharacter(rawContent.bytes, primaryOccurrence.end, "utf-16");
       }
       const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
       const { text: lineContent, truncated: lineTruncated } = excerpt;
 
       totalMatches += 1;
+      if (!fileCounts.has(path.displayPath)) retention.file(path.displayPath, path.absolutePath);
       fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
       if (lineTruncated) truncatedLines += 1;
-      if (matches.length < maxStoredMatches) {
-        matches.push({
+      if (matches.length >= maxStoredMatches)
+        retention.noteLimit(
+          `Matching-line retention reached the ${String(maxStoredMatches)} limit`,
+        );
+      if (matches.length < maxStoredMatches && retention.canRetainOccurrences(submatches.length)) {
+        const match = {
           ...path,
           lineNumber: event.data.line_number,
           lineContent,
           lineTruncated,
-          occurrences,
-        });
+          occurrences: createOccurrences(event.data.line_number, rawContent, submatches),
+        };
+        if (retention.retain(match)) matches.push(match);
       }
     };
 
@@ -345,6 +359,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         sourceRevisions,
         snapshotComplete: matches.length === totalMatches,
         truncatedLines,
+        retention: retention.details,
       };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw abortError();

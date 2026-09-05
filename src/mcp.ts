@@ -38,8 +38,15 @@ const SIGNAL_GREP_TOOL: Tool = {
   inputSchema: signalGrepSchema as unknown as Tool["inputSchema"],
   outputSchema: {
     type: "object",
-    properties: { details: { type: "object" } },
-    required: ["details"],
+    properties: {
+      text: {
+        type: "string",
+        description:
+          "Complete formatted result page, including source evidence, limits and continuation requests.",
+      },
+      details: { type: "object" },
+    },
+    required: ["text", "details"],
   },
   annotations: {
     title: "baoer_signal_grep",
@@ -110,7 +117,9 @@ export function createSignalGrepMcpServer(service: SignalGrepMcpService, cwd: st
       const result = await service.search(input, cwd, extra.signal);
       return {
         content: [{ type: "text" as const, text: result.text }],
-        structuredContent: { details: result.details },
+        // Clients may expose only structuredContent to their model. Both representations
+        // must use the same final page, after service-level formatting and redaction.
+        structuredContent: { text: result.text, details: result.details },
       };
     } catch (error) {
       return toolError(error);

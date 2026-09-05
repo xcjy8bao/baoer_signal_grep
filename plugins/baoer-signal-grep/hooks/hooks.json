@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(?:Bash|bash|PowerShell|powershell|Shell|shell|shell_command|exec_command|Grep|grep|Glob|GlobFile|SearchFileContent|SearchFiles|find)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/search-policy.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -148,6 +148,7 @@ var GO_FIELDS = {
 };
 
 // src/types.ts
+var MAX_SEARCH_STORAGE_BYTES = 32 * 1024 * 1024;
 var MAX_RESULT_BYTES = 16 * 1024;
 var MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
 var MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
@@ -179,12 +180,36 @@ function parseInput(input) {
   if (Buffer.byteLength(input.text) > MAX_SOURCE_FILE_BYTES) {
     throw new Error("Syntax worker source exceeds the file limit");
   }
-  return { language, text: input.text };
+  if ("pattern" in input && (typeof input.pattern !== "string" || Buffer.byteLength(input.pattern) > 4096))
+    throw new Error("Invalid AST pattern");
+  return {
+    language,
+    text: input.text,
+    ..."pattern" in input && typeof input.pattern === "string" ? { pattern: input.pattern } : {}
+  };
 }
-function extract(language, text) {
+function extract(language, text, pattern) {
   if (language === "go")
     registerDynamicLanguage({ go });
   const names = { javascript: "JavaScript", typescript: "TypeScript", tsx: "Tsx", go: "go" };
+  if (pattern !== undefined) {
+    const prepared = language === "go" ? pattern.replaceAll("$", "µ") : pattern;
+    const templates = language === "go" ? [
+      prepared,
+      `package pattern
+${prepared}`,
+      `package pattern
+func pattern() {
+${prepared}
+}`
+    ] : [prepared];
+    const valid = templates.some((candidate) => {
+      const template = parse(names[language], candidate).root();
+      return template.kind() !== "ERROR" && !template.find({ rule: { kind: "ERROR" } });
+    });
+    if (!valid)
+      throw new Error("Malformed structural pattern for selected language");
+  }
   const root = parse(names[language], text).root();
   const rootRange = root.range();
   const nodes = [
@@ -226,7 +251,12 @@ function extract(language, text) {
     nodes.push(node);
     stack.push({ node: child, index, next: 0, fields: fieldsFor(child, language) });
   }
-  return { status: malformed ? "parse-error" : "ok", nodes };
+  const patternMatches = pattern === undefined || malformed ? undefined : root.findAll(pattern).map((node) => ({ start: node.range().start.index, end: node.range().end.index }));
+  return {
+    status: malformed ? "parse-error" : "ok",
+    nodes,
+    ...patternMatches ? { patternMatches } : {}
+  };
 }
 async function main() {
   const chunks = [];
@@ -239,8 +269,8 @@ async function main() {
     chunks.push(buffer);
   }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  const { language, text } = parseInput(input);
-  const output = JSON.stringify(extract(language, text));
+  const { language, text, pattern } = parseInput(input);
+  const output = JSON.stringify(extract(language, text, pattern));
   if (Buffer.byteLength(output) > MAX_STRUCTURE_BYTES) {
     throw new Error("Syntax worker output exceeds protocol limit");
   }

@@ -1,3 +1,8 @@
+import { bindImpactCandidates } from "./impact-bindings.js";
+import { conceptSearch } from "./concept-search.js";
+import { structuralSearch } from "./structural-search.js";
+import { isSemanticMode } from "./semantic-protocol.js";
+import { navigateSemantics } from "./semantic-navigation.js";
 import { dirname, resolve } from "node:path";
 import { AnalysisStore } from "./analysis-store.js";
 import type { AnalysisItem, AnalysisResultSet, CoverageStatus } from "./analysis-types.js";
@@ -28,6 +33,8 @@ import {
   validateAnyOf,
 } from "./multi-term-search.js";
 import { normalizeRequest } from "./request.js";
+import { runOwnedParallel } from "./owned-parallel.js";
+import { discoverFiles } from "./file-discovery.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { SignalGrepInput } from "./service.js";
 import type { SnapshotStore } from "./snapshot-store.js";
@@ -58,6 +65,10 @@ import {
 
 export function isEvidenceRequest(input: SignalGrepInput): boolean {
   return (
+    isSemanticMode(input.mode) ||
+    input.mode === "concept" ||
+    input.mode === "structure" ||
+    input.mode === "files" ||
     input.mode === "inspect" ||
     input.mode === "outline" ||
     input.mode === "imports" ||
@@ -70,7 +81,7 @@ export function isEvidenceRequest(input: SignalGrepInput): boolean {
     input.roles !== undefined ||
     input.changes !== undefined ||
     input.symbol !== undefined ||
-    (input.cursor?.includes(".analysis.") ?? false)
+    (input.cursor?.includes(".analysis") ?? false)
   );
 }
 
@@ -92,6 +103,9 @@ function rejectFields(
         );
 }
 const searchFields = [
+  "query",
+  "scope",
+  "wholeWord",
   "pattern",
   "anyOf",
   "allOf",
@@ -145,7 +159,8 @@ function validateTerms(input: SignalGrepInput): string[] | undefined {
     input.pattern !== undefined ||
     input.roles !== undefined ||
     input.literal !== undefined ||
-    input.ignoreCase !== undefined
+    input.ignoreCase !== undefined ||
+    input.wholeWord !== undefined
   )
     throw new SignalGrepError(
       "allOf is an explicit case-sensitive literal conjunction; omit pattern, roles, literal and ignoreCase",
@@ -268,6 +283,7 @@ export class EvidenceService {
     const candidates = await collect(request);
     if (
       input.changes ||
+      request.scope === "strict" ||
       request.path === undefined ||
       candidates.files.length > 0 ||
       candidates.partial
@@ -288,6 +304,16 @@ export class EvidenceService {
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
     const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+    if (isSemanticMode(input.mode)) {
+      rejectFields(
+        input,
+        [...searchFields, ...inspectFields, "cursor", "matchIndex"],
+        `mode=${input.mode}`,
+      );
+      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access)));
+    }
+    if (input.column !== undefined)
+      throw new SignalGrepError("column requires semantic navigation");
     if (input.sourceCursor !== undefined) {
       if (typeof input.sourceCursor !== "string" || !input.sourceCursor.trim())
         throw new CursorError("A nonempty sourceCursor is required");
@@ -316,8 +342,69 @@ export class EvidenceService {
       const targets = this.#inspectionTargets(input, cwd);
       return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
+    if (input.mode === "concept") {
+      rejectFields(
+        input,
+        [
+          ...searchFields.filter(
+            (field) => !["query", "glob", "exclude", "hidden"].includes(field),
+          ),
+          ...inspectFields,
+          "cursor",
+          "line",
+          "symbol",
+          "matchIndex",
+        ],
+        "mode=concept",
+      );
+      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access)));
+    }
+    if (input.mode === "structure") {
+      rejectFields(
+        input,
+        [
+          ...searchFields.filter(
+            (field) => !["pattern", "glob", "exclude", "hidden"].includes(field),
+          ),
+          ...inspectFields,
+          "cursor",
+          "line",
+          "symbol",
+          "matchIndex",
+        ],
+        "mode=structure",
+      );
+      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access)));
+    }
+    if (input.mode === "files") {
+      rejectFields(
+        input,
+        [
+          "pattern",
+          "cursor",
+          "line",
+          "matchIndex",
+          "symbol",
+          "maxFilesToParse",
+          "wholeWord",
+          "scope",
+          "literal",
+          "ignoreCase",
+          "context",
+          "limit",
+          "anyOf",
+          "allOf",
+          "within",
+          "roles",
+          "changes",
+          ...inspectFields,
+        ],
+        "mode=files",
+      );
+      return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
+    }
     if (input.mode === "impact") return this.#impact(input, access);
-    if (input.cursor?.includes(".analysis.") && !input.mode?.match(/^(outline|imports|tests)$/)) {
+    if (input.cursor?.includes(".analysis") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       this.#analyses.resolve(input.cursor);
       rejectFields(
         input,
@@ -344,7 +431,7 @@ export class EvidenceService {
       return this.#navigate(input, access);
     rejectFields(
       input,
-      [...inspectFields, "line", "matchIndex", "symbol", "cursor"],
+      [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor"],
       "Evidence search",
     );
     const anyOf = validateAnyOf(input.anyOf);
@@ -355,7 +442,8 @@ export class EvidenceService {
         input.within !== undefined ||
         input.roles !== undefined ||
         input.literal !== undefined ||
-        input.ignoreCase !== undefined
+        input.ignoreCase !== undefined ||
+        input.wholeWord !== undefined
       )
         throw new SignalGrepError(
           "anyOf is an explicit case-sensitive literal union; omit pattern, allOf, within, roles, literal and ignoreCase",
@@ -367,9 +455,11 @@ export class EvidenceService {
         (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS),
       );
       const { path: _inputPath, ...unscopedInput } = input;
+      let chunkAccess = access;
       const runChunks = async (expandedFromPath?: string) =>
-        Promise.all(
-          chunks.map(async (chunk) => {
+        runOwnedParallel((groupSignal) => {
+          chunkAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
+          return chunks.map(async (chunk) => {
             const request = normalizeRequest({
               ...(expandedFromPath === undefined ? input : unscopedInput),
               pattern: chunk.map(escapeRegexLiteral).join("|"),
@@ -382,33 +472,30 @@ export class EvidenceService {
               request: effectiveRequest,
               ...(input.changes ? { changes: input.changes } : {}),
               cwd,
-              ...(signal ? { signal } : {}),
-              access,
+              signal: groupSignal,
+              access: chunkAccess,
               runRipgrep: this.#runner,
               maxFiles: fileLimit,
             });
             return { chunk, request: effectiveRequest, candidates };
-          }),
-        );
+          });
+        }, signal);
       let chunkResults = await runChunks();
       if (
         !input.changes &&
         input.path !== undefined &&
+        input.scope !== "strict" &&
         chunkResults.every(({ candidates }) => !candidates.partial && candidates.files.length === 0)
       ) {
         chunkResults = await runChunks(input.path.replace(/^@/, ""));
       }
       const reasons = new Set<string>();
       let partial = false;
-      let filesRead = 0;
-      let bytesRead = 0;
       let changes: AnalysisResultSet["changes"];
       const candidateFiles = new Map<string, EvidenceCandidateFile>();
       const invalidatedPaths = new Set<string>();
       for (const { candidates } of chunkResults) {
         partial ||= candidates.partial;
-        filesRead += candidates.filesRead;
-        bytesRead += candidates.bytesRead;
         changes ??= candidates.changes;
         for (const reason of candidates.reasons) reasons.add(reason);
         for (const file of candidates.files) {
@@ -447,8 +534,8 @@ export class EvidenceService {
         items: expanded.items,
         partial,
         reasons: [...reasons],
-        filesRead,
-        bytesRead,
+        filesRead: chunkAccess.filesRead,
+        bytesRead: chunkAccess.bytesRead,
         ...(changes ? { changes } : {}),
         scope,
         chunks: {
@@ -717,6 +804,8 @@ export class EvidenceService {
       maxFiles: access.maxFiles,
     });
     const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
+    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access);
+    occurrences.items = bound.items;
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
     let testItems: AnalysisItem[] = [];
@@ -791,6 +880,7 @@ export class EvidenceService {
           ),
       },
       coverage: {
+        compilerCandidateBindings: candidates.partial ? "partial" : "complete",
         exactOccurrences: candidates.partial ? "partial" : "complete",
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage,

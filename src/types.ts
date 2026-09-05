@@ -21,6 +21,8 @@ export const MAX_SELECTED_PATHS = 20;
 export const MAX_INSPECT_TARGETS = 5;
 export const MAX_DISPLAYED_OCCURRENCES = 20;
 export const MAX_STORED_MATCHES = 50_000;
+export const MAX_STORED_OCCURRENCES = 200_000;
+export const MAX_SEARCH_STORAGE_BYTES = 32 * 1024 * 1024;
 export const MAX_LINE_CHARACTERS = 500;
 export const MAX_RESULT_BYTES = 16 * 1024;
 export const MAX_CONTEXT_LINES = 20;
@@ -30,6 +32,16 @@ export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
 export const MAX_SOURCE_REVISION_FILES = 50_000;
 
 export type SearchMode =
+  | "concept"
+  | "structure"
+  | "definitions"
+  | "references"
+  | "implementations"
+  | "callers"
+  | "callees"
+  | "dependencies"
+  | "dependents"
+  | "files"
   | "auto"
   | "summary"
   | "matches"
@@ -141,6 +153,8 @@ export interface InspectBatchItemDetails {
 }
 
 export interface SearchRequest {
+  scope?: "strict" | "expand";
+  wholeWord?: boolean;
   pattern: string;
   path?: string;
   expandedFromPath?: string;
@@ -181,6 +195,15 @@ export interface SearchScan {
   sourceRevisions: Map<string, SourceRevision>;
   snapshotComplete: boolean;
   truncatedLines: number;
+  retention?: SearchRetentionDetails;
+}
+
+export interface SearchRetentionDetails {
+  accountedBytes: number;
+  retainedOccurrences: number;
+  maxBytes: number;
+  maxOccurrences: number;
+  reasons: string[];
 }
 
 export interface SearchSnapshot extends SearchScan {
@@ -198,6 +221,7 @@ export interface SignalGrepDetails {
   totalFiles: number;
   returnedMatches: number;
   snapshotComplete: boolean;
+  retention?: SearchRetentionDetails;
   cursor?: string;
   nextRequest?: SignalGrepInput;
   analysis?: AnalysisDetails;

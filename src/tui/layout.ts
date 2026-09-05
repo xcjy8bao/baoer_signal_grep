@@ -1,3 +1,4 @@
+import { isSemanticMode } from "../semantic-protocol.js";
 import type { Theme as PiTheme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { SignalGrepLocale } from "../config.js";
@@ -566,6 +567,20 @@ function callView(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView
   if (input.mode === "inspect") return inspectCall(input, copy, theme);
   if (input.mode === "impact") return impactCall(input, copy, theme);
   if (input.cursor) return continuationCall(input, copy, theme);
+  if (
+    isSemanticMode(input.mode) ||
+    input.mode === "files" ||
+    input.mode === "concept" ||
+    input.mode === "structure"
+  ) {
+    return {
+      primary: `${signalGrepTitle(theme)}  ${theme.fg("accent", safeLabel(input.mode))} ${theme.fg("muted", safeLabel(input.query ?? input.pattern ?? input.symbol ?? input.path ?? "."))}`,
+      secondary: [
+        safeLabel(input.path ?? "."),
+        ...(input.line === undefined ? [] : [`${String(input.line)}:${String(input.column ?? 1)}`]),
+      ],
+    };
+  }
   return searchCall(input, theme);
 }
 

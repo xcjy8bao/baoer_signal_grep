@@ -1,0 +1,11 @@
+{
+  "name": "baoer-signal-grep",
+  "owner": { "name": "宝儿" },
+  "plugins": [
+    {
+      "name": "baoer-signal-grep",
+      "source": "./plugins/baoer-signal-grep",
+      "description": "Enforce conventional local searches through baoer_signal_grep."
+    }
+  ]
+}
