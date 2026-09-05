@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Make every MCP installation command follow the latest published version when the server starts.
+
 ## [1.2.0] - 2026-09-05
 
 - Fix missing file maps and matching lines in MCP clients that select structured results.

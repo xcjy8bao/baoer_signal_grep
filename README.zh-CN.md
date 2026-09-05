@@ -62,14 +62,14 @@ pi install npm:baoer_signal_grep
 ### Claude Code 或 Codex：连接 MCP
 
 ```bash
-claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
+claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest baoer_signal_grep_mcp --stdio
 ```
 
 ```bash
-codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
+codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest baoer_signal_grep_mcp --stdio
 ```
 
-配置或更新后重启宿主。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
+`@latest` 会在 MCP 启动时跟随最新发布版本，更新后重启宿主即可加载。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
 
 ### 原生插件
 
