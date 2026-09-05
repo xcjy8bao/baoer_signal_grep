@@ -10,6 +10,7 @@ import { SignalGrepService } from "./service.js";
 import { signalGrepPromptGuidelines } from "./prompt-guidelines.js";
 import type { SignalGrepDetails } from "./types.js";
 import { renderSignalGrepCall, renderSignalGrepResult } from "./tui/renderers.js";
+import { registerPiSearchPolicy } from "./pi-search-policy.js";
 
 const SIGNAL_GREP_LABEL = "baoer_signal_grep";
 
@@ -63,6 +64,8 @@ export async function registerSignalGrepExtension(
       };
     },
   });
+
+  if (config.enforceSearch !== false) registerPiSearchPolicy(pi);
 
   pi.on("session_shutdown", async (_event, ctx) => {
     await runtime.shutdown();

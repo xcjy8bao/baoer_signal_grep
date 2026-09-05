@@ -25,9 +25,34 @@ function stringEnum<const Values extends readonly string[]>(
 }
 
 export const SIGNAL_GREP_DESCRIPTION =
-  "Search project content with bounded, verifiable evidence. For an ordinary new search, supply pattern and optional path; a zero-result subpath automatically expands to the project root. Use anyOf for an exact multi-term inventory or mode=impact for one symbol's same-spelling and related-test evidence. Normally omit mode and limit. Auto returns small results directly and broad results as file counts plus real samples. Explicit absolute paths and .. traversal may target locations outside cwd, except protected external system areas and .git internals; ordinary Git changes search remains cwd-scoped. If a matching line answers the question, use its path/line citation directly. For missing source context, inspect selected locations in one batch. Inspection has separate parameters: mode plus path/line, cursor/matchIndices, or targets; never include search pattern or context. Coverage dimensions and source changes are explicit.";
+  "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. files+query discovers filenames; structure+pattern matches AST shapes. JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
 
 export const signalGrepSchema = Type.Object({
+  column: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      description: "1-based UTF-16 column for exact compiler navigation; requires path and line.",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      maxLength: 256,
+      description:
+        "With mode=files, a filename/path/fuzzy query (optional); with mode=concept, a required natural-language question. Both preserve their requested path. Concept requires an explicitly installed local model.",
+    }),
+  ),
+  scope: Type.Optional(
+    stringEnum(["strict", "expand"] as const, {
+      description:
+        "Content search scope: strict never expands a zero-result path; expand (default) retries from project cwd. Applies to ordinary, multi-term and role searches.",
+    }),
+  ),
+  wholeWord: Type.Optional(
+    Type.Boolean({
+      description:
+        "Single-pattern search only: require ripgrep Unicode word boundaries around the match. Works with regex or literal=true.",
+    }),
+  ),
   anyOf: Type.Optional(
     Type.Array(Type.String({ maxLength: MAX_LITERAL_TERM_BYTES }), {
       minItems: MIN_ANY_OF_TERMS,
@@ -101,19 +126,19 @@ export const signalGrepSchema = Type.Object({
   symbol: Type.Optional(
     Type.String({
       description:
-        "Optional binding name for imports or tests navigation, or an exact impact target name; never a whole-program call graph.",
+        "Binding name for imports/tests/impact; semantic modes accept it only when it identifies one source occurrence. Prefer exact path+line+column when the name repeats.",
     }),
   ),
   pattern: Type.Optional(
     Type.String({
       description:
-        "New search only: regex, or plain text with literal=true. Required for ordinary search; use allOf for explicit AND or anyOf for an exact literal union. Omit for inspect, outline, imports, tests, impact and cursor continuation.",
+        "Ordinary search: regex or literal=true text. mode=structure: ast-grep code pattern, at most 4 KiB, including $NAME and $$$ARGS metavariables; no regex/literal options. Omit for discovery, semantic navigation, inspection and cursors.",
     }),
   ),
   path: Type.Optional(
     Type.String({
       description:
-        "Search root or inspection file. A zero-result search root is retried from project cwd. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped.",
+        "Search root or source file. A zero-result content search expands from cwd unless scope=strict. Compiler navigation stays within admitted workspace sources. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped.",
     }),
   ),
   paths: Type.Optional(
@@ -131,7 +156,8 @@ export const signalGrepSchema = Type.Object({
   ),
   exclude: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())], {
-      description: "Exclude glob or globs. A leading ! is optional.",
+      description:
+        "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional.",
     }),
   ),
   literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text." })),
@@ -174,10 +200,29 @@ export const signalGrepSchema = Type.Object({
   ),
   mode: Type.Optional(
     stringEnum(
-      ["auto", "summary", "matches", "inspect", "outline", "imports", "tests", "impact"] as const,
+      [
+        "auto",
+        "summary",
+        "matches",
+        "inspect",
+        "outline",
+        "imports",
+        "tests",
+        "impact",
+        "files",
+        "structure",
+        "concept",
+        "definitions",
+        "references",
+        "implementations",
+        "callers",
+        "callees",
+        "dependencies",
+        "dependents",
+      ] as const,
       {
         description:
-          "Normally OMIT for new searches (auto). summary explicitly requests a file overview; matches explicitly requests match pages. inspect requires only location selectors, never pattern/context/limit. outline lists JS/TS/TSX symbols; imports follows static ESM binding links; tests finds related test candidates. impact selects one JS/TS/TSX symbol and inventories exact same-spelling candidates and related-test evidence without claiming binding. Navigation and impact use path with optional line/symbol, or cursor+matchIndex, without search options.",
+          "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. Compiler results are static evidence; concept and related-test results remain candidates.",
       },
     ),
   ),

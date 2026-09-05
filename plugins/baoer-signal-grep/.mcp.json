@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "baoer_signal_grep": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--package",
+        "baoer_signal_grep@1.2.0",
+        "baoer_signal_grep_mcp",
+        "--stdio"
+      ],
+      "env": {
+        "npm_config_ignore_scripts": "true",
+        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip"
+      }
+    }
+  }
+}

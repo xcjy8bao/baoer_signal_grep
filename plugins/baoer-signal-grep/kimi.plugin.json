@@ -1,0 +1,35 @@
+{
+  "name": "baoer-signal-grep",
+  "version": "1.2.0",
+  "description": "Require baoer_signal_grep for conventional local searches while keeping development tools available.",
+  "author": {
+    "name": "宝儿"
+  },
+  "homepage": "https://github.com/xcjy8bao/baoer_signal_grep#readme",
+  "license": "AGPL-3.0-only",
+  "mcpServers": {
+    "baoer_signal_grep": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--package",
+        "baoer_signal_grep@1.2.0",
+        "baoer_signal_grep_mcp",
+        "--stdio"
+      ],
+      "env": {
+        "npm_config_ignore_scripts": "true",
+        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip"
+      }
+    }
+  },
+  "systemPrompt": "Use baoer_signal_grep for local content and filename searches. The plugin blocks conventional alternative search entries. Ordinary reads, edits, tests and builds remain available.",
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "^(?:Bash|Grep|Glob|Shell|SearchFileContent|SearchFiles|GlobFile)$",
+      "command": "node \"./hooks/search-policy.mjs\"",
+      "timeout": 5
+    }
+  ]
+}

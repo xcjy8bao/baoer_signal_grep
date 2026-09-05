@@ -130,7 +130,29 @@ function readResult(output: string, length: number): SyntaxWorkerResult {
   for (const value of result.nodes) nodes.push(readNode(value, nodes.length, nodes, length));
   if (result.status !== "ok" && result.status !== "parse-error" && result.status !== "limit")
     return invalidProtocol();
-  return { status: result.status, nodes };
+  const patternMatches: { start: number; end: number }[] = [];
+  if ("patternMatches" in result) {
+    if (!Array.isArray(result.patternMatches) || result.patternMatches.length > MAX_SYNTAX_NODES)
+      return invalidProtocol();
+    for (const match of result.patternMatches) {
+      if (
+        !match ||
+        typeof match !== "object" ||
+        !("start" in match) ||
+        !("end" in match) ||
+        typeof match.start !== "number" ||
+        typeof match.end !== "number" ||
+        !Number.isSafeInteger(match.start) ||
+        !Number.isSafeInteger(match.end) ||
+        match.start < 0 ||
+        match.end < match.start ||
+        match.end > length
+      )
+        return invalidProtocol();
+      patternMatches.push({ start: match.start, end: match.end });
+    }
+  }
+  return { status: result.status, nodes, patternMatches };
 }
 
 /** The service serializes requests; this owns exactly one short-lived native parser. */
@@ -138,6 +160,7 @@ export async function parseSyntax(
   path: string,
   text: string,
   signal?: AbortSignal,
+  pattern?: string,
 ): Promise<SyntaxAnalysis> {
   if (signal?.aborted) throw abortError();
   const language = syntaxLanguage(path);
@@ -175,7 +198,7 @@ export async function parseSyntax(
         cwd: dirname(worker),
         env,
         signal: controller.signal,
-        input: Buffer.from(JSON.stringify({ language, text })),
+        input: Buffer.from(JSON.stringify({ language, text, pattern })),
       },
       async (stdout) => {
         for await (const chunk of stdout) {
@@ -215,6 +238,7 @@ export async function parseSyntax(
       status: parsed.status,
       nodes: parsed.nodes,
       children,
+      ...(parsed.patternMatches ? { patternMatches: parsed.patternMatches } : {}),
       ...facts,
       diagnostics,
       limited: parsed.status === "limit",

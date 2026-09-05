@@ -16,6 +16,16 @@ export interface AnalysisItem {
 
 export interface AnalysisDetails {
   kind:
+    | "concept"
+    | "structure"
+    | "definitions"
+    | "references"
+    | "implementations"
+    | "callers"
+    | "callees"
+    | "dependencies"
+    | "dependents"
+    | "files"
     | "roles"
     | "file-and"
     | "function-and"
@@ -42,6 +52,9 @@ export interface AnalysisDetails {
   bytesRead?: number;
   counts?: Record<string, number>;
   termCounts?: { term: string; retainedOccurrences: number }[];
+  termCountsOffset?: number;
+  totalTerms?: number;
+  termCountsNextRequest?: SignalGrepInput;
   changes?: { base: string; target: string; scope: string; side: string };
   scope?: SearchScopeDetails;
   chunks?: {
@@ -52,6 +65,9 @@ export interface AnalysisDetails {
   };
   coverage?: Record<string, CoverageStatus>;
   stats?: {
+    inferencePeakRssBytes?: number;
+    passagesRanked?: number;
+    elapsedMs?: number;
     filesEnumerated?: number;
     filesParsed?: number;
     filesSkipped?: number;

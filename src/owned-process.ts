@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { abortError, SignalGrepError } from "./errors.js";
+import type { Writable } from "node:stream";
 
 const MAX_STDERR_BYTES = 16 * 1024;
 const TERMINATE_GRACE_MS = 250;
@@ -12,20 +13,23 @@ interface OwnedProcessOptions {
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
   input?: Uint8Array;
+  interactive?: boolean;
 }
 
 /** Own the child until its streams close, including failed protocol consumers. */
 export async function runOwnedProcess(
   options: OwnedProcessOptions,
-  consumeOutput: (stdout: AsyncIterable<Uint8Array>) => Promise<void>,
+  consumeOutput: (stdout: AsyncIterable<Uint8Array>, stdin: Writable | null) => Promise<void>,
 ): Promise<{ code: number | null; stderr: string }> {
   const { executable, args, cwd, signal, env, input } = options;
   if (signal?.aborted) throw abortError();
   const spawnOptions = { cwd, windowsHide: true, ...(env ? { env } : {}) };
   const child =
-    input === undefined
+    input === undefined && !options.interactive
       ? spawn(executable, args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] })
       : spawn(executable, args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] });
+  // Interactive writes reject their callbacks; keep stream errors observed until child closure.
+  if (options.interactive) child.stdin?.on("error", () => undefined);
   const inputComplete = new Promise<void>((resolveInput, rejectInput) => {
     if (input === undefined || child.stdin === null) {
       resolveInput();
@@ -76,7 +80,11 @@ export async function runOwnedProcess(
   if (signal?.aborted) terminate();
 
   try {
-    const [code] = await Promise.all([closePromise, consumeOutput(child.stdout), inputComplete]);
+    const [code] = await Promise.all([
+      closePromise,
+      consumeOutput(child.stdout, child.stdin),
+      inputComplete,
+    ]);
     if (signal?.aborted) throw abortError();
     if (spawnError) throw spawnError;
     return { code, stderr: Buffer.concat(stderrChunks).toString("utf8") };

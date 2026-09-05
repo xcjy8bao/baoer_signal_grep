@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { CursorError } from "./errors.js";
+import { CursorError, SignalGrepError } from "./errors.js";
+import { MAX_SEARCH_STORAGE_BYTES, MAX_STORED_OCCURRENCES } from "./types.js";
 import type { SearchScan, SearchSnapshot } from "./types.js";
 
 export type CursorKind = "matches" | "summary";
@@ -8,6 +9,8 @@ export interface SnapshotStoreOptions {
   ttlMs?: number;
   maxSnapshots?: number;
   maxTotalStoredMatches?: number;
+  maxTotalStoredBytes?: number;
+  maxTotalStoredOccurrences?: number;
   now?: () => number;
 }
 
@@ -24,17 +27,26 @@ export class SnapshotStore {
   readonly #ttlMs: number;
   readonly #maxSnapshots: number;
   readonly #maxTotalStoredMatches: number;
+  readonly #maxTotalStoredBytes: number;
+  readonly #maxTotalStoredOccurrences: number;
   readonly #now: () => number;
 
   constructor(options: SnapshotStoreOptions = {}) {
     this.#ttlMs = options.ttlMs ?? 10 * 60 * 1000;
     this.#maxSnapshots = options.maxSnapshots ?? 20;
     this.#maxTotalStoredMatches = options.maxTotalStoredMatches ?? 100_000;
+    this.#maxTotalStoredBytes = options.maxTotalStoredBytes ?? MAX_SEARCH_STORAGE_BYTES;
+    this.#maxTotalStoredOccurrences = options.maxTotalStoredOccurrences ?? MAX_STORED_OCCURRENCES;
     this.#now = options.now ?? Date.now;
   }
 
   create(scan: SearchScan): SearchSnapshot {
     this.sweep();
+    if (
+      this.#scanBytes(scan) > this.#maxTotalStoredBytes ||
+      this.#scanOccurrences(scan) > this.#maxTotalStoredOccurrences
+    )
+      throw new SignalGrepError("Search snapshot exceeds the session storage budget");
     const now = this.#now();
     const snapshot: SearchSnapshot = {
       ...scan,
@@ -136,7 +148,13 @@ export class SnapshotStore {
   #evictToBounds(): void {
     while (
       this.#snapshots.size > this.#maxSnapshots ||
-      this.#totalStoredMatches() > this.#maxTotalStoredMatches
+      this.#totalStoredMatches() > this.#maxTotalStoredMatches ||
+      [...this.#snapshots.values()].reduce((total, scan) => total + this.#scanBytes(scan), 0) >
+        this.#maxTotalStoredBytes ||
+      [...this.#snapshots.values()].reduce(
+        (total, scan) => total + this.#scanOccurrences(scan),
+        0,
+      ) > this.#maxTotalStoredOccurrences
     ) {
       let oldest: SearchSnapshot | undefined;
       for (const snapshot of this.#snapshots.values()) {
@@ -152,6 +170,26 @@ export class SnapshotStore {
     let total = 0;
     for (const snapshot of this.#snapshots.values()) total += snapshot.matches.length;
     return total;
+  }
+
+  #scanBytes(scan: SearchScan): number {
+    return (
+      scan.retention?.accountedBytes ??
+      Buffer.byteLength(
+        JSON.stringify({
+          matches: scan.matches,
+          fileCounts: [...scan.fileCounts],
+          sourceRevisions: [...scan.sourceRevisions],
+        }),
+      )
+    );
+  }
+
+  #scanOccurrences(scan: SearchScan): number {
+    return (
+      scan.retention?.retainedOccurrences ??
+      scan.matches.reduce((total, match) => total + match.occurrences.length, 0)
+    );
   }
 
   #rememberExpired(id: string): void {

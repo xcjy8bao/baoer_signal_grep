@@ -1,168 +1,86 @@
 # baoer_signal_grep
 
-[![CI](https://github.com/xcjy8bao/baoer_signal_grep/actions/workflows/ci.yml/badge.svg)](https://github.com/xcjy8bao/baoer_signal_grep/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/xcjy8bao/baoer_signal_grep/actions/workflows/codeql.yml/badge.svg)](https://github.com/xcjy8bao/baoer_signal_grep/actions/workflows/codeql.yml)
-[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-
 简体中文 · [English](README.md)
 
-baoer_signal_grep 是供 [Pi](https://pi.dev)、Claude Code、Codex 和其他 MCP 客户端使用的搜索工具。
+**一个通用的本地搜索插件，让 Agent 更方便地查找文件、文档、笔记、日志和各类文本资料。**
 
-它像一个真正听懂你需求的男朋友或女朋友。你问一个简单问题，它直接告诉你答案；你问得很宽，它不会把一大堆杂乱内容丢给你，而是先把重点分好，再陪你一层层看下去。它记得刚才找到了什么，也知道什么时候旧答案已经不能继续相信。
+它像一位耐心的图书管理员：你说想找什么，它帮你找到书架、翻到相关页面，再陪你沿着线索继续看。资料少时，直接把内容递给你；资料多时，先铺开一张地图，让你知道从哪里看起。
 
-## 它会怎样陪 AI 找代码
+## 它能帮上什么忙
 
-### 小问题，直接回答
+### 找一句话，不用翻完整个资料柜
 
-当结果不多时，它会一次把完整结果交给 AI，不故意拆成好几轮，也不让 AI 为了看完几行内容反复追问。
+想找一条报错、一段说明或某个名字，就像告诉管理员一本书里的关键词。命中不多时，插件直接给出原文和所在位置，省去逐个文件打开、来回翻找的过程。
 
-### 大问题，先替你整理
+### 资料很多，先给你地图
 
-当结果很多时，它会先告诉 AI：一共找到了多少处、分布在哪些文件、每个文件大概有多少，并附上真实的代码片段。就像你问“我们聊过旅行的事吗”，对方不会把几年聊天记录全部甩过来，而是先告诉你在哪几段对话里提过，再陪你打开其中一段。
+问“哪些资料提到退款”，可能一下找到很多内容。它会先整理相关文件和片段，像在地图上标出有线索的地点；Agent 可以先判断哪些值得看，再打开其中的原文，而不是一开始就面对满桌散页。
 
-文件按照实际出现次数排列，不会假装知道哪个文件最重要。展示出来的片段只是原文中的一小段，也不会冒充整份文件。
+### 追问的时候，书签还在
 
-### 你说了几个要求，它会一个个记住
+你说“接着刚才的结果看”，它能沿着上次的位置继续翻页。也可以从某一条命中打开附近原文，像把书签夹在那一页，随时回来补看前因后果。
 
-你可以让它同时寻找几样东西。它会把每个词分别记账，不会查到其中一个就把其他要求忘掉。
+### 几个条件，可以一起交代
 
-如果你说“这些条件必须同时出现”，它只留下真正同时满足的文件；如果你进一步说“必须出现在同一个函数里”，它也不会拿散落在文件各处的内容来凑数。
+“找同时提到客户和退款的文件”，就像请管理员挑出同时贴着两张标签的资料；“这几个词任意一个出现都算”，则像列出一张候选清单。可以一次表达多个查找条件，减少反复搜索。
 
-### 它分得清“名字一样”和“真的是同一个”
+### 指定一个抽屉，就在里面找
 
-代码里同一个名字可能是在定义、调用、导入、导出、注释或普通文字中出现。baoer_signal_grep 会把这些用途分开，避免只看名字就下结论。
+需要只查某个文件夹时，可以明确告诉 Agent 限定范围。只记得文件名的一部分，也可以先找文件，再看内容。像先确定资料柜的哪一层，再逐步缩小到要找的那一份。
 
-当 AI 想围绕一个函数或类继续调查时，它会整理一份小档案：目标在哪里、同名内容各自是什么用途、哪些测试可能有关。它会把线索交出来，但不会把“名字相同”说成“一定是同一个东西”，也不会把“找到了测试文件”说成“已经测试过”或“肯定有覆盖”。
+### 看到了多少，说得清楚
 
-### 它知道你是在问整个项目，还是只问这次改动
+一页装不下的内容会分批展示，并提供继续查看的入口。原文发生变化时，也会提醒重新确认。像一位认真整理资料的助手，会把“已经看到的”和“还需要往后翻的”交代清楚。
 
-你可以让它只看这次修改过的文件或行，也可以让它列出一个文件里的主要结构、顺着明确的导入关系继续找，或者整理可能相关的测试。它只报告自己真正看见的内容，不把猜测包装成事实。
+## 常见用法
 
-### 追问“刚才那个”，它不会从头再找
+直接向 Agent 表达需求即可，例如：
 
-一次搜索完成后，它会把当时的结果妥善保留。AI 可以继续打开某个文件、翻到下一页，或一次查看最多五个已找到的位置，不需要重新搜索。
+- “帮我找一下，哪些文档提到了退款期限？”
+- “这条报错在哪些日志里出现过？把附近的内容也给我看看。”
+- “找同时包含客户名称和订单编号的文件。”
+- “这几个关键词，任意一个出现都列出来。”
+- “我只记得文件名里有会议记录，帮我找找。”
+- “这次只查这个资料文件夹，不要扩大范围。”
+- “先告诉我相关内容分布在哪些文件，再打开其中两份。”
+- “接着刚才的位置继续看，把没展示完的部分找出来。”
 
-如果这期间源码变了，它不会拿旧位置配上新内容继续回答，而是明确告诉 AI 需要重新确认。过期、写错或不属于这次结果的继续请求也会直接失败，不会悄悄换成一次新的搜索。
+插件提供文件位置和实际文本，帮助 Agent 根据原文回答，也方便你回到资料中核对。
 
-### 内容太多时，它会明确说没有展示完
+## 安装
 
-baoer_signal_grep 会控制一次交给 AI 的内容量，避免一场搜索挤满整段对话。能完整交付时，它会说明结果完整；只能保留一部分时，它会说明只获得了部分结果以及原因。
+需要 `PATH` 中可用的 `rg`。MCP 需要 Node.js 22.19+；Pi 需要 Pi 0.84.3+，以及 Node.js 22.19+ 或 Bun 1.4+。
 
-长代码不会因为显示空间不够就被假装成完整内容。AI 可以沿着它给出的下一步继续读取，直到拿到需要的原文。
-
-## 装好后不用照看它
-
-插件只为 Pi 增加一个名为 `baoer_signal_grep` 的工具，不会替换或重新配置其他搜索工具，也没有需要用户记忆的命令。AI 在适合的时候使用它，结果过期、内存整理、搜索进程结束和会话关闭时的清理都由插件自己完成。
-
-第一次查询完成后，Pi 会显示一条很短的会话记录：
-
-```text
-baoer_signal_grep：已处理 8 次查询，结果全部完整；3 次结果已自动按文件整理
-```
-
-它只记录本次会话里真实发生的三件事：处理了几次新查询、结果是否完整、多少次结果被自动按文件整理。翻页和继续读取不会重复计算，关闭会话后记录会清空，也不会为了这条记录再做一次搜索。
-
-## 它不会把代码带出本机
-
-作为本地 Pi 插件或本地 stdio MCP 服务使用时，搜索、整理和读取都在客户端机器完成。baoer_signal_grep 没有遥测，不会把查询、代码或会话统计发到网络，也不会在后台建立索引或下载模型。`npx` 首次安装包时可能访问已配置的 npm registry。使用可选的远端 HTTP MCP 服务时，请求和返回的证据会通过部署者配置的连接传输。
-
-未提供路径时，搜索仍限制在当前工作目录。显式绝对路径或 `..` 路径可以搜索、检查工作目录外的位置，但 `.git` 内部、已知凭据存储目录和特殊系统区域会被拒绝；这些限制只是纵深防护，并不保证识别所有敏感文件。普通 Git 变更比较仍限制在当前工作目录。除此之外，普通隐藏文件仍然可以找到。插件会直接调用本机已有的 `rg`，不会把搜索内容拼成 shell 命令。
-
-## Claude Code 与 Codex
-
-npm 包提供本地 stdio MCP transport。它需要 Node.js 22.19+，并且 `PATH` 中能够找到 `rg`；不需要 Pi 或 Bun。每个客户端启动自己的进程，拥有独立的游标存储，并在 MCP 连接关闭时完成清理。
-
-添加到当前 Claude Code 项目：
-
-```bash
-claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.0.0 baoer_signal_grep_mcp --stdio
-```
-
-Claude Code 会通过 `CLAUDE_PROJECT_DIR` 提供稳定的项目根目录。上述命令使用 Claude Code 默认的 local scope，不会修改其他项目。只有明确希望 Claude Code 写入团队共享的 `.mcp.json` 时，才添加 `--scope project`。
-
-添加到 Codex：
-
-```bash
-codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.0.0 baoer_signal_grep_mcp --stdio
-```
-
-Codex 会在当前项目工作目录启动服务。两个客户端都可以用 `BAOER_SIGNAL_GREP_MCP_CWD` 显式覆盖默认根目录。stdio transport 不会监听网络端口，stdout 只写协议消息，启动诊断写到 stderr。MCP 初始化 instructions 和工具 schema 会携带与 Pi 插件相同的搜索工作流指导。
-
-如果已经全局安装本包，可以用 `baoer_signal_grep_mcp --stdio` 替换上述 `npx` 命令。
-
-## 远端 HTTP MCP 服务
-
-本包也可以通过 MCP 服务，把同一个 `baoer_signal_grep` 能力提供给远端 Agent。服务读取它所在机器的文件，不会通过 SSH 跳到其他机器，也不会执行调用方传来的任意 shell 命令。
-
-在远程机器安装独立服务；这种模式不需要 Pi 或 Bun：
-
-```bash
-npm install --global baoer_signal_grep
-```
-
-MCP 可执行程序需要 Node.js 22.19+，并且 `PATH` 中能够找到 `rg`。本包为 x64 和 ARM64 的 Linux、macOS、Windows 带有预编译的 JS、TS、TSX 识别组件；Go 识别组件覆盖三种系统的 x64，以及 Linux、macOS 的 ARM64。Windows ARM64 上普通搜索仍可使用，但 Go 结构分析需要本机具备可构建的 Go 解析器。Universal Ctags 仍然只是可选能力。
-
-开发时可构建随包提供的 Node 兼容服务产物：
-
-```bash
-bun run build:mcp
-```
-
-在 Linux 或 macOS 上，让服务指向远程项目并启动：
-
-```bash
-BAOER_SIGNAL_GREP_MCP_CWD=/path/to/project baoer_signal_grep_mcp --http
-```
-
-在 Windows PowerShell 上：
-
-```powershell
-$env:BAOER_SIGNAL_GREP_MCP_CWD = "C:\path\to\project"
-baoer_signal_grep_mcp --http
-```
-
-服务端点是 `/mcp`，默认监听 `127.0.0.1:3000`。不带参数运行 `baoer_signal_grep_mcp` 等价于 `--http`。服务本身不内置鉴权；没有经过鉴权的网关时，不要把它绑定到公开网卡。部署网关可以把它暴露给经过鉴权的远端客户端。如需其他配置，可设置 `BAOER_SIGNAL_GREP_MCP_HOST`、`BAOER_SIGNAL_GREP_MCP_PORT` 和 `BAOER_SIGNAL_GREP_MCP_CWD`。
-
-标准 MCP 客户端不会发送浏览器 `Origin` 头，不需要额外配置。浏览器客户端需要通过逗号分隔的 `BAOER_SIGNAL_GREP_MCP_ALLOWED_ORIGINS` 显式放行；服务会为已放行来源返回直接访问所需的预检和可见 session 响应头。服务默认最多保留 100 个 session，并主动回收空闲超过 10 分钟的 session；部署可通过 `BAOER_SIGNAL_GREP_MCP_MAX_SESSIONS` 和 `BAOER_SIGNAL_GREP_MCP_SESSION_IDLE_MS` 调整这两个运行边界。单个请求体上限为 16 MiB。
-
-远端调用保持本地工具契约，包括结果限流、游标、源码检查、静态分析线索、显示脱敏和保护路径校验。默认搜索在配置的工作目录中进行；显式绝对路径和 `..` 路径可以访问服务进程有读权限的其他非保护路径。Git 变更检索仍限制在当前仓库。
-
-## 安装到 Pi
-
-从 npm 安装：
+### Pi
 
 ```bash
 pi install npm:baoer_signal_grep
 ```
 
-也可以安装 GitHub 上的当前代码：
+安装或更新后重启 Pi。Pi 默认让常规搜索使用本插件，读取、编辑、测试、构建和脚本仍可使用。如需关闭强制搜索，在 `~/.pi/agent/baoer_signal_grep.json` 中设置 `"enforceSearch": false` 后重启；设置 `"locale": "zh-CN"` 可启用中文界面。
+
+### Claude Code 或 Codex：连接 MCP
 
 ```bash
-pi install git:github.com/xcjy8bao/baoer_signal_grep
+claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
-重启 Pi 后即可使用。
-
-在 Pi 中使用时，请确认：Pi 不低于 0.84.3；系统中可以运行 `rg`；运行环境为 Node.js 22.19+ 或 Bun 1.4+。插件已经带上 JS、TS、TSX 和 Go 所需的代码识别组件，不需要另外下载模型。Universal Ctags 只是其他语言需要更细代码范围时的可选帮手，插件不会自动下载它。
-
-## 中文界面
-
-会话记录和交互式结果默认使用英文。如需简体中文，在 `~/.pi/agent/baoer_signal_grep.json` 中写入：
-
-```json
-{
-  "locale": "zh-CN"
-}
+```bash
+codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
-然后重启 Pi。已有配置中的旧设置会被忽略，不影响搜索。
+配置或更新后重启宿主。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
 
-## 想了解更多
+### 原生插件
 
-- [安全与隐私](SECURITY.md)
-- [完整工作方式与边界](docs/ARCHITECTURE.md)
-- [参与开发](CONTRIBUTING.md)
+如果希望在其他宿主中也强制常规搜索使用本插件：
 
-## 许可证
+- **Claude Code：** 先运行 `/plugin marketplace add xcjy8bao/baoer_signal_grep`，再运行 `/plugin install baoer-signal-grep@baoer-signal-grep`。
+- **Codex：** 先运行 `codex plugin marketplace add xcjy8bao/baoer_signal_grep`，再运行 `codex plugin add baoer-signal-grep@baoer-signal-grep`，通过 `/hooks` 查看并信任钩子。
+- **Kimi Code：** 使用本仓库或安装包中的插件目录，运行 `/plugins install /absolute/path/plugins/baoer-signal-grep`，确认信任后执行 `/reload`。
 
-[GNU AGPL v3.0 only](LICENSE)
+安装后重启。关闭方式：Claude Code 使用 `/plugin`，Codex 使用 `/hooks`，Kimi 使用 `/plugins disable baoer-signal-grep` 后执行 `/reload`。
+
+本地搜索在你的机器上进行。请只允许 Agent 读取已获授权的文件。HTTP 服务对外开放前需要认证网关，详见[安全说明](SECURITY.md)。
+
+[更新记录](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [AGPL-3.0-only 许可证](LICENSE)

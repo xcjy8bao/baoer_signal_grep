@@ -28,7 +28,7 @@ function languageName(value: unknown): SyntaxLanguage {
   throw new Error("Invalid syntax worker language");
 }
 
-function parseInput(input: unknown): { language: SyntaxLanguage; text: string } {
+function parseInput(input: unknown): { language: SyntaxLanguage; text: string; pattern?: string } {
   if (!input || typeof input !== "object" || !("language" in input) || !("text" in input)) {
     throw new Error("Invalid syntax worker input");
   }
@@ -39,12 +39,38 @@ function parseInput(input: unknown): { language: SyntaxLanguage; text: string } 
   if (Buffer.byteLength(input.text) > MAX_SOURCE_FILE_BYTES) {
     throw new Error("Syntax worker source exceeds the file limit");
   }
-  return { language, text: input.text };
+  if (
+    "pattern" in input &&
+    (typeof input.pattern !== "string" || Buffer.byteLength(input.pattern) > 4_096)
+  )
+    throw new Error("Invalid AST pattern");
+  return {
+    language,
+    text: input.text,
+    ...("pattern" in input && typeof input.pattern === "string" ? { pattern: input.pattern } : {}),
+  };
 }
 
-function extract(language: SyntaxLanguage, text: string): SyntaxWorkerResult {
+function extract(language: SyntaxLanguage, text: string, pattern?: string): SyntaxWorkerResult {
   if (language === "go") registerDynamicLanguage({ go });
   const names = { javascript: "JavaScript", typescript: "TypeScript", tsx: "Tsx", go: "go" };
+  if (pattern !== undefined) {
+    // Go's registered expando character makes metavariables legal identifiers during validation.
+    const prepared = language === "go" ? pattern.replaceAll("$", "µ") : pattern;
+    const templates =
+      language === "go"
+        ? [
+            prepared,
+            `package pattern\n${prepared}`,
+            `package pattern\nfunc pattern() {\n${prepared}\n}`,
+          ]
+        : [prepared];
+    const valid = templates.some((candidate) => {
+      const template = parse(names[language], candidate).root();
+      return template.kind() !== "ERROR" && !template.find({ rule: { kind: "ERROR" } });
+    });
+    if (!valid) throw new Error("Malformed structural pattern for selected language");
+  }
   const root = parse(names[language], text).root();
   const rootRange = root.range();
   const nodes: SyntaxNode[] = [
@@ -83,7 +109,17 @@ function extract(language: SyntaxLanguage, text: string): SyntaxWorkerResult {
     nodes.push(node);
     stack.push({ node: child, index, next: 0, fields: fieldsFor(child, language) });
   }
-  return { status: malformed ? "parse-error" : "ok", nodes };
+  const patternMatches =
+    pattern === undefined || malformed
+      ? undefined
+      : root
+          .findAll(pattern)
+          .map((node) => ({ start: node.range().start.index, end: node.range().end.index }));
+  return {
+    status: malformed ? "parse-error" : "ok",
+    nodes,
+    ...(patternMatches ? { patternMatches } : {}),
+  };
 }
 
 async function main(): Promise<void> {
@@ -96,8 +132,8 @@ async function main(): Promise<void> {
     chunks.push(buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  const { language, text } = parseInput(input);
-  const output = JSON.stringify(extract(language, text));
+  const { language, text, pattern } = parseInput(input);
+  const output = JSON.stringify(extract(language, text, pattern));
   if (Buffer.byteLength(output) > MAX_STRUCTURE_BYTES) {
     throw new Error("Syntax worker output exceeds protocol limit");
   }

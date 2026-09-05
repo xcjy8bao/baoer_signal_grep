@@ -11,5 +11,10 @@
   "arrowParens": "always",
   "bracketSameLine": false,
   "bracketSpacing": true,
-  "ignorePatterns": ["src/syntax-worker.mjs", "src/mcp-server.mjs"]
+  "ignorePatterns": [
+    "src/concept-worker.mjs",
+    "src/syntax-worker.mjs",
+    "src/mcp-server.mjs",
+    "plugins/baoer-signal-grep/**"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "name": "baoer_signal_grep",
-  "version": "1.0.0",
-  "description": "Context-efficient project search and bounded code analysis for Pi and MCP clients",
+  "version": "1.2.0",
+  "description": "Context-efficient local search for files, documents, notes and logs across Pi and MCP clients",
   "keywords": [
     "ai-agent",
     "claude-code",
@@ -28,22 +28,22 @@
     "url": "git+https://github.com/xcjy8bao/baoer_signal_grep.git"
   },
   "bin": {
-    "baoer_signal_grep_mcp": "./src/mcp-server.mjs"
+    "baoer_signal_grep_mcp": "./src/mcp-server.mjs",
+    "baoer_signal_grep_model": "./src/concept-worker.mjs"
   },
   "files": [
     "src/**/*.ts",
     "src/syntax-worker.mjs",
     "src/mcp-server.mjs",
     "src/syntax-worker.toml",
-    "docs/AI_PULL_REQUEST_GUIDE.md",
-    "docs/ARCHITECTURE.md",
-    "docs/QUALITY_GATES.md",
     "README.md",
     "README.zh-CN.md",
     "CONTRIBUTING.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "src/concept-worker.mjs",
+    "plugins/baoer-signal-grep/**"
   ],
   "type": "module",
   "publishConfig": {
@@ -53,24 +53,40 @@
   },
   "scripts": {
     "build:worker": "bun run scripts/build-syntax-worker.ts",
-    "check:worker": "bun run scripts/check-syntax-worker.ts",
+    "check:worker": "bun run doc/testing/scripts/check-syntax-worker.ts",
     "build:mcp": "bun run scripts/build-mcp-server.ts",
-    "check:mcp": "bun run scripts/check-mcp-server.ts",
+    "check:mcp": "bun run doc/testing/scripts/check-mcp-server.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives .",
+    "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives src scripts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "test:node": "bun run scripts/node-smoke.ts",
-    "benchmark": "bun run scripts/benchmark.ts",
-    "check": "bun run format:check && bun run check:worker && bun run check:mcp && bun run lint && bun run typecheck && bun test && bun run test:node && bun run benchmark",
-    "pack:check": "bun pm pack --dry-run"
+    "test": "bun test ./doc/testing/test",
+    "test:node": "bun run doc/testing/scripts/node-smoke.ts",
+    "benchmark": "bun run doc/testing/scripts/benchmark.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run build",
+    "pack:check": "bun pm pack --dry-run",
+    "setup:concept": "bun run src/concept-worker.mjs --install-model",
+    "build:concept-worker": "bun run scripts/build-concept-worker.ts",
+    "check:concept-worker": "bun run doc/testing/scripts/check-concept-worker.ts",
+    "test:concept": "bun run doc/testing/scripts/test-concept.ts",
+    "evaluate:investigations": "bun run doc/testing/scripts/investigation-eval.ts",
+    "build:search-plugin": "bun run scripts/build-search-plugin.ts",
+    "check:search-plugin": "bun run doc/testing/scripts/check-search-plugin.ts",
+    "test:mcp-hosts": "bun run doc/testing/scripts/mcp-host-verification.ts",
+    "build": "bun run build:worker && bun run build:concept-worker && bun run build:search-plugin && bun run build:mcp",
+    "format:local:check": "bun run doc/testing/scripts/format-local.ts --check",
+    "lint:local": "oxlint --no-ignore --type-aware --tsconfig doc/testing/tsconfig.json --deny-warnings --report-unused-disable-directives src scripts doc/testing/test doc/testing/scripts",
+    "typecheck:local": "tsc --noEmit --project doc/testing/tsconfig.json",
+    "check:local": "bun run format:check && bun run format:local:check && bun run check:search-plugin && bun run check:concept-worker && bun run check:worker && bun run check:mcp && bun run lint:local && bun run typecheck:local && bun run test && bun run test:node && bun run benchmark"
   },
   "dependencies": {
     "@ast-grep/lang-go": "0.0.6",
     "@ast-grep/napi": "0.45.2",
+    "@huggingface/transformers": "3.8.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "typebox": "1.3.19",
+    "typescript": "7.0.2",
+    "web-tree-sitter": "0.25.10",
     "zod": "4.5.4"
   },
   "devDependencies": {
@@ -81,7 +97,8 @@
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "typescript": "^7.0.2"
+    "tree-sitter-bash": "0.25.1",
+    "tree-sitter-powershell": "0.26.4"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

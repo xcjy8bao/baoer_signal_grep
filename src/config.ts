@@ -8,10 +8,12 @@ export type SignalGrepLocale = "en" | "zh-CN";
 
 export interface SignalGrepConfig {
   locale: SignalGrepLocale;
+  enforceSearch?: boolean;
 }
 
 export const DEFAULT_SIGNAL_GREP_CONFIG: Readonly<SignalGrepConfig> = {
   locale: "en",
+  enforceSearch: true,
 };
 
 function hasErrorCode(error: unknown, codes: string[]): boolean {
@@ -24,6 +26,7 @@ function isMissingFile(error: unknown): boolean {
 
 interface RawSignalGrepConfig {
   locale?: unknown;
+  enforceSearch?: unknown;
 }
 
 function isRawSignalGrepConfig(value: unknown): value is RawSignalGrepConfig {
@@ -34,12 +37,15 @@ function parseConfig(value: unknown, path: string): SignalGrepConfig {
   if (!isRawSignalGrepConfig(value)) {
     throw new Error(`Invalid baoer_signal_grep config at ${path}: expected a JSON object`);
   }
-  const { locale } = value;
+  const { locale, enforceSearch } = value;
   if (locale !== undefined && locale !== "en" && locale !== "zh-CN") {
     throw new Error(`Invalid baoer_signal_grep config at ${path}: locale must be "en" or "zh-CN"`);
   }
+  if (enforceSearch !== undefined && typeof enforceSearch !== "boolean")
+    throw new Error(`Invalid baoer_signal_grep config at ${path}: enforceSearch must be boolean`);
   return {
     locale: locale ?? DEFAULT_SIGNAL_GREP_CONFIG.locale,
+    enforceSearch: enforceSearch ?? true,
   };
 }
 

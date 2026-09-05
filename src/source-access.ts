@@ -42,6 +42,7 @@ export class SyntaxQueue {
   async parseWithMetrics(
     document: SourceDocument,
     signal?: AbortSignal,
+    pattern?: string,
   ): Promise<SyntaxParseResult> {
     const combined = signal
       ? AbortSignal.any([signal, this.#generation.signal])
@@ -59,14 +60,14 @@ export class SyntaxQueue {
         throw new SourceDocumentError("encoding", "Syntax requires lossless UTF-8 source");
       const origin = document.reference.origin;
       const revision = origin.kind === "worktree" ? origin.contentHash : origin.blob;
-      const key = `${extname(document.path).toLowerCase()}\0${revision}`;
+      const key = `${extname(document.path).toLowerCase()}\0${revision}\0${pattern ?? ""}`;
       const cached = this.#cache.get(key);
       if (cached) {
         this.#cache.delete(key);
         this.#cache.set(key, cached);
         return { analysis: cached.analysis, cacheHit: true };
       }
-      const analysis = await parseSyntax(document.path, document.text, combined);
+      const analysis = await parseSyntax(document.path, document.text, combined, pattern);
       const entry = { analysis, nodes: analysis.nodes.length };
       this.#cache.set(key, entry);
       this.#cachedNodes += entry.nodes;
@@ -228,6 +229,10 @@ export class SourceAccess {
       this.#syntax.set(document, pending);
     }
     return pending;
+  }
+
+  async pattern(document: SourceDocument, pattern: string): Promise<SyntaxAnalysis> {
+    return (await this.#queue.parseWithMetrics(document, this.signal, pattern)).analysis;
   }
 
   releaseSyntax(document: SourceDocument): void {

@@ -1,3 +1,4 @@
+import { isSemanticMode } from "./semantic-protocol.js";
 import { randomUUID } from "node:crypto";
 import {
   ANALYSIS_TTL_MS,
@@ -12,6 +13,11 @@ import type { AnalysisItem, AnalysisResultSet } from "./analysis-types.js";
 import { CursorError, SignalGrepError } from "./errors.js";
 import type { SignalGrepResult } from "./types.js";
 import { MAX_RESULT_BYTES } from "./types.js";
+import {
+  analysisTermPage,
+  MAX_INLINE_TERM_COUNT_BYTES,
+  termCountRequest,
+} from "./analysis-term-pages.js";
 
 interface StoredAnalysis {
   id: string;
@@ -158,12 +164,19 @@ export class AnalysisStore {
     return `${id}.analysis.0`;
   }
 
-  resolve(cursor: string): { stored: StoredAnalysis; offset: number } {
+  resolve(cursor: string): {
+    stored: StoredAnalysis;
+    offset: number;
+    kind: "analysis" | "analysis-terms";
+  } {
     this.#expire();
-    const match = /^([a-f0-9-]+)\.analysis\.([0-9a-z]+)$/.exec(cursor);
+    const match = /^([a-f0-9-]+)\.(analysis|analysis-terms)\.([0-9a-z]+)$/.exec(cursor);
     if (!match) throw new CursorError("Invalid analysis cursor");
     const id = match[1];
-    const rawOffset = match[2];
+    const kind = match[2];
+    const rawOffset = match[3];
+    if (kind !== "analysis" && kind !== "analysis-terms")
+      throw new CursorError("Invalid analysis cursor");
     if (!id || !rawOffset) throw new CursorError("Invalid analysis cursor");
     const offset = Number.parseInt(rawOffset, 36);
     const stored = this.#items.get(id);
@@ -178,15 +191,19 @@ export class AnalysisStore {
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       offset.toString(36) !== rawOffset ||
-      offset > stored.result.items.length
+      (kind === "analysis"
+        ? offset > stored.result.items.length
+        : offset >= (stored.result.termCounts?.length ?? 0))
     )
       throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
     stored.touched = this.#now();
-    return { stored, offset };
+    return { stored, offset, kind };
   }
 
   item(cursor: string, index: number): AnalysisItem {
-    const { stored } = this.resolve(cursor);
+    const { stored, kind } = this.resolve(cursor);
+    if (kind !== "analysis")
+      throw new CursorError("Term inventories do not contain source items", "E_CURSOR_WRONG_KIND");
     if (!Number.isSafeInteger(index) || index < 1)
       throw new CursorError("matchIndex must be a positive analysis item index");
     const item = stored.result.items[index - 1];
@@ -195,15 +212,21 @@ export class AnalysisStore {
   }
 
   page(cursor: string): SignalGrepResult {
-    const { stored, offset } = this.resolve(cursor);
+    const { stored, offset, kind } = this.resolve(cursor);
     const { result } = stored;
+    if (kind === "analysis-terms") return analysisTermPage(result, stored.id, offset);
+    const pagedTerms =
+      result.termCounts &&
+      Buffer.byteLength(JSON.stringify(result.termCounts)) > MAX_INLINE_TERM_COUNT_BYTES;
+    const inlineTerms = pagedTerms ? undefined : result.termCounts;
+    const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
     const items: NonNullable<SignalGrepResult["details"]["analysis"]>["items"] = [];
     const scope = result.scope
       ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.`
       : "";
     const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
     const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${result.termCounts ? `Term counts: ${JSON.stringify(result.termCounts)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
     const notice = result.reasons.length
       ? `\n${result.reasons.map((reason) => `[${reason}]`).join("\n")}`
       : "";
@@ -253,6 +276,10 @@ export class AnalysisStore {
       details: {
         version: 1,
         mode:
+          isSemanticMode(result.kind) ||
+          result.kind === "concept" ||
+          result.kind === "structure" ||
+          result.kind === "files" ||
           result.kind === "outline" ||
           result.kind === "imports" ||
           result.kind === "tests" ||
@@ -278,7 +305,10 @@ export class AnalysisStore {
           ...(result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {}),
           ...(result.changes ? { changes: result.changes } : {}),
           ...(result.counts ? { counts: result.counts } : {}),
-          ...(result.termCounts ? { termCounts: result.termCounts } : {}),
+          ...(inlineTerms ? { termCounts: inlineTerms } : {}),
+          ...(termsRequest
+            ? { totalTerms: result.termCounts?.length ?? 0, termCountsNextRequest: termsRequest }
+            : {}),
           ...(result.scope ? { scope: result.scope } : {}),
           ...(result.chunks !== undefined ? { chunks: result.chunks } : {}),
           ...(result.coverage ? { coverage: result.coverage } : {}),

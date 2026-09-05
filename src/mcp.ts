@@ -38,8 +38,15 @@ const SIGNAL_GREP_TOOL: Tool = {
   inputSchema: signalGrepSchema as unknown as Tool["inputSchema"],
   outputSchema: {
     type: "object",
-    properties: { details: { type: "object" } },
-    required: ["details"],
+    properties: {
+      text: {
+        type: "string",
+        description:
+          "Complete formatted result page, including source evidence, limits and continuation requests.",
+      },
+      details: { type: "object" },
+    },
+    required: ["text", "details"],
   },
   annotations: {
     title: "baoer_signal_grep",
@@ -110,7 +117,9 @@ export function createSignalGrepMcpServer(service: SignalGrepMcpService, cwd: st
       const result = await service.search(input, cwd, extra.signal);
       return {
         content: [{ type: "text" as const, text: result.text }],
-        structuredContent: { details: result.details },
+        // Clients may expose only structuredContent to their model. Both representations
+        // must use the same final page, after service-level formatting and redaction.
+        structuredContent: { text: result.text, details: result.details },
       };
     } catch (error) {
       return toolError(error);
@@ -228,12 +237,16 @@ function admitOrigin(
   return true;
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+type ParsedMcpBody = { ok: true; value: unknown } | { ok: false; message: string };
+
+async function readJsonBody(request: IncomingMessage): Promise<ParsedMcpBody> {
   const contentLength = request.headers["content-length"];
   if (contentLength !== undefined) {
     const length = Number(contentLength);
-    if (!Number.isSafeInteger(length) || length < 0) throw new Error("Invalid Content-Length");
-    if (length > MAX_MCP_BODY_BYTES) throw new Error("MCP request body exceeds the size limit");
+    if (!Number.isSafeInteger(length) || length < 0)
+      return { ok: false, message: "Invalid Content-Length" };
+    if (length > MAX_MCP_BODY_BYTES)
+      return { ok: false, message: "MCP request body exceeds the size limit" };
   }
 
   const chunks: Buffer[] = [];
@@ -241,21 +254,22 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += bytes.byteLength;
-    if (total > MAX_MCP_BODY_BYTES) throw new Error("MCP request body exceeds the size limit");
+    if (total > MAX_MCP_BODY_BYTES)
+      return { ok: false, message: "MCP request body exceeds the size limit" };
     chunks.push(bytes);
   }
-  if (chunks.length === 0) return undefined;
+  if (chunks.length === 0) return { ok: true, value: undefined };
 
   let body: string;
   try {
     body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
   } catch {
-    throw new Error("MCP request body must be valid UTF-8");
+    return { ok: false, message: "MCP request body must be valid UTF-8" };
   }
   try {
-    return JSON.parse(body) as unknown;
+    return { ok: true, value: JSON.parse(body) as unknown };
   } catch {
-    throw new Error("MCP request body must be valid JSON");
+    return { ok: false, message: "MCP request body must be valid JSON" };
   }
 }
 
@@ -271,6 +285,12 @@ function writeJsonError(response: ServerResponse, status: number, message: strin
     "content-length": Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+function reportHttpFailure(response: ServerResponse, error: unknown): void {
+  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage(error)}\n`);
+  if (!response.headersSent) writeJsonError(response, 500, "MCP request failed");
+  else response.destroy();
 }
 
 function requestPath(request: IncomingMessage): string {
@@ -314,13 +334,12 @@ async function handleMcpRequest(
 
   const sessionId = requestHeader(request, "mcp-session-id");
   if (request.method === "POST") {
-    let body: unknown;
-    try {
-      body = await readJsonBody(request);
-    } catch (error) {
-      writeJsonError(response, 400, errorMessage(error));
+    const parsedBody = await readJsonBody(request);
+    if (!parsedBody.ok) {
+      writeJsonError(response, 400, parsedBody.message);
       return;
     }
+    const body = parsedBody.value;
 
     let session = sessionId ? state.sessions.get(sessionId) : undefined;
     let createdSession: McpSession | undefined;
@@ -405,7 +424,7 @@ async function handleMcpRequest(
             recordCleanupError(state, cleanupError);
           }
         }
-        writeJsonError(response, 500, errorMessage(error));
+        reportHttpFailure(response, error);
         return;
       }
     }
@@ -415,8 +434,7 @@ async function handleMcpRequest(
       await useSession(session, () => session.transport.handleRequest(request, response, body));
     } catch (error) {
       requestFailed = true;
-      if (!response.headersSent) writeJsonError(response, 500, errorMessage(error));
-      else response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     } finally {
       if (createdSession && (requestFailed || createdSession.transport.sessionId === undefined)) {
         try {
@@ -443,8 +461,7 @@ async function handleMcpRequest(
     try {
       await useSession(session, () => session.transport.handleRequest(request, response));
     } catch (error) {
-      if (!response.headersSent) writeJsonError(response, 500, errorMessage(error));
-      else response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     }
     return;
   }
@@ -476,8 +493,7 @@ export async function startSignalGrepMcpServer(
   const createService = options.createService ?? createDefaultSignalGrepMcpService;
   const httpServer = createServer((request, response) => {
     void handleMcpRequest(request, response, state, createService, cwd).catch((error: unknown) => {
-      if (!response.headersSent) writeJsonError(response, 500, errorMessage(error));
-      else response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     });
   });
 

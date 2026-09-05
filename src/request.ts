@@ -17,6 +17,8 @@ export interface RawSearchInput {
   context?: number;
   limit?: number;
   redact?: boolean;
+  scope?: "strict" | "expand";
+  wholeWord?: boolean;
 }
 
 function list(value: string | string[] | undefined): string[] {
@@ -41,6 +43,8 @@ function boundedInteger(
 }
 
 export function normalizeRequest(input: RawSearchInput): SearchRequest {
+  if (input.scope !== undefined && input.scope !== "strict" && input.scope !== "expand")
+    throw new SignalGrepError("scope must be strict or expand");
   const pattern = input.pattern;
   if (pattern === undefined) {
     throw new SignalGrepError("pattern is required when cursor is not provided");
@@ -58,5 +62,7 @@ export function normalizeRequest(input: RawSearchInput): SearchRequest {
     context: boundedInteger(input.context, 0, 0, MAX_CONTEXT_LINES, "context"),
     pageSize: boundedInteger(input.limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, "limit"),
     redact: input.redact ?? false,
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
+    ...(input.wholeWord !== undefined ? { wholeWord: input.wholeWord } : {}),
   };
 }

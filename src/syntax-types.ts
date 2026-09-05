@@ -54,6 +54,7 @@ export interface SyntaxDiagnostic {
 
 /** Lives for this request only. Never put nodes or children into a session snapshot. */
 export interface SyntaxAnalysis {
+  patternMatches?: { start: number; end: number }[];
   language?: SyntaxLanguage;
   status: SyntaxStatus;
   nodes: SyntaxNode[];
@@ -65,6 +66,7 @@ export interface SyntaxAnalysis {
 }
 
 export interface SyntaxWorkerResult {
+  patternMatches?: { start: number; end: number }[];
   status: "ok" | "parse-error" | "limit";
   nodes: SyntaxNode[];
 }

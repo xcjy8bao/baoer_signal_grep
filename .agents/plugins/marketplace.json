@@ -1,0 +1,20 @@
+{
+  "name": "baoer-signal-grep",
+  "interface": {
+    "displayName": "Baoer Signal Grep"
+  },
+  "plugins": [
+    {
+      "name": "baoer-signal-grep",
+      "source": {
+        "source": "local",
+        "path": "./plugins/baoer-signal-grep"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
