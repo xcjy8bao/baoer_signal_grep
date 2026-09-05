@@ -5,7 +5,7 @@
       "args": [
         "--yes",
         "--package",
-        "baoer_signal_grep@1.2.0",
+        "baoer_signal_grep@latest",
         "baoer_signal_grep_mcp",
         "--stdio"
       ],

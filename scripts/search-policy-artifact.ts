@@ -60,7 +60,7 @@ export async function buildSearchPlugin(root: string): Promise<void> {
       args: [
         "--yes",
         "--package",
-        `${packageJson.name}@${packageJson.version}`,
+        `${packageJson.name}@latest`,
         "baoer_signal_grep_mcp",
         "--stdio",
       ],
