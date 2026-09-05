@@ -29,7 +29,7 @@ Have `rg` available in `PATH`. MCP needs Node.js 22.19+; Pi needs Pi 0.84.3+ and
 ### Pi
 
 ```bash
-pi install npm:baoer_signal_grep@1.2.0
+pi install npm:baoer_signal_grep
 ```
 
 Restart Pi after installing or updating. Pi uses this plugin for conventional searches by default; reads, edits, tests, builds and scripts remain available. To turn enforcement off, set `"enforceSearch": false` in `~/.pi/agent/baoer_signal_grep.json` and restart. Set `"locale": "zh-CN"` there for the Chinese interface.
@@ -37,11 +37,11 @@ Restart Pi after installing or updating. Pi uses this plugin for conventional se
 ### Claude Code or Codex: MCP connection
 
 ```bash
-claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.2.0 baoer_signal_grep_mcp --stdio
+claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
 ```bash
-codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.2.0 baoer_signal_grep_mcp --stdio
+codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
 Restart the host after setup or updates. The server searches the active project; `BAOER_SIGNAL_GREP_MCP_CWD` can select a different root. An MCP-only connection adds the tool without disabling other search tools.

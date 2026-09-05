@@ -29,7 +29,7 @@
 ### Pi
 
 ```bash
-pi install npm:baoer_signal_grep@1.2.0
+pi install npm:baoer_signal_grep
 ```
 
 安装或更新后重启 Pi。Pi 默认让常规搜索使用本插件，读取、编辑、测试、构建和脚本仍可使用。如需关闭强制搜索，在 `~/.pi/agent/baoer_signal_grep.json` 中设置 `"enforceSearch": false` 后重启；设置 `"locale": "zh-CN"` 可启用中文界面。
@@ -37,11 +37,11 @@ pi install npm:baoer_signal_grep@1.2.0
 ### Claude Code 或 Codex：连接 MCP
 
 ```bash
-claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.2.0 baoer_signal_grep_mcp --stdio
+claude mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
 ```bash
-codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@1.2.0 baoer_signal_grep_mcp --stdio
+codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep baoer_signal_grep_mcp --stdio
 ```
 
 配置或更新后重启宿主。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
