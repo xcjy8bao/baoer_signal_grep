@@ -9606,9 +9606,9 @@ async function readJsonBody(request) {
   if (contentLength !== undefined) {
     const length = Number(contentLength);
     if (!Number.isSafeInteger(length) || length < 0)
-      throw new Error("Invalid Content-Length");
+      return { ok: false, message: "Invalid Content-Length" };
     if (length > MAX_MCP_BODY_BYTES)
-      throw new Error("MCP request body exceeds the size limit");
+      return { ok: false, message: "MCP request body exceeds the size limit" };
   }
   const chunks = [];
   let total = 0;
@@ -9616,21 +9616,21 @@ async function readJsonBody(request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += bytes.byteLength;
     if (total > MAX_MCP_BODY_BYTES)
-      throw new Error("MCP request body exceeds the size limit");
+      return { ok: false, message: "MCP request body exceeds the size limit" };
     chunks.push(bytes);
   }
   if (chunks.length === 0)
-    return;
+    return { ok: true, value: undefined };
   let body;
   try {
     body = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
   } catch {
-    throw new Error("MCP request body must be valid UTF-8");
+    return { ok: false, message: "MCP request body must be valid UTF-8" };
   }
   try {
-    return JSON.parse(body);
+    return { ok: true, value: JSON.parse(body) };
   } catch {
-    throw new Error("MCP request body must be valid JSON");
+    return { ok: false, message: "MCP request body must be valid JSON" };
   }
 }
 function writeJsonError(response, status, message) {
@@ -9646,6 +9646,14 @@ function writeJsonError(response, status, message) {
     "content-length": Buffer.byteLength(body)
   });
   response.end(body);
+}
+function reportHttpFailure(response, error) {
+  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage(error)}
+`);
+  if (!response.headersSent)
+    writeJsonError(response, 500, "MCP request failed");
+  else
+    response.destroy();
 }
 function requestPath(request) {
   return new URL2(request.url ?? BAOER_SIGNAL_GREP_MCP_PATH, "http://baoer_signal_grep.local").pathname;
@@ -9679,13 +9687,12 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
   }
   const sessionId = requestHeader(request, "mcp-session-id");
   if (request.method === "POST") {
-    let body;
-    try {
-      body = await readJsonBody(request);
-    } catch (error) {
-      writeJsonError(response, 400, errorMessage(error));
+    const parsedBody = await readJsonBody(request);
+    if (!parsedBody.ok) {
+      writeJsonError(response, 400, parsedBody.message);
       return;
     }
+    const body = parsedBody.value;
     let session = sessionId ? state.sessions.get(sessionId) : undefined;
     let createdSession;
     let initializationReserved = false;
@@ -9756,7 +9763,7 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
             recordCleanupError(state, cleanupError);
           }
         }
-        writeJsonError(response, 500, errorMessage(error));
+        reportHttpFailure(response, error);
         return;
       }
     }
@@ -9765,10 +9772,7 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
       await useSession(session, () => session.transport.handleRequest(request, response, body));
     } catch (error) {
       requestFailed = true;
-      if (!response.headersSent)
-        writeJsonError(response, 500, errorMessage(error));
-      else
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     } finally {
       if (createdSession && (requestFailed || createdSession.transport.sessionId === undefined)) {
         try {
@@ -9795,10 +9799,7 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
     try {
       await useSession(session, () => session.transport.handleRequest(request, response));
     } catch (error) {
-      if (!response.headersSent)
-        writeJsonError(response, 500, errorMessage(error));
-      else
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     }
     return;
   }
@@ -9826,10 +9827,7 @@ async function startSignalGrepMcpServer(options = {}) {
   const createService = options.createService ?? createDefaultSignalGrepMcpService;
   const httpServer = createServer((request, response) => {
     handleMcpRequest(request, response, state, createService, cwd).catch((error) => {
-      if (!response.headersSent)
-        writeJsonError(response, 500, errorMessage(error));
-      else
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+      reportHttpFailure(response, error);
     });
   });
   const host = options.host ?? DEFAULT_MCP_HOST;
