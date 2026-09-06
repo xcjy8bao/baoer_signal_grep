@@ -21,6 +21,7 @@ interface TextContent {
 export interface SignalGrepToolResult {
   content: TextContent[];
   details?: SignalGrepDetails;
+  isError?: boolean;
 }
 
 export interface SignalGrepRenderOptions {

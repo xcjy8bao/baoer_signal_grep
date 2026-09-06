@@ -3493,7 +3493,7 @@ class ShellSearchPolicy {
 // src/search-policy.ts
 var PI_REPLACED_SEARCH_TOOLS = new Set(["grep", "find"]);
 var contentTools = new Set(["grep", "Grep", "SearchFileContent"]);
-var fileTools = new Set(["find", "Glob", "GlobFile", "SearchFiles"]);
+var fileTools = new Set(["find", "glob", "Glob", "GlobFile", "SearchFiles"]);
 var shellTools = new Set([
   "bash",
   "Bash",

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.3] - 2026-09-06
+
+- Add native OMP (Oh My Pi) compatibility with the `baoer_signal_grep` tool, profile-aware configuration, direct-search enforcement, lifecycle cleanup and a self-contained published extension bundle.
+- Keep the existing Pi, Claude Code, Codex CLI/App, Kimi Code and MCP integrations unchanged while sharing configuration and search-policy behavior across hosts.
+
 ## [1.2.2] - 2026-09-06
 
 - Add inclusive `modifiedAfter` and exclusive `modifiedBefore` Unix-millisecond filters for worktree searches, with the same verified metadata behavior for content and filename discovery.
