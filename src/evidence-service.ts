@@ -123,6 +123,7 @@ const searchFields = [
   "modifiedAfter",
   "modifiedBefore",
 ] satisfies (keyof SignalGrepInput)[];
+const navigationFilterFields = new Set<keyof SignalGrepInput>(["glob", "exclude", "hidden"]);
 const inspectFields = [
   "paths",
   "matchIndices",
@@ -231,6 +232,36 @@ async function navigationRoot(cwd: string, path: string, signal?: AbortSignal): 
   return (await findGitRepository(dirname(absolute), signal)) ?? dirname(absolute);
 }
 
+type NavigationFilters = Pick<SearchRequest, "glob" | "exclude" | "hidden">;
+
+function navigationFilters(input: SignalGrepInput): NavigationFilters {
+  const request = normalizeRequest({
+    pattern: "",
+    ...(input.glob !== undefined ? { glob: input.glob } : {}),
+    ...(input.exclude !== undefined ? { exclude: input.exclude } : {}),
+    ...(input.hidden !== undefined ? { hidden: input.hidden } : {}),
+  });
+  return { glob: request.glob, exclude: request.exclude, hidden: request.hidden };
+}
+
+function navigationScope(
+  cwd: string,
+  root: string,
+  requestedPath: string,
+  filters: NavigationFilters,
+): SearchScopeDetails {
+  const projectRoot = resolve(cwd);
+  return {
+    path: root === projectRoot ? "." : root,
+    requestedPath,
+    glob: [...filters.glob],
+    exclude: [...filters.exclude],
+    hidden: filters.hidden,
+    expandedToProjectRoot: false,
+    assertion: root === projectRoot ? "project-wide" : "requested-scope",
+  };
+}
+
 export class EvidenceService {
   readonly #runner: RipgrepRunner;
   readonly #snapshots: SnapshotStore;
@@ -257,12 +288,16 @@ export class EvidenceService {
     root: string,
     files: readonly string[],
     cwd: string,
+    filters: NavigationFilters,
     signal?: AbortSignal,
   ): Promise<string[]> {
+    const sourceGlobs = ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"];
     const request = normalizeRequest({
       pattern: TEST_DISCOVERY_PATTERN,
       path: root,
-      glob: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"],
+      glob: filters.glob.length ? filters.glob : sourceGlobs,
+      exclude: filters.exclude,
+      hidden: filters.hidden,
       ignoreCase: false,
     });
     const scan = await this.#runner(request, cwd, signal);
@@ -749,7 +784,12 @@ export class EvidenceService {
 
   async #impact(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {
     const impactStarted = performance.now();
-    rejectFields(input, [...searchFields, ...inspectFields], "mode=impact");
+    rejectFields(
+      input,
+      [...searchFields.filter((field) => !navigationFilterFields.has(field)), ...inspectFields],
+      "mode=impact",
+    );
+    const filters = navigationFilters(input);
     let path: string;
     let line = input.line;
     let document: SourceDocument;
@@ -805,6 +845,9 @@ export class EvidenceService {
     const request = normalizeRequest({
       pattern: target.symbol.name,
       path: root,
+      glob: filters.glob,
+      exclude: filters.exclude,
+      hidden: filters.hidden,
       literal: true,
       ignoreCase: false,
     });
@@ -833,9 +876,15 @@ export class EvidenceService {
         "Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget",
       );
     } else {
-      const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
+      const files = await listWorkspaceFiles(access.cwd, access.signal, {
+        path: root,
+        glob: filters.glob,
+        exclude: filters.exclude,
+        hidden: filters.hidden,
+      });
       const allowed = new Set(files.paths.map((file) => resolve(access.cwd, file)));
       const primaryPath = resolve(access.cwd, document.path);
+      allowed.add(primaryPath);
       const host = {
         cwd: access.cwd,
         ...(access.signal ? { signal: access.signal } : {}),
@@ -852,7 +901,13 @@ export class EvidenceService {
         listFiles: async () => files,
         maxFilesToParse: access.maxFiles,
       };
-      const entryPaths = await this.#testEntryPaths(root, files.paths, access.cwd, access.signal);
+      const entryPaths = await this.#testEntryPaths(
+        root,
+        files.paths,
+        access.cwd,
+        filters,
+        access.signal,
+      );
       const tests = await findRelatedTests(
         host,
         {
@@ -898,6 +953,7 @@ export class EvidenceService {
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage,
       },
+      scope: navigationScope(access.cwd, root, document.path, filters),
       redact: input.redact ?? false,
     };
     return this.#analyses.page(
@@ -911,7 +967,17 @@ export class EvidenceService {
 
   async #navigate(input: SignalGrepInput, access: SourceAccess): Promise<SignalGrepResult> {
     const navigationStarted = performance.now();
-    rejectFields(input, [...searchFields, ...inspectFields], `mode=${input.mode}`);
+    const allowsFilters = input.mode === "imports" || input.mode === "tests";
+    rejectFields(
+      input,
+      [
+        ...(allowsFilters
+          ? searchFields.filter((field) => !navigationFilterFields.has(field))
+          : searchFields),
+        ...inspectFields,
+      ],
+      `mode=${input.mode}`,
+    );
     let path = input.path;
     let reference: SourceReference | undefined;
     let line = input.line;
@@ -1041,9 +1107,16 @@ export class EvidenceService {
         }),
       );
     const root = await navigationRoot(access.cwd, document.path, access.signal);
-    const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
+    const filters = navigationFilters(input);
+    const files = await listWorkspaceFiles(access.cwd, access.signal, {
+      path: root,
+      glob: filters.glob,
+      exclude: filters.exclude,
+      hidden: filters.hidden,
+    });
     const allowed = new Set(files.paths.map((file) => resolve(access.cwd, file)));
     const primaryPath = resolve(access.cwd, document.path);
+    allowed.add(primaryPath);
     const host = {
       cwd: access.cwd,
       ...(access.signal ? { signal: access.signal } : {}),
@@ -1069,7 +1142,13 @@ export class EvidenceService {
       input.mode === "imports"
         ? await navigateImports(host, request)
         : await findRelatedTests(host, request, {
-            entryPaths: await this.#testEntryPaths(root, files.paths, access.cwd, access.signal),
+            entryPaths: await this.#testEntryPaths(
+              root,
+              files.paths,
+              access.cwd,
+              filters,
+              access.signal,
+            ),
           });
     return this.#analyses.page(
       this.#analyses.create({
@@ -1087,6 +1166,7 @@ export class EvidenceService {
           filesParsed: access.syntaxParses,
           cacheHits: access.syntaxCacheHits,
         },
+        scope: navigationScope(access.cwd, root, document.path, filters),
         redact: input.redact ?? false,
       }),
     );

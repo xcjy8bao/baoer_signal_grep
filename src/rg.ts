@@ -318,8 +318,12 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       const { text: lineContent, truncated: lineTruncated } = excerpt;
 
       totalMatches += 1;
-      if (!fileCounts.has(path.displayPath)) retention.file(path.displayPath, path.absolutePath);
-      fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
+      if (!fileCounts.has(path.displayPath)) {
+        if (retention.file(path.displayPath, path.absolutePath))
+          fileCounts.set(path.displayPath, 0);
+      }
+      if (fileCounts.has(path.displayPath))
+        fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
       if (lineTruncated) truncatedLines += 1;
       if (matches.length >= maxStoredMatches)
         retention.noteLimit(
@@ -375,7 +379,10 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         totalMatches,
         fileCounts,
         sourceRevisions,
-        snapshotComplete: matches.length === totalMatches && !modificationTimeFilterIncomplete,
+        snapshotComplete:
+          matches.length === totalMatches &&
+          !modificationTimeFilterIncomplete &&
+          retention.details.reasons.length === 0,
         truncatedLines,
         retention: retention.details,
       };

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3-2] - 2026-09-06
+
+- Fix redaction coverage for suffixed and compound sensitive variable names, including service keys and access-token variants.
+- Make large test and impact discovery scans filterable and degrade to explicit partial search results when file-summary metadata reaches its budget.
+- Limit semantic navigation stability checks to admitted source and module-resolution files, so unrelated workspace artifacts do not invalidate a query while relevant changes still request a retry.
+- Classify nested Python functions by their nearest declaration scope and suppress concept-worker stack traces in user-facing diagnostics.
+
 ## [1.2.3-1] - 2026-09-06
 
 - Scope semantic project snapshots and stability checks to the target's containing project boundary, so unrelated files outside that project do not invalidate navigation.

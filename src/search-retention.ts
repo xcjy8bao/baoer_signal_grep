@@ -10,6 +10,7 @@ import {
 export class SearchRetention {
   #bytes = 0;
   #metadataBytes = 0;
+  #metadataLimitReached = false;
   #occurrences = 0;
   readonly #reasons = new Set<string>();
   readonly maxBytes: number;
@@ -23,16 +24,21 @@ export class SearchRetention {
     }
   }
 
-  file(displayPath: string, absolutePath: string): void {
+  file(displayPath: string, absolutePath: string): boolean {
+    if (this.#metadataLimitReached) return false;
     // Reserve the count, revision and path metadata before admitting this file's matches.
     const bytes = Buffer.byteLength(JSON.stringify([displayPath, absolutePath])) + 512;
     const metadataLimit = Math.floor(this.maxBytes / 4);
-    if (this.#metadataBytes + bytes > metadataLimit)
-      throw new SignalGrepError(
-        `File-summary storage exceeds its ${String(metadataLimit)}-byte share of the search budget; narrow the path or filters`,
+    if (this.#metadataBytes + bytes > metadataLimit) {
+      this.#metadataLimitReached = true;
+      this.#reasons.add(
+        `File-summary retention reached its ${String(metadataLimit)}-byte share of the search budget; file summaries are partial; narrow the path or filters`,
       );
+      return false;
+    }
     this.#bytes += bytes;
     this.#metadataBytes += bytes;
+    return true;
   }
 
   canRetainOccurrences(count: number): boolean {

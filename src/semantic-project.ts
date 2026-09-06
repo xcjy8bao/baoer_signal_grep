@@ -6,15 +6,26 @@ import { SourceAccess, SourceBudgetError } from "./source-access.js";
 import { SourceDocumentError, type SourceDocument } from "./source-document.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
 import { syntaxLanguage } from "./syntax.js";
+const semanticMetadataPath = /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/;
 
+function semanticWorkspacePaths(files: { paths: readonly string[] }): string[] {
+  return files.paths
+    .filter((path) => {
+      const language = syntaxLanguage(path);
+      return (language !== undefined && language !== "go") || semanticMetadataPath.test(path);
+    })
+    .toSorted((left, right) => left.localeCompare(right));
+}
 /** Only admitted, verified worktree source can become executable navigation evidence. */
 export async function semanticProject(access: SourceAccess, targetPath: string) {
   const root = await resolveSemanticProjectRoot(access.cwd, targetPath, access.signal);
   const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
+  const trackedPaths = semanticWorkspacePaths(files);
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
+  const metadataPaths = files.paths.filter((path) => semanticMetadataPath.test(path));
   const target = resolve(access.cwd, targetPath);
   if (!paths.some((path) => resolve(access.cwd, path) === target))
     throw new SignalGrepError(
@@ -28,12 +39,7 @@ export async function semanticProject(access: SourceAccess, targetPath: string) 
   const documents = new Map<string, SourceDocument>();
   const reasons = [...files.reasons];
   const metadata: SourceDocument[] = [];
-  for (const path of [
-    ...paths,
-    ...files.paths.filter((candidate) =>
-      /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/.test(candidate),
-    ),
-  ]) {
+  for (const path of [...paths, ...metadataPaths]) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- one shared source budget, deterministic target-first admission.
       const document = await access.load(path);
@@ -61,7 +67,7 @@ export async function semanticProject(access: SourceAccess, targetPath: string) 
       await access.refresh(document.path, document.reference);
     }
     const after = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
-    if (JSON.stringify(after) !== JSON.stringify(files))
+    if (JSON.stringify(semanticWorkspacePaths(after)) !== JSON.stringify(trackedPaths))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
   const result: AnalysisResultSet = {
