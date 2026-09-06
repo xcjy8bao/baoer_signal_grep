@@ -1,8 +1,11 @@
 import type { SignalGrepResult } from "./types.js";
 
 const PRIVATE_KEY = /-----BEGIN ([^-\r\n]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g;
-const SENSITIVE_ASSIGNMENT =
-  /((?:["']?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|private[_-]?key)["']?)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\r\n]+)/gi;
+const SENSITIVE_NAME = String.raw`(?:(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|secret|token|api[_-]?key|access[_-]?(?:key|token)|secret[_-]?access[_-]?key|private[_-]?key|service[_-]?key)(?:[_-][A-Za-z0-9]+)*)`;
+const SENSITIVE_ASSIGNMENT = new RegExp(
+  String.raw`((?<![A-Za-z0-9_-])(?:["']?${SENSITIVE_NAME}["']?)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\r\n]+)`,
+  "gi",
+);
 const TYPE_ONLY_VALUES = new Set([
   "boolean",
   "number",

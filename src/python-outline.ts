@@ -202,8 +202,11 @@ export function parsePythonOutline(document: SourceDocument): PythonOutlineSymbo
     const parents = [...active];
     const boundary = boundaries[declaration.lineIndex] ?? lines.length;
     const endLine = boundary === lines.length ? lines.length : boundary;
-    const nearestClass = parents.toReversed().find((candidate) => candidate.kind === "class");
-    const kind = declaration.kind === "function" && nearestClass ? "method" : declaration.kind;
+    const nearestParent = parents.at(-1);
+    const kind =
+      declaration.kind === "function" && nearestParent?.kind === "class"
+        ? "method"
+        : declaration.kind;
     const scope = parents.map((item) => item.name);
     const range = document.lineRange(declaration.lineIndex + 1, endLine);
     const lineStart = document.toCharacterOffset(range.start);

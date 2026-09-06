@@ -205,6 +205,7 @@ function excerptText(text, focusStart = 0, focusEnd = focusStart, maximumCharact
 class SearchRetention {
   #bytes = 0;
   #metadataBytes = 0;
+  #metadataLimitReached = false;
   #occurrences = 0;
   #reasons = new Set;
   maxBytes;
@@ -218,12 +219,18 @@ class SearchRetention {
     }
   }
   file(displayPath, absolutePath) {
+    if (this.#metadataLimitReached)
+      return false;
     const bytes = Buffer.byteLength(JSON.stringify([displayPath, absolutePath])) + 512;
     const metadataLimit = Math.floor(this.maxBytes / 4);
-    if (this.#metadataBytes + bytes > metadataLimit)
-      throw new SignalGrepError(`File-summary storage exceeds its ${String(metadataLimit)}-byte share of the search budget; narrow the path or filters`);
+    if (this.#metadataBytes + bytes > metadataLimit) {
+      this.#metadataLimitReached = true;
+      this.#reasons.add(`File-summary retention reached its ${String(metadataLimit)}-byte share of the search budget; file summaries are partial; narrow the path or filters`);
+      return false;
+    }
     this.#bytes += bytes;
     this.#metadataBytes += bytes;
+    return true;
   }
   canRetainOccurrences(count) {
     if (this.#occurrences + count <= this.maxOccurrences)
@@ -999,9 +1006,12 @@ function createRipgrepRunner(options = {}) {
       const excerpt = excerptText(normalizedContent, focusStart, focusEnd);
       const { text: lineContent, truncated: lineTruncated } = excerpt;
       totalMatches += 1;
-      if (!fileCounts.has(path.displayPath))
-        retention.file(path.displayPath, path.absolutePath);
-      fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
+      if (!fileCounts.has(path.displayPath)) {
+        if (retention.file(path.displayPath, path.absolutePath))
+          fileCounts.set(path.displayPath, 0);
+      }
+      if (fileCounts.has(path.displayPath))
+        fileCounts.set(path.displayPath, (fileCounts.get(path.displayPath) ?? 0) + 1);
       if (lineTruncated)
         truncatedLines += 1;
       if (matches.length >= maxStoredMatches)
@@ -1046,7 +1056,7 @@ function createRipgrepRunner(options = {}) {
         totalMatches,
         fileCounts,
         sourceRevisions,
-        snapshotComplete: matches.length === totalMatches && !modificationTimeFilterIncomplete,
+        snapshotComplete: matches.length === totalMatches && !modificationTimeFilterIncomplete && retention.details.reasons.length === 0,
         truncatedLines,
         retention: retention.details
       };
@@ -3882,6 +3892,12 @@ class SourceAccess {
 
 // src/concept-search.ts
 var inferenceQueue = new OwnedTaskQueue;
+function conciseWorkerError(stderr) {
+  const errorLine = stderr.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error):\s*\S/.test(line));
+  if (errorLine)
+    return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
+  return "worker returned no concise diagnostic";
+}
 function passage(document2, start2) {
   let end = Math.min(document2.text.length, start2 + MAX_CONCEPT_CHARS);
   if (end < document2.text.length) {
@@ -3938,7 +3954,7 @@ async function similarities(query, passages, parent) {
       }
     });
     if (processResult.code !== 0)
-      throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${processResult.stderr.trim()}`);
+      throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
     const value = JSON.parse(Buffer.concat(buffers).toString("utf8"));
     if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || !Array.isArray(value.truncated) || value.truncated.some((index) => typeof index !== "number" || !Number.isSafeInteger(index) || index < -1 || index >= passages.length) || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
       throw new SignalGrepError("Invalid concept inference response");
@@ -4282,13 +4298,22 @@ async function resolveSemanticProjectRoot(cwd, targetPath, signal) {
 }
 
 // src/semantic-project.ts
+var semanticMetadataPath = /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/;
+function semanticWorkspacePaths(files) {
+  return files.paths.filter((path) => {
+    const language = syntaxLanguage(path);
+    return language !== undefined && language !== "go" || semanticMetadataPath.test(path);
+  }).toSorted((left, right) => left.localeCompare(right));
+}
 async function semanticProject(access2, targetPath) {
   const root = await resolveSemanticProjectRoot(access2.cwd, targetPath, access2.signal);
   const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+  const trackedPaths = semanticWorkspacePaths(files);
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
+  const metadataPaths = files.paths.filter((path) => semanticMetadataPath.test(path));
   const target = resolve13(access2.cwd, targetPath);
   if (!paths.some((path) => resolve13(access2.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
@@ -4296,10 +4321,7 @@ async function semanticProject(access2, targetPath) {
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata2 = [];
-  for (const path of [
-    ...paths,
-    ...files.paths.filter((candidate) => /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/.test(candidate))
-  ]) {
+  for (const path of [...paths, ...metadataPaths]) {
     try {
       const document2 = await access2.load(path);
       if (!document2.utf8)
@@ -4328,7 +4350,7 @@ async function semanticProject(access2, targetPath) {
       await access2.refresh(document2.path, document2.reference);
     }
     const after = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
-    if (JSON.stringify(after) !== JSON.stringify(files))
+    if (JSON.stringify(semanticWorkspacePaths(after)) !== JSON.stringify(trackedPaths))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
   const result = {
@@ -7946,8 +7968,8 @@ function parsePythonOutline(document2) {
     const parents = [...active];
     const boundary = boundaries[declaration2.lineIndex] ?? lines.length;
     const endLine = boundary === lines.length ? lines.length : boundary;
-    const nearestClass = parents.toReversed().find((candidate) => candidate.kind === "class");
-    const kind = declaration2.kind === "function" && nearestClass ? "method" : declaration2.kind;
+    const nearestParent = parents.at(-1);
+    const kind = declaration2.kind === "function" && nearestParent?.kind === "class" ? "method" : declaration2.kind;
     const scope = parents.map((item2) => item2.name);
     const range = document2.lineRange(declaration2.lineIndex + 1, endLine);
     const lineStart = document2.toCharacterOffset(range.start);
@@ -7997,6 +8019,7 @@ var searchFields = [
   "modifiedAfter",
   "modifiedBefore"
 ];
+var navigationFilterFields = new Set(["glob", "exclude", "hidden"]);
 var inspectFields = [
   "paths",
   "matchIndices",
@@ -8078,6 +8101,27 @@ async function navigationRoot(cwd, path, signal) {
     return resolve20(cwd);
   return await findGitRepository(dirname6(absolute), signal) ?? dirname6(absolute);
 }
+function navigationFilters(input) {
+  const request = normalizeRequest({
+    pattern: "",
+    ...input.glob !== undefined ? { glob: input.glob } : {},
+    ...input.exclude !== undefined ? { exclude: input.exclude } : {},
+    ...input.hidden !== undefined ? { hidden: input.hidden } : {}
+  });
+  return { glob: request.glob, exclude: request.exclude, hidden: request.hidden };
+}
+function navigationScope(cwd, root, requestedPath, filters) {
+  const projectRoot = resolve20(cwd);
+  return {
+    path: root === projectRoot ? "." : root,
+    requestedPath,
+    glob: [...filters.glob],
+    exclude: [...filters.exclude],
+    hidden: filters.hidden,
+    expandedToProjectRoot: false,
+    assertion: root === projectRoot ? "project-wide" : "requested-scope"
+  };
+}
 
 class EvidenceService {
   #runner;
@@ -8100,11 +8144,14 @@ class EvidenceService {
     this.clear();
     await this.#queue.shutdown();
   }
-  async#testEntryPaths(root, files, cwd, signal) {
+  async#testEntryPaths(root, files, cwd, filters, signal) {
+    const sourceGlobs = ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"];
     const request = normalizeRequest({
       pattern: TEST_DISCOVERY_PATTERN,
       path: root,
-      glob: ["*.js", "*.jsx", "*.mjs", "*.cjs", "*.ts", "*.tsx", "*.mts", "*.cts"],
+      glob: filters.glob.length ? filters.glob : sourceGlobs,
+      exclude: filters.exclude,
+      hidden: filters.hidden,
       ignoreCase: false
     });
     const scan = await this.#runner(request, cwd, signal);
@@ -8468,7 +8515,8 @@ class EvidenceService {
   }
   async#impact(input, access2) {
     const impactStarted = performance.now();
-    rejectFields(input, [...searchFields, ...inspectFields], "mode=impact");
+    rejectFields(input, [...searchFields.filter((field) => !navigationFilterFields.has(field)), ...inspectFields], "mode=impact");
+    const filters = navigationFilters(input);
     let path;
     let line = input.line;
     let document2;
@@ -8509,6 +8557,9 @@ class EvidenceService {
     const request = normalizeRequest({
       pattern: target.symbol.name,
       path: root,
+      glob: filters.glob,
+      exclude: filters.exclude,
+      hidden: filters.hidden,
       literal: true,
       ignoreCase: false
     });
@@ -8535,9 +8586,15 @@ class EvidenceService {
       partial = true;
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
-      const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+      const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+        path: root,
+        glob: filters.glob,
+        exclude: filters.exclude,
+        hidden: filters.hidden
+      });
       const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
       const primaryPath = resolve20(access2.cwd, document2.path);
+      allowed.add(primaryPath);
       const host = {
         cwd: access2.cwd,
         ...access2.signal ? { signal: access2.signal } : {},
@@ -8555,7 +8612,7 @@ class EvidenceService {
         listFiles: async () => files,
         maxFilesToParse: access2.maxFiles
       };
-      const entryPaths = await this.#testEntryPaths(root, files.paths, access2.cwd, access2.signal);
+      const entryPaths = await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal);
       const tests = await findRelatedTests(host, {
         path: document2.path,
         line: target.item.line,
@@ -8594,13 +8651,18 @@ class EvidenceService {
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage
       },
+      scope: navigationScope(access2.cwd, root, document2.path, filters),
       redact: input.redact ?? false
     };
     return this.#analyses.page(this.#analyses.create(result, (items) => retainedImpactCounts(items), impactRetentionPriority));
   }
   async#navigate(input, access2) {
     const navigationStarted = performance.now();
-    rejectFields(input, [...searchFields, ...inspectFields], `mode=${input.mode}`);
+    const allowsFilters = input.mode === "imports" || input.mode === "tests";
+    rejectFields(input, [
+      ...allowsFilters ? searchFields.filter((field) => !navigationFilterFields.has(field)) : searchFields,
+      ...inspectFields
+    ], `mode=${input.mode}`);
     let path = input.path;
     let reference;
     let line = input.line;
@@ -8709,9 +8771,16 @@ class EvidenceService {
         ]
       }));
     const root = await navigationRoot(access2.cwd, document2.path, access2.signal);
-    const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+    const filters = navigationFilters(input);
+    const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+      path: root,
+      glob: filters.glob,
+      exclude: filters.exclude,
+      hidden: filters.hidden
+    });
     const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
     const primaryPath = resolve20(access2.cwd, document2.path);
+    allowed.add(primaryPath);
     const host = {
       cwd: access2.cwd,
       ...access2.signal ? { signal: access2.signal } : {},
@@ -8735,7 +8804,7 @@ class EvidenceService {
       ...input.symbol !== undefined ? { symbol: input.symbol } : {}
     };
     const result = input.mode === "imports" ? await navigateImports(host, request) : await findRelatedTests(host, request, {
-      entryPaths: await this.#testEntryPaths(root, files.paths, access2.cwd, access2.signal)
+      entryPaths: await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal)
     });
     return this.#analyses.page(this.#analyses.create({
       ...result,
@@ -8752,6 +8821,7 @@ class EvidenceService {
         filesParsed: access2.syntaxParses,
         cacheHits: access2.syntaxCacheHits
       },
+      scope: navigationScope(access2.cwd, root, document2.path, filters),
       redact: input.redact ?? false
     }));
   }
@@ -9128,7 +9198,8 @@ ${lineRows.join(`
 
 // src/redaction.ts
 var PRIVATE_KEY = /-----BEGIN ([^-\r\n]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g;
-var SENSITIVE_ASSIGNMENT = /((?:["']?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?access[_-]?key|private[_-]?key)["']?)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\r\n]+)/gi;
+var SENSITIVE_NAME = String.raw`(?:(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:password|passwd|secret|token|api[_-]?key|access[_-]?(?:key|token)|secret[_-]?access[_-]?key|private[_-]?key|service[_-]?key)(?:[_-][A-Za-z0-9]+)*)`;
+var SENSITIVE_ASSIGNMENT = new RegExp(String.raw`((?<![A-Za-z0-9_-])(?:["']?${SENSITIVE_NAME}["']?)\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\r\n]+)`, "gi");
 var TYPE_ONLY_VALUES = new Set([
   "boolean",
   "number",
@@ -9793,7 +9864,7 @@ function signalGrepPromptGuidelines() {
     `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
     `Use anyOf:["term1","term2"] when every exact occurrence of 2-64 literals is needed in one version-bound result. It is case-sensitive, reports retained counts per input term, and runs requests above eight terms as bounded parallel chunks. Large term-count inventories have separate termCountsNextRequest pages; copy those requests to retrieve the complete term map.`,
     `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
-    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
+    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Imports/tests accept glob, exclude and hidden to narrow the repository candidate scope; the target source remains admitted. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
     `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Compiler-confirmed references in verified candidate documents are ranked first; remaining same spelling does not prove binding, and returned tests have not been run. Use references for a dedicated workspace reference inventory.`,
     `Use mode:"files" plus query for unknown filenames and fuzzy paths. Use wholeWord:true for a single-pattern whole-word search. exclude contains file globs, not content negation.`,
     `Use JS/TS modes definitions, references, implementations, callers or callees with path+line+column (1-based UTF-16), or an unambiguous symbol. Returned evidence includes exact positions and executable next requests. The compiler resolves project aliases, package exports and workspace packages; static relationships do not prove runtime dispatch. dependencies/dependents take only a workspace file path.`,

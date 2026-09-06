@@ -25,6 +25,16 @@ interface Passage {
   range: ByteRange;
   text: string;
 }
+
+function conciseWorkerError(stderr: string): string {
+  const errorLine = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error):\s*\S/.test(line));
+  if (errorLine) return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
+  return "worker returned no concise diagnostic";
+}
+
 function passage(document: SourceDocument, start: number): { value: Passage; next: number } {
   let end = Math.min(document.text.length, start + MAX_CONCEPT_CHARS);
   if (end < document.text.length) {
@@ -84,7 +94,7 @@ async function similarities(query: string, passages: Passage[], parent?: AbortSi
     );
     if (processResult.code !== 0)
       throw new SignalGrepError(
-        `Local concept inference failed (${String(processResult.code)}): ${processResult.stderr.trim()}`,
+        `Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`,
       );
     const value: unknown = JSON.parse(Buffer.concat(buffers).toString("utf8"));
     if (
