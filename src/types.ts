@@ -28,6 +28,9 @@ export const MAX_RESULT_BYTES = 16 * 1024;
 export const MAX_CONTEXT_LINES = 20;
 export const MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
 export const MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_PATH_CHARACTERS = 4_096;
+export const MAX_PATTERN_CHARACTERS = 64 * 1024;
+export const MAX_FILE_FILTER_ITEMS = 64;
 export const MAX_SOURCE_REVISION_CONCURRENCY = 16;
 export const MAX_SOURCE_REVISION_FILES = 50_000;
 
@@ -108,6 +111,7 @@ export interface StructureSymbol {
 export interface StructureDetails {
   status: StructureStatus;
   provider?: string;
+  reason?: string;
   language?: string;
   symbol?: StructureSymbol;
   range?: SymbolRange;
@@ -166,6 +170,8 @@ export interface SearchRequest {
   context: number;
   pageSize: number;
   redact?: boolean;
+  modifiedAfterMs?: number;
+  modifiedBeforeMs?: number;
 }
 
 export interface SearchScopeDetails {
@@ -176,6 +182,8 @@ export interface SearchScopeDetails {
   hidden: boolean;
   expandedToProjectRoot: boolean;
   assertion: "requested-scope" | "project-wide";
+  modifiedAfterMs?: number;
+  modifiedBeforeMs?: number;
 }
 
 export interface MatchRecord {

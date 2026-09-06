@@ -221,13 +221,22 @@ export function createCtagsStructureProvider(
         }
         if (hasCode(error, "ENOENT") || error instanceof CtagsCommandError) {
           return {
-            details: { status: "provider-unavailable", provider: "universal-ctags" },
+            details: {
+              status: "provider-unavailable",
+              provider: "universal-ctags",
+              reason:
+                "Universal Ctags is unavailable; install universal-ctags or use JS/TS/Python outline support",
+            },
             currentRevision,
           };
         }
         if (error instanceof CtagsProtocolError) {
           return {
-            details: { status: "parse-error", provider: "universal-ctags" },
+            details: {
+              status: "parse-error",
+              provider: "universal-ctags",
+              reason: "Universal Ctags returned invalid JSON output; check the installed provider",
+            },
             currentRevision,
           };
         }

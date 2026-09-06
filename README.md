@@ -32,6 +32,14 @@ Ask the agent to restrict a search to one folder when that is the scope you need
 
 Long results arrive in pages with a way to continue. When the original material changes, the plugin asks for a fresh check. Like a careful research assistant, it distinguishes the passages already shown from the pages still to come.
 
+### Narrow by file age or inspect code structure
+
+Worktree searches can use `modifiedAfter` and `modifiedBefore` as Unix millisecond bounds. The lower bound is inclusive and the upper bound is exclusive, so a time window can be expressed without changing the search pattern. The same filter applies to content and filename searches; unavailable file metadata is reported as incomplete evidence rather than silently treated as a match.
+
+Use `mode: "outline"` with a file path to see bounded symbol ranges. JavaScript and TypeScript use the syntax provider; Python files use indentation-based class, function and method evidence. Python outline results are useful for finding a range to inspect, but do not claim compiler bindings, runtime calls or test coverage.
+
+The readable result keeps the main evidence compact. Per-item ranges, counts, coverage and continuation requests remain in structured `details`, so a client can use the structured fields without requiring a second search.
+
 ## Common uses
 
 Tell your agent what you need, for example:
@@ -44,6 +52,8 @@ Tell your agent what you need, for example:
 - “Search only this folder; do not expand the scope.”
 - “Show me which files contain relevant text, then open two of them.”
 - “Continue from the previous page and show the remaining passages.”
+- “Search files modified since this Unix millisecond timestamp.”
+- “Show the Python classes and functions in this file, then inspect the method that matters.”
 
 The plugin provides file locations and actual text so the agent can answer from the material and you can check the original yourself.
 

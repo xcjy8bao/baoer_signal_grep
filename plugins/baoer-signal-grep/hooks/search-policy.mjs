@@ -3404,6 +3404,26 @@ function commandWords(node, language) {
   const args2 = language === "bash" ? node.childrenForFieldName("argument").filter((child) => child !== null) : node.childForFieldName("command_elements")?.namedChildren.filter((child) => child !== null && !["command_argument_sep", "redirection"].includes(child.type)) ?? [];
   return [literalWord(name2, language), ...args2.map((arg) => literalWord(arg, language))];
 }
+function isSafePipelineFilter(node, language, words) {
+  const executable = words[0];
+  if (executable === null || executable === undefined)
+    return false;
+  const name2 = executableName(executable);
+  const filterNames = language === "powershell" ? new Set(["select-string", "sls"]) : new Set(["grep", "egrep", "fgrep"]);
+  if (!filterNames.has(language === "powershell" ? name2.toLowerCase() : name2))
+    return false;
+  const pipeline = node.parent;
+  if (!pipeline || pipeline.type !== "pipeline")
+    return false;
+  const commands = pipeline.namedChildren.filter((child) => child !== null && child.type === "command");
+  const last = commands.at(-1);
+  if (!last || last.startIndex !== node.startIndex || last.endIndex !== node.endIndex || commands.length < 2)
+    return false;
+  return commands.slice(0, -1).every((candidate) => {
+    const decision = classifyCommand(commandWords(candidate, language), language);
+    return !decision.kind && !decision.nested;
+  });
+}
 
 class ShellSearchPolicy {
   #assets;
@@ -3448,8 +3468,9 @@ class ShellSearchPolicy {
         for (const node of commands) {
           if (!node)
             continue;
-          const decision = classifyCommand(commandWords(node, language), language);
-          if (decision.kind)
+          const words = commandWords(node, language);
+          const decision = classifyCommand(words, language);
+          if (decision.kind && !(decision.kind === "content" && isSafePipelineFilter(node, language, words)))
             return decision.kind;
           if (decision.nested) {
             const nested = this.#inspect(decision.nested.command, decision.nested.language, grammars, depth + 1);
