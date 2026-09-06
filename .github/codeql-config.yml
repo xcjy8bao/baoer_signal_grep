@@ -1,0 +1,8 @@
+name: baoer_signal_grep CodeQL configuration
+
+# The OMP marketplace artifact is a self-contained bundle. It intentionally
+# vendors third-party marked and web-tree-sitter runtime code so installation
+# does not depend on optional host packages. The original project sources,
+# build scripts, and all other checked-in JavaScript remain in CodeQL scope.
+paths-ignore:
+  - plugins/baoer-signal-grep/omp-extension.mjs
