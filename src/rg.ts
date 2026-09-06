@@ -5,6 +5,7 @@ import { SearchRetention } from "./search-retention.js";
 import { consumeCappedLines } from "./capped-lines.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { runOwnedProcess } from "./owned-process.js";
+import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
 import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
   MAX_SOURCE_REVISION_CONCURRENCY,
@@ -241,7 +242,6 @@ export function patternArguments(
 }
 
 export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
-  const executable = options.executable ?? "rg";
   const maxStoredMatches = options.maxStoredMatches ?? MAX_STORED_MATCHES;
   const maxEventBytes = options.maxEventBytes ?? MAX_PROTOCOL_LINE_BYTES;
   const maxSourceRevisionFiles = options.maxSourceRevisionFiles ?? MAX_SOURCE_REVISION_FILES;
@@ -252,6 +252,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     signal?: AbortSignal,
   ): Promise<SearchScan> {
     if (signal?.aborted) throw abortError();
+    const executable = options.executable ?? (await resolveRipgrepExecutable());
     const searchPath = resolve(cwd, request.path ?? ".");
     const policy = new SearchPathPolicy(cwd);
     const validatedSearchPath = await policy.resolveSearchTarget(searchPath);

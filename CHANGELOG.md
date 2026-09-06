@@ -1,7 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.1] - 2026-09-06
 
+- Bundle platform-specific ripgrep through a pinned dependency so MCP and Pi searches work without `rg` in `PATH`, including installations with lifecycle scripts disabled. Use one executable resolver for content, filename and Git-source searches, with an explicit `BAOER_SIGNAL_GREP_RG_PATH` override and actionable dependency errors.
 - Make every MCP installation command follow the latest published version when the server starts.
 
 ## [1.2.0] - 2026-09-05

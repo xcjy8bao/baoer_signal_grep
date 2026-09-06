@@ -3,6 +3,7 @@ import { abortError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { fileScopeArguments } from "./rg.js";
+import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
 import { MAX_PROTOCOL_LINE_BYTES, MAX_SOURCE_REVISION_FILES } from "./types.js";
 
 export interface WorkspaceFileOptions {
@@ -57,7 +58,7 @@ export async function listWorkspaceFiles(
   try {
     const result = await runOwnedProcess(
       {
-        executable: "rg",
+        executable: await resolveRipgrepExecutable(),
         args: [
           "--no-config",
           "--files",
