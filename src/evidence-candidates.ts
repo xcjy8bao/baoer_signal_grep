@@ -11,6 +11,7 @@ import { filterHistoricalPaths } from "./historical-paths.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { isPathInsideCwd } from "./path-policy.js";
 import { patternArguments, type RipgrepRunner } from "./rg.js";
+import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
 import { sameSourceRevision } from "./source.js";
 import { SourceBudgetError } from "./source-access.js";
 import {
@@ -95,7 +96,7 @@ async function searchRawSource(
   try {
     const result = await runOwnedProcess(
       {
-        executable: "rg",
+        executable: await resolveRipgrepExecutable(),
         args: [
           "--no-config",
           "--encoding",

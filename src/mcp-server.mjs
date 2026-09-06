@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/mcp.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -7,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.0",
+  version: "1.2.1",
   description: "Context-efficient local search for files, documents, notes and logs across Pi and MCP clients",
   keywords: [
     "ai-agent",
@@ -91,6 +93,7 @@ var package_default = {
     "@ast-grep/napi": "0.45.2",
     "@huggingface/transformers": "3.8.1",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@vscode/ripgrep": "1.18.0",
     typebox: "1.3.19",
     typescript: "7.0.2",
     "web-tree-sitter": "0.25.10",
@@ -151,7 +154,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 // src/rg.ts
-import { isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
+import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/errors.ts
 class SignalGrepError extends Error {
@@ -573,16 +576,49 @@ async function runOwnedProcess(options, consumeOutput) {
   }
 }
 
+// src/ripgrep-executable.ts
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
+import { isAbsolute as isAbsolute2 } from "node:path";
+var OVERRIDE_ENV = "BAOER_SIGNAL_GREP_RG_PATH";
+var BUNDLED_REPAIR = `Reinstall baoer_signal_grep with optional dependencies enabled for this platform, or set ${OVERRIDE_ENV} to an absolute ripgrep executable path.`;
+async function resolveRipgrepExecutable() {
+  const configured = process.env[OVERRIDE_ENV];
+  if (configured !== undefined && !isAbsolute2(configured))
+    throw new SignalGrepError(`${OVERRIDE_ENV} must be an absolute executable file path; shell functions, aliases and relative paths are not supported.`);
+  let executable;
+  if (configured !== undefined) {
+    executable = configured;
+  } else {
+    try {
+      executable = (await import("@vscode/ripgrep")).rgPath;
+    } catch (cause) {
+      throw new SignalGrepError(`Bundled ripgrep is unavailable. ${BUNDLED_REPAIR}`, { cause });
+    }
+  }
+  try {
+    if (!(await stat(executable)).isFile())
+      throw new Error("Expected an executable file");
+    await access(executable, constants.X_OK);
+  } catch (cause) {
+    const repair = configured === undefined ? BUNDLED_REPAIR : `Fix ${OVERRIDE_ENV} or unset it to use bundled ripgrep. No fallback was attempted.`;
+    throw new SignalGrepError(`ripgrep executable is unavailable: ${executable}. ${repair}`, {
+      cause
+    });
+  }
+  return executable;
+}
+
 // src/scan-revisions.ts
 import { resolve as resolve2 } from "node:path";
 
 // src/source.ts
-import { readFile, realpath as realpath2, stat } from "node:fs/promises";
+import { readFile, realpath as realpath2, stat as stat2 } from "node:fs/promises";
 var SOURCE_RANGE_METADATA_RESERVE_BYTES = 1024;
 var MAX_SOURCE_RANGE_BYTES = MAX_RESULT_BYTES - SOURCE_RANGE_METADATA_RESERVE_BYTES;
 async function getSourceRevision(path) {
   try {
-    const metadata = await stat(path);
+    const metadata = await stat2(path);
     return sourceRevisionFromStats(metadata);
   } catch {
     return;
@@ -812,9 +848,9 @@ function decodeRgText(value, field) {
   throw new SignalGrepError(`ripgrep JSON event omitted ${field}`);
 }
 function displayPath(rawPath, cwd) {
-  const absolutePath = isAbsolute2(rawPath) ? rawPath : resolve3(cwd, rawPath);
+  const absolutePath = isAbsolute3(rawPath) ? rawPath : resolve3(cwd, rawPath);
   const localPath = relative2(cwd, absolutePath).replaceAll("\\", "/");
-  const isInsideCwd = localPath !== ".." && !localPath.startsWith("../") && !isAbsolute2(localPath);
+  const isInsideCwd = localPath !== ".." && !localPath.startsWith("../") && !isAbsolute3(localPath);
   return {
     absolutePath,
     displayPath: isInsideCwd && localPath.length > 0 ? localPath : absolutePath
@@ -914,13 +950,13 @@ function patternArguments(request) {
   ];
 }
 function createRipgrepRunner(options = {}) {
-  const executable = options.executable ?? "rg";
   const maxStoredMatches = options.maxStoredMatches ?? MAX_STORED_MATCHES;
   const maxEventBytes = options.maxEventBytes ?? MAX_PROTOCOL_LINE_BYTES;
   const maxSourceRevisionFiles = options.maxSourceRevisionFiles ?? MAX_SOURCE_REVISION_FILES;
   return async function runRipgrep(request, cwd, signal) {
     if (signal?.aborted)
       throw abortError();
+    const executable = options.executable ?? await resolveRipgrepExecutable();
     const searchPath = resolve3(cwd, request.path ?? ".");
     const policy = new SearchPathPolicy(cwd);
     const validatedSearchPath = await policy.resolveSearchTarget(searchPath);
@@ -1030,7 +1066,7 @@ function createRipgrepRunner(options = {}) {
 }
 
 // src/structure.ts
-import { isAbsolute as isAbsolute3, resolve as resolve4 } from "node:path";
+import { isAbsolute as isAbsolute4, resolve as resolve4 } from "node:path";
 var CTAGS_CAPABILITY_ARGUMENTS = [
   "--output-format=json",
   "--fields=+ne",
@@ -1120,7 +1156,7 @@ async function runCtagsCommand(executable, absolutePath, cwd, signal) {
   return tags;
 }
 function pathMatches(tagPath, absolutePath, cwd) {
-  return resolve4(isAbsolute3(tagPath) ? tagPath : resolve4(cwd, tagPath)) === resolve4(absolutePath);
+  return resolve4(isAbsolute4(tagPath) ? tagPath : resolve4(cwd, tagPath)) === resolve4(absolutePath);
 }
 function symbolFromTag(tag) {
   if (tag.line === undefined || tag.end === undefined || tag.end < tag.line)
@@ -1527,7 +1563,7 @@ class OwnedTaskQueue {
 }
 
 // src/typescript-client.ts
-import { createRequire } from "node:module";
+import { createRequire as createRequire2 } from "node:module";
 import { dirname, join as join2 } from "node:path";
 var compilerQueue = new OwnedTaskQueue;
 var TYPESCRIPT_QUERY_TIMEOUT_MS = 20000;
@@ -1552,7 +1588,7 @@ function serverRequest(method, params) {
 function executablePath() {
   const packageName = `@typescript/typescript-${process.platform}-${process.arch}`;
   try {
-    const metadata = createRequire(import.meta.url).resolve(`${packageName}/package.json`);
+    const metadata = createRequire2(import.meta.url).resolve(`${packageName}/package.json`);
     return join2(dirname(metadata), "lib", process.platform === "win32" ? "tsc.exe" : "tsc");
   } catch (error) {
     throw new SignalGrepError(`TypeScript semantic provider is unavailable for ${process.platform}/${process.arch}; reinstall with optional dependencies enabled`, { cause: error });
@@ -2250,21 +2286,21 @@ async function parseSyntax(path, text, signal, pattern) {
 }
 
 // src/impact-bindings.ts
-async function bindImpactCandidates(target, files, occurrences, access) {
-  const syntax = await access.syntax(target.document);
+async function bindImpactCandidates(target, files, occurrences, access2) {
+  const syntax = await access2.syntax(target.document);
   const name = syntax.nodes.find((node) => node.start >= target.symbol.start && node.end <= target.symbol.end && target.document.text.slice(node.start, node.end) === target.symbol.name && node.kind.endsWith("identifier"));
   if (!name)
     throw new SignalGrepError("Impact compiler target has no exact identifier position");
-  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve6(access.cwd, file.document.path), file.document]));
-  documents.set(resolve6(access.cwd, target.document.path), target.document);
-  const sourceAt = await semanticSources(access.cwd, documents.values());
-  const references = await withTypeScript(access.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
-    textDocument: { uri: await semanticUri(access.cwd, target.document.path) },
+  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve6(access2.cwd, file.document.path), file.document]));
+  documents.set(resolve6(access2.cwd, target.document.path), target.document);
+  const sourceAt = await semanticSources(access2.cwd, documents.values());
+  const references = await withTypeScript(access2.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
+    textDocument: { uri: await semanticUri(access2.cwd, target.document.path) },
     position: lspPosition(target.document, name.start),
     context: { includeDeclaration: true }
-  })), access.signal);
+  })), access2.signal);
   const retained = new Map(occurrences.map((item) => [
-    `${resolve6(access.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
+    `${resolve6(access2.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
     item
   ]));
   let bound = 0;
@@ -2273,7 +2309,7 @@ async function bindImpactCandidates(target, files, occurrences, access) {
     if (!document)
       continue;
     const range = byteRange(document, reference.range);
-    const key = `${resolve6(access.cwd, document.path)}:${String(range.start)}:${String(range.end)}`;
+    const key = `${resolve6(access2.cwd, document.path)}:${String(range.start)}:${String(range.end)}`;
     const existing = retained.get(key);
     const line = document.lineAt(range.start);
     const evidence = sourceEvidence(document, range);
@@ -2302,7 +2338,7 @@ async function bindImpactCandidates(target, files, occurrences, access) {
     bound += 1;
   }
   for (const document of documents.values()) {
-    await access.refresh(document.path, document.reference);
+    await access2.refresh(document.path, document.reference);
   }
   return { items: [...retained.values()], bound };
 }
@@ -2360,7 +2396,7 @@ import { extname as extname2, resolve as resolve11 } from "node:path";
 
 // src/historical-paths.ts
 import { lstat, mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants as constants2 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname as dirname3, join as join3, parse, relative as relative4, resolve as resolve8 } from "node:path";
 
@@ -2388,7 +2424,7 @@ async function listWorkspaceFiles(cwd, signal, options = {}) {
   let bytes = 0;
   try {
     const result = await runOwnedProcess({
-      executable: "rg",
+      executable: await resolveRipgrepExecutable(),
       args: [
         "--no-config",
         "--files",
@@ -2503,7 +2539,7 @@ async function filterHistoricalPaths(cwd, paths, request, signal) {
             throw new SignalGrepError("Current ignore rules are not regular files; historical path filtering is unavailable");
           if (before.size > MAX_SOURCE_FILE_BYTES || ignoreBytesRead + before.size > MAX_STRUCTURE_BYTES)
             throw new SignalGrepError("Current ignore rules exceed the source read budget");
-          const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+          const handle = await open(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
           let bytes;
           try {
             if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
@@ -2741,9 +2777,9 @@ async function sourceSimilarity(oldContent, newContent, budget) {
 
 // src/git-repository.ts
 import { createHash } from "node:crypto";
-import { constants as constants2 } from "node:fs";
+import { constants as constants3 } from "node:fs";
 import { lstat as lstat2, open as open2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, relative as relative5, resolve as resolve9, sep as sep3 } from "node:path";
+import { isAbsolute as isAbsolute5, relative as relative5, resolve as resolve9, sep as sep3 } from "node:path";
 
 // src/git-process.ts
 var GIT_READ_ARGUMENTS = [
@@ -2923,7 +2959,7 @@ async function resolveGitCommit(cwd, ref, signal) {
 async function resolveGitRepository(cwd, signal) {
   const { output } = await runGitRead(cwd, "rev-parse", ["--show-toplevel"], signal ? { signal, maxBytes: 4096 } : { maxBytes: 4096 });
   const root = decodeGitPath(output).replace(/\r?\n$/, "");
-  if (!isAbsolute4(root))
+  if (!isAbsolute5(root))
     throw new SignalGrepError("Git returned an invalid repository root");
   return resolve9(root);
 }
@@ -3050,7 +3086,7 @@ async function readWorktreeSource(cwd, path, budget, signal) {
     if (budget.bytes + before.size > budget.maxBytes)
       return limitedSource(path, mode, `Source reads exceed the ${String(budget.maxBytes)} byte request limit`);
     await assertExistingPathInsideCwd(absolute, cwd);
-    const handle = await open2(absolute, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+    const handle = await open2(absolute, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
     try {
       if (!sameSourceRevision(sourceRevisionFromStats(before), sourceRevisionFromStats(await handle.stat())))
         throw new SignalGrepError("Working source changed before reading");
@@ -3791,13 +3827,13 @@ async function similarities(query, passages, parent) {
     clearTimeout(timer);
   }
 }
-async function runConceptSearch(input, access) {
+async function runConceptSearch(input, access2) {
   const query = input.query;
   if (!query?.trim() || query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
     throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access.cwd, access.signal, {
+  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -3814,7 +3850,7 @@ async function runConceptSearch(input, access) {
   const documents = [];
   for (const path of files.paths) {
     try {
-      const document = await access.load(path);
+      const document = await access2.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", "Not lossless UTF-8");
       if (document.text.trim())
@@ -3848,7 +3884,7 @@ async function runConceptSearch(input, access) {
     result.reasons.push(`Concept coverage reached ${String(MAX_CONCEPT_CHUNKS)} passages of at most ${String(MAX_CONCEPT_CHARS)} characters; narrow path/glob to cover remaining source`);
   }
   if (passages.length) {
-    const inferred = await similarities(query, passages, access.signal);
+    const inferred = await similarities(query, passages, access2.signal);
     if (inferred.truncated.length) {
       result.partial = true;
       result.reasons.push(`Model token limit: ${String(inferred.truncated.length)} query/passages exceeded 512 tokens; ranking used their prefixes`);
@@ -3883,8 +3919,8 @@ async function runConceptSearch(input, access) {
       passagesRanked: passages.length
     };
   }
-  result.filesRead = access.filesRead;
-  result.bytesRead = access.bytesRead;
+  result.filesRead = access2.filesRead;
+  result.bytesRead = access2.bytesRead;
   result.stats = {
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
@@ -3905,16 +3941,16 @@ async function runConceptSearch(input, access) {
   };
   return result;
 }
-function conceptSearch(input, access) {
-  return inferenceQueue.run(() => runConceptSearch(input, access), access.signal);
+function conceptSearch(input, access2) {
+  return inferenceQueue.run(() => runConceptSearch(input, access2), access2.signal);
 }
 
 // src/structural-search.ts
-async function structuralSearch(input, access) {
+async function structuralSearch(input, access2) {
   if (!input.pattern?.trim() || Buffer.byteLength(input.pattern) > 4096 || !input.pattern.isWellFormed())
     throw new SignalGrepError("Structural pattern must be nonempty, well-formed and at most 4 KiB; ast-grep $NAME/$$$ARGS metavariables are supported");
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access.cwd, access.signal, {
+  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -3940,8 +3976,8 @@ async function structuralSearch(input, access) {
     if (!syntaxLanguage(path))
       continue;
     try {
-      const document = await access.load(path);
-      const syntax = await access.pattern(document, input.pattern);
+      const document = await access2.load(path);
+      const syntax = await access2.pattern(document, input.pattern);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${path}: syntax ${syntax.status}; structural matches withheld`);
@@ -3992,8 +4028,8 @@ async function structuralSearch(input, access) {
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
-  result.filesRead = access.filesRead;
-  result.bytesRead = access.bytesRead;
+  result.filesRead = access2.filesRead;
+  result.bytesRead = access2.bytesRead;
   result.coverage = { astPatterns: result.partial ? "partial" : "complete" };
   result.scope = {
     path: request.path ?? ".",
@@ -4050,16 +4086,16 @@ import { resolve as resolve13 } from "node:path";
 
 // src/semantic-project.ts
 import { resolve as resolve12 } from "node:path";
-async function semanticProject(access, targetPath) {
-  const files = await listWorkspaceFiles(access.cwd, access.signal);
+async function semanticProject(access2, targetPath) {
+  const files = await listWorkspaceFiles(access2.cwd, access2.signal);
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
-  const target = resolve12(access.cwd, targetPath);
-  if (!paths.some((path) => resolve12(access.cwd, path) === target))
+  const target = resolve12(access2.cwd, targetPath);
+  if (!paths.some((path) => resolve12(access2.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
-  paths.sort((a, b) => Number(resolve12(access.cwd, b) === target) - Number(resolve12(access.cwd, a) === target) || a.localeCompare(b));
+  paths.sort((a, b) => Number(resolve12(access2.cwd, b) === target) - Number(resolve12(access2.cwd, a) === target) || a.localeCompare(b));
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata = [];
@@ -4068,11 +4104,11 @@ async function semanticProject(access, targetPath) {
     ...files.paths.filter((candidate) => /(?:^|\/)(?:[tj]sconfig[^/]*\.json|package\.json)$/.test(candidate))
   ]) {
     try {
-      const document = await access.load(path);
+      const document = await access2.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
       if (paths.includes(path))
-        documents.set(resolve12(access.cwd, path), document);
+        documents.set(resolve12(access2.cwd, path), document);
       else
         metadata.push(document);
     } catch (error) {
@@ -4092,9 +4128,9 @@ async function semanticProject(access, targetPath) {
     for (const document of [...documents.values(), ...metadata]) {
       if (document.reference.origin.kind !== "worktree")
         throw new Error("Expected worktree semantic source");
-      await access.refresh(document.path, document.reference);
+      await access2.refresh(document.path, document.reference);
     }
-    const after = await listWorkspaceFiles(access.cwd, access.signal);
+    const after = await listWorkspaceFiles(access2.cwd, access2.signal);
     if (JSON.stringify(after) !== JSON.stringify(files))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
@@ -4104,8 +4140,8 @@ async function semanticProject(access, targetPath) {
     items: [],
     partial: reasons.length > 0,
     reasons,
-    filesRead: access.filesRead,
-    bytesRead: access.bytesRead,
+    filesRead: access2.filesRead,
+    bytesRead: access2.bytesRead,
     coverage: {
       admittedSources: reasons.length ? "partial" : "complete",
       runtimeDispatch: "not-applicable"
@@ -4117,7 +4153,7 @@ async function semanticProject(access, targetPath) {
 
 // src/semantic-navigation.ts
 var semanticRequestQueue = new OwnedTaskQueue;
-async function selection(input, access, document) {
+async function selection(input, access2, document) {
   if (input.column !== undefined) {
     if (input.line === undefined || !Number.isSafeInteger(input.column) || input.column < 1 || input.symbol !== undefined)
       throw new SignalGrepError("Semantic column requires line and no symbol; both are 1-based UTF-16 positions");
@@ -4125,7 +4161,7 @@ async function selection(input, access, document) {
     byteAt(document, position);
     return position;
   }
-  const syntax = await access.syntax(document);
+  const syntax = await access2.syntax(document);
   if (syntax.status !== "ok")
     throw new SignalGrepError("Selecting a semantic symbol requires valid syntax; supply an exact line+column position");
   const candidates = syntax.nodes.filter((node) => /^(?:identifier|property_identifier|type_identifier|shorthand_property_identifier(?:_pattern)?)$/.test(node.kind) && (input.symbol === undefined || document.text.slice(node.start, node.end) === input.symbol) && (input.line === undefined || document.lineAt(document.toByteOffset(node.start)) === input.line));
@@ -4199,10 +4235,10 @@ async function queryLocations(channel, mode, params) {
     ...method === "references" ? { context: { includeDeclaration: true } } : {}
   }));
 }
-async function runSemanticNavigation(input, access) {
+async function runSemanticNavigation(input, access2) {
   if (!input.path || !isSemanticMode(input.mode))
     throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
-  const project = await semanticProject(access, input.path);
+  const project = await semanticProject(access2, input.path);
   const { result, documents, primary } = project;
   result.kind = input.mode;
   result.redact = input.redact ?? false;
@@ -4210,8 +4246,8 @@ async function runSemanticNavigation(input, access) {
   const graph = mode === "dependencies" || mode === "dependents";
   if (graph && (input.line !== undefined || input.column !== undefined || input.symbol !== undefined))
     throw new SignalGrepError("File dependencies/dependents accept path without line, column or symbol");
-  const position = graph ? undefined : await selection(input, access, primary);
-  const sourceAt = await semanticSources(access.cwd, documents.values());
+  const position = graph ? undefined : await selection(input, access2, primary);
+  const sourceAt = await semanticSources(access2.cwd, documents.values());
   const add = async (location, relation) => {
     const document = await sourceAt(location.path);
     if (document)
@@ -4221,10 +4257,10 @@ async function runSemanticNavigation(input, access) {
       result.reasons.push("Compiler returned a location outside admitted source coverage; dependency/ignored/over-budget source was not exposed");
     }
   };
-  await withTypeScript(access.cwd, [...documents.values()], async (channel) => {
+  await withTypeScript(access2.cwd, [...documents.values()], async (channel) => {
     if (!graph) {
       const found = await queryLocations(channel, mode, {
-        textDocument: { uri: await semanticUri(access.cwd, primary.path) },
+        textDocument: { uri: await semanticUri(access2.cwd, primary.path) },
         position
       });
       for (const location of found) {
@@ -4233,13 +4269,13 @@ async function runSemanticNavigation(input, access) {
       return;
     }
     for (const document of mode === "dependencies" ? [primary] : documents.values()) {
-      const syntax = await access.syntax(document);
+      const syntax = await access2.syntax(document);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${document.path}: module syntax ${syntax.status}`);
         continue;
       }
-      const uri = await semanticUri(access.cwd, document.path);
+      const uri = await semanticUri(access2.cwd, document.path);
       const specifiers = syntax.nodes.filter((node) => node.kind === "string" && node.parent !== null && (() => {
         const parent = syntax.nodes[node.parent];
         if (!parent)
@@ -4266,7 +4302,7 @@ async function runSemanticNavigation(input, access) {
             await add(target, "dependency");
           } else if (targetDocument === primary) {
             await add({
-              path: resolve13(access.cwd, document.path),
+              path: resolve13(access2.cwd, document.path),
               range: {
                 start: lspPosition(document, specifier.start),
                 end: lspPosition(document, specifier.end)
@@ -4275,12 +4311,12 @@ async function runSemanticNavigation(input, access) {
           }
         }
       }
-      access.releaseSyntax(document);
+      access2.releaseSyntax(document);
     }
-  }, access.signal);
+  }, access2.signal);
   await project.recheck();
-  result.filesRead = access.filesRead;
-  result.bytesRead = access.bytesRead;
+  result.filesRead = access2.filesRead;
+  result.bytesRead = access2.bytesRead;
   result.items = rankEvidence([
     ...new Map(result.items.map((item) => [
       `${item.path}:${String(item.range?.start)}:${String(item.range?.end)}`,
@@ -4294,8 +4330,8 @@ async function runSemanticNavigation(input, access) {
   };
   return result;
 }
-function navigateSemantics(input, access) {
-  return semanticRequestQueue.run(() => runSemanticNavigation(input, access), access.signal);
+function navigateSemantics(input, access2) {
+  return semanticRequestQueue.run(() => runSemanticNavigation(input, access2), access2.signal);
 }
 
 // src/evidence-service.ts
@@ -4700,7 +4736,7 @@ async function searchRawSource(cwd, document, request, budget, allowed, signal) 
   const occurrences = [];
   try {
     const result = await runOwnedProcess({
-      executable: "rg",
+      executable: await resolveRipgrepExecutable(),
       args: [
         "--no-config",
         "--encoding",
@@ -6898,10 +6934,10 @@ function errorStatus(error) {
     return "source-unavailable";
   return;
 }
-async function prepare(target, access, structure) {
+async function prepare(target, access2, structure) {
   if (target.unverified)
     throw new SourceDocumentError("source-unavailable", "Snapshot source revision is unverified; refresh the search");
-  const document = await access.load(target.path, target.reference);
+  const document = await access2.load(target.path, target.reference);
   if (target.expectedRevision && (document.reference.origin.kind !== "worktree" || !sameSourceRevision(target.expectedRevision, document.reference.origin.revision)))
     throw new SourceDocumentError("source-changed", "Source changed; refresh the search");
   if (target.line > document.lineStarts.length)
@@ -6912,7 +6948,7 @@ async function prepare(target, access, structure) {
   let details = { status: "no-symbol" };
   const language = syntaxLanguage(document.path);
   if (document.utf8 && language && language !== "go") {
-    const syntax = await access.syntax(document);
+    const syntax = await access2.syntax(document);
     details = {
       status: syntax.status === "ok" ? "no-symbol" : syntax.status === "unsupported" ? "provider-unavailable" : "parse-error",
       provider: "tree-sitter",
@@ -6947,11 +6983,11 @@ async function prepare(target, access, structure) {
     }
   } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range) {
     const result = await structure.inspect({
-      absolutePath: resolve16(access.cwd, target.path),
-      cwd: access.cwd,
+      absolutePath: resolve16(access2.cwd, target.path),
+      cwd: access2.cwd,
       line: target.line,
       expectedRevision: document.reference.origin.revision
-    }, access.signal);
+    }, access2.signal);
     details = result.details;
     if (["source-changed", "source-unavailable", "file-too-large"].includes(details.status))
       throw new SourceDocumentError(details.status === "source-changed" ? "source-changed" : "source-unavailable", `Source inspection: ${details.status}`);
@@ -7002,12 +7038,12 @@ Next request: ${JSON.stringify({ mode: "inspect", sourceCursor: block.continuati
 
 `);
 }
-async function inspectDocuments(targets, access, continuations, structure) {
+async function inspectDocuments(targets, access2, continuations, structure) {
   const items = [];
   const blocks = [];
   for (const [index, target] of targets.entries()) {
     try {
-      const prepared = await prepare(target, access, structure);
+      const prepared = await prepare(target, access2, structure);
       let blockIndex = blocks.findIndex((block2) => block2.document === prepared.document);
       if (blockIndex < 0) {
         blockIndex = blocks.length;
@@ -7037,7 +7073,7 @@ async function inspectDocuments(targets, access, continuations, structure) {
         structure: prepared.structure
       });
     } catch (error) {
-      if (access.signal?.aborted || error instanceof Error && error.name === "AbortError")
+      if (access2.signal?.aborted || error instanceof Error && error.name === "AbortError")
         throw abortError();
       const status = errorStatus(error);
       if (!status)
@@ -7124,7 +7160,7 @@ ${preview.text}`);
     if (block.remaining.length)
       block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve16(access.cwd, block.document.path));
+      const current = await getSourceRevision(resolve16(access2.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -7145,7 +7181,7 @@ ${preview.text}`);
       if (item?.status === "returned")
         item.source = blockDetails(block);
     }
-    if (access.signal?.aborted)
+    if (access2.signal?.aborted)
       throw abortError();
     if (index >= 5)
       throw new Error("Inspection target limit was not validated");
@@ -7179,9 +7215,9 @@ ${preview.text}`);
     }
   };
 }
-async function continueSource(cursor, access, continuations) {
+async function continueSource(cursor, access2, continuations) {
   const state = continuations.resolve(cursor);
-  const document = await access.load(state.source.path, state.source);
+  const document = await access2.load(state.source.path, state.source);
   const page = sourcePage(document, state.remaining, MAX_RESULT_BYTES - 1400);
   const next = continuations.advance(cursor, page.fragment);
   const block = {
@@ -7640,15 +7676,15 @@ class EvidenceService {
     const contentCandidates = new Set(scan.fileCounts.keys());
     return files.filter((path) => isLikelyTestPath(path) || contentCandidates.has(workspaceRelativePath(cwd, path)));
   }
-  async#candidates(request, input, access) {
+  async#candidates(request, input, access2) {
     const collect = (candidateRequest) => collectEvidenceCandidates({
       request: candidateRequest,
       ...input.changes ? { changes: input.changes } : {},
-      cwd: access.cwd,
-      ...access.signal ? { signal: access.signal } : {},
-      access,
+      cwd: access2.cwd,
+      ...access2.signal ? { signal: access2.signal } : {},
+      access: access2,
       runRipgrep: this.#runner,
-      maxFiles: access.maxFiles
+      maxFiles: access2.maxFiles
     });
     const candidates = await collect(request);
     if (input.changes || request.scope === "strict" || request.path === undefined || candidates.files.length > 0 || candidates.partial) {
@@ -7663,10 +7699,10 @@ class EvidenceService {
       throw abortError();
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
-    const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+    const access2 = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
     if (isSemanticMode(input.mode)) {
       rejectFields(input, [...searchFields, ...inspectFields, "cursor", "matchIndex"], `mode=${input.mode}`);
-      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access)));
+      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access2)));
     }
     if (input.column !== undefined)
       throw new SignalGrepError("column requires semantic navigation");
@@ -7687,12 +7723,12 @@ class EvidenceService {
         "symbol",
         "maxFilesToParse"
       ], "Source continuation", true);
-      return continueSource(input.sourceCursor, access, this.#continuations);
+      return continueSource(input.sourceCursor, access2, this.#continuations);
     }
     if (input.mode === "inspect") {
       rejectFields(input, [...searchFields, "paths", "symbol", "maxFilesToParse"], "mode=inspect");
       const targets = this.#inspectionTargets(input, cwd);
-      return inspectDocuments(targets, access, this.#continuations, this.#structure);
+      return inspectDocuments(targets, access2, this.#continuations, this.#structure);
     }
     if (input.mode === "concept") {
       rejectFields(input, [
@@ -7703,7 +7739,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=concept");
-      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access)));
+      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access2)));
     }
     if (input.mode === "structure") {
       rejectFields(input, [
@@ -7714,7 +7750,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=structure");
-      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access)));
+      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access2)));
     }
     if (input.mode === "files") {
       rejectFields(input, [
@@ -7740,7 +7776,7 @@ class EvidenceService {
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
     }
     if (input.mode === "impact")
-      return this.#impact(input, access);
+      return this.#impact(input, access2);
     if (input.cursor?.includes(".analysis") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       this.#analyses.resolve(input.cursor);
       rejectFields(input, [
@@ -7757,7 +7793,7 @@ class EvidenceService {
       return this.#analyses.page(input.cursor);
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
-      return this.#navigate(input, access);
+      return this.#navigate(input, access2);
     rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor"], "Evidence search");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
@@ -7767,7 +7803,7 @@ class EvidenceService {
         throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
       const chunks = Array.from({ length: Math.ceil(anyOf.length / MAX_ANY_OF_TERMS) }, (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS));
       const { path: _inputPath, ...unscopedInput } = input;
-      let chunkAccess = access;
+      let chunkAccess = access2;
       const runChunks = async (expandedFromPath) => runOwnedParallel((groupSignal) => {
         chunkAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return chunks.map(async (chunk) => {
@@ -7869,7 +7905,7 @@ class EvidenceService {
       literal: false,
       ignoreCase: false
     } : input);
-    const selected = await this.#candidates(request, input, access);
+    const selected = await this.#candidates(request, input, access2);
     const candidates = selected.candidates;
     const kind = terms ? input.within === "function" ? "function-and" : "file-and" : input.roles ? "roles" : "changes";
     const result = {
@@ -7904,7 +7940,7 @@ class EvidenceService {
         } else if (terms || input.roles) {
           if (syntaxLanguage(file.document.path))
             syntaxCapableFiles += 1;
-          const syntax = await access.syntax(file.document);
+          const syntax = await access2.syntax(file.document);
           const classified = terms ? findFunctionConjunctions(file.document, syntax, terms, input.changes?.scope === "lines" ? file.changedRanges : undefined) : filterRoleOccurrences(file.document, syntax, file.occurrences, input.roles ?? []);
           result.items.push(...classified.items);
           result.partial ||= classified.partial;
@@ -7932,7 +7968,7 @@ class EvidenceService {
         result.reasons.push(error.message);
         return;
       } finally {
-        access.releaseSyntax(file.document);
+        access2.releaseSyntax(file.document);
       }
       await processFile(index + 1);
     };
@@ -7944,9 +7980,9 @@ class EvidenceService {
     if (terms || input.roles) {
       result.stats = {
         filesEnumerated: candidates.files.length,
-        filesParsed: access.syntaxParses,
+        filesParsed: access2.syntaxParses,
         filesSkipped: Math.max(0, candidates.files.length - syntaxCapableFiles),
-        cacheHits: access.syntaxCacheHits,
+        cacheHits: access2.syntaxCacheHits,
         parseMs: Math.round(performance.now() - analysisStarted),
         budgetExhausted: result.reasons.some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       };
@@ -7993,7 +8029,7 @@ class EvidenceService {
       ...input.matchIndex !== undefined ? { matchIndex: input.matchIndex } : {}
     };
   }
-  async#impact(input, access) {
+  async#impact(input, access2) {
     const impactStarted = performance.now();
     rejectFields(input, [...searchFields, ...inspectFields], "mode=impact");
     let path;
@@ -8004,12 +8040,12 @@ class EvidenceService {
         throw new CursorError("Impact requires an ordinary search snapshot, not an analysis cursor");
       if (input.matchIndex === undefined || input.path !== undefined || input.line !== undefined || input.symbol !== undefined)
         throw new SignalGrepError("Snapshot impact requires cursor+matchIndex instead of path, line, or symbol");
-      const selected = resolveInspectionTarget(input, access.cwd, this.#snapshots);
+      const selected = resolveInspectionTarget(input, access2.cwd, this.#snapshots);
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       path = selected.path;
       line = selected.line;
-      document = await access.load(path);
+      document = await access2.load(path);
       if (selected.expectedRevision && (document.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, document.reference.origin.revision)))
         throw new SignalGrepError("Source changed; refresh the search");
     } else {
@@ -8018,12 +8054,12 @@ class EvidenceService {
       if (!input.path || input.line === undefined && input.symbol === undefined)
         throw new SignalGrepError("Direct impact requires path and at least one of symbol or line");
       path = input.path;
-      document = await access.load(path);
+      document = await access2.load(path);
     }
     if (document.reference.origin.kind !== "worktree")
       throw new SignalGrepError("Impact currently supports worktree sources only");
-    const root = await navigationRoot(access.cwd, document.path, access.signal);
-    const targetSyntax = await access.syntax(document);
+    const root = await navigationRoot(access2.cwd, document.path, access2.signal);
+    const targetSyntax = await access2.syntax(document);
     let target;
     try {
       target = selectImpactTarget(document, targetSyntax, {
@@ -8031,7 +8067,7 @@ class EvidenceService {
         ...input.symbol !== undefined ? { symbol: input.symbol } : {}
       });
     } finally {
-      access.releaseSyntax(document);
+      access2.releaseSyntax(document);
     }
     const request = normalizeRequest({
       pattern: target.symbol.name,
@@ -8041,14 +8077,14 @@ class EvidenceService {
     });
     const candidates = await collectEvidenceCandidates({
       request,
-      cwd: access.cwd,
-      ...access.signal ? { signal: access.signal } : {},
-      access,
+      cwd: access2.cwd,
+      ...access2.signal ? { signal: access2.signal } : {},
+      access: access2,
       runRipgrep: this.#runner,
-      maxFiles: access.maxFiles
+      maxFiles: access2.maxFiles
     });
-    const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
-    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access);
+    const occurrences = await classifyImpactOccurrences(candidates.files, target, access2);
+    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access2);
     occurrences.items = bound.items;
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
@@ -8062,27 +8098,27 @@ class EvidenceService {
       partial = true;
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
-      const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
-      const allowed = new Set(files.paths.map((file) => resolve17(access.cwd, file)));
-      const primaryPath = resolve17(access.cwd, document.path);
+      const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+      const allowed = new Set(files.paths.map((file) => resolve17(access2.cwd, file)));
+      const primaryPath = resolve17(access2.cwd, document.path);
       const host = {
-        cwd: access.cwd,
-        ...access.signal ? { signal: access.signal } : {},
-        normalizePath: (file) => workspaceRelativePath(access.cwd, file),
+        cwd: access2.cwd,
+        ...access2.signal ? { signal: access2.signal } : {},
+        normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve17(access.cwd, file);
+          const absolutePath = resolve17(access2.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
             return document;
-          return expected ? access.refresh(file, expected) : access.load(file);
+          return expected ? access2.refresh(file, expected) : access2.load(file);
         },
-        syntax: (source) => access.syntax(source),
-        releaseSyntax: (source) => access.releaseSyntax(source),
+        syntax: (source) => access2.syntax(source),
+        releaseSyntax: (source) => access2.releaseSyntax(source),
         listFiles: async () => files,
-        maxFilesToParse: access.maxFiles
+        maxFilesToParse: access2.maxFiles
       };
-      const entryPaths = await this.#testEntryPaths(root, files.paths, access.cwd, access.signal);
+      const entryPaths = await this.#testEntryPaths(root, files.paths, access2.cwd, access2.signal);
       const tests = await findRelatedTests(host, {
         path: document.path,
         line: target.item.line,
@@ -8092,8 +8128,8 @@ class EvidenceService {
       testStats = {
         filesEnumerated: files.paths.length,
         ...tests.stats,
-        filesParsed: access.syntaxParses,
-        cacheHits: access.syntaxCacheHits
+        filesParsed: access2.syntaxParses,
+        cacheHits: access2.syntaxCacheHits
       };
       relatedTestsCoverage = tests.partial || files.partial ? "partial" : "complete";
       partial ||= tests.partial || files.partial;
@@ -8106,12 +8142,12 @@ class EvidenceService {
       items: mergeImpactItems(target.item, occurrences.items, testItems),
       partial,
       reasons: [...reasons],
-      filesRead: access.filesRead,
-      bytesRead: access.bytesRead,
+      filesRead: access2.filesRead,
+      bytesRead: access2.bytesRead,
       stats: {
         ...testStats,
-        filesParsed: access.syntaxParses,
-        cacheHits: access.syntaxCacheHits,
+        filesParsed: access2.syntaxParses,
+        cacheHits: access2.syntaxCacheHits,
         parseMs: testStats?.parseMs ?? Math.round(performance.now() - impactStarted),
         budgetExhausted: testStats?.budgetExhausted ?? [...reasons].some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       },
@@ -8125,7 +8161,7 @@ class EvidenceService {
     };
     return this.#analyses.page(this.#analyses.create(result, (items) => retainedImpactCounts(items), impactRetentionPriority));
   }
-  async#navigate(input, access) {
+  async#navigate(input, access2) {
     const navigationStarted = performance.now();
     rejectFields(input, [...searchFields, ...inspectFields], `mode=${input.mode}`);
     let path = input.path;
@@ -8135,14 +8171,14 @@ class EvidenceService {
     if (input.cursor) {
       if (input.path !== undefined || input.line !== undefined || input.matchIndex === undefined)
         throw new SignalGrepError("Snapshot navigation requires cursor+matchIndex instead of path/line");
-      const selected = this.#singleTarget(input, access.cwd);
+      const selected = this.#singleTarget(input, access2.cwd);
       path = selected.path;
       line = selected.line;
       reference = selected.reference;
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       if (selected.expectedRevision) {
-        const doc = await access.load(path);
+        const doc = await access2.load(path);
         if (doc.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, doc.reference.origin.revision))
           throw new SignalGrepError("Source changed; refresh the search");
         reference = doc.reference;
@@ -8152,13 +8188,13 @@ class EvidenceService {
       throw new SignalGrepError("matchIndex requires a cursor");
     if (!path)
       throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
-    const document = loaded ?? await access.load(path, reference);
+    const document = loaded ?? await access2.load(path, reference);
     const language = syntaxLanguage(document.path);
     if (!language || language === "go") {
       throw new SignalGrepError(`${input.mode} requires reliable JS/TS/TSX syntax (${language ?? "unsupported"})`);
     }
     if (input.mode === "outline") {
-      const syntax = await access.syntax(document);
+      const syntax = await access2.syntax(document);
       const supported = syntax.status === "ok" && syntax.language !== "go";
       const items = supported ? syntax.symbols.map((symbol) => {
         const range = {
@@ -8193,13 +8229,13 @@ class EvidenceService {
         reasons: supported ? [] : [
           `Outline requires reliable JS/TS/TSX syntax (${syntax.language ?? "unsupported"}: ${syntax.status})`
         ],
-        filesRead: access.filesRead,
-        bytesRead: access.bytesRead,
+        filesRead: access2.filesRead,
+        bytesRead: access2.bytesRead,
         stats: {
           filesEnumerated: 1,
-          filesParsed: access.syntaxParses,
+          filesParsed: access2.syntaxParses,
           filesSkipped: 0,
-          cacheHits: access.syntaxCacheHits,
+          cacheHits: access2.syntaxCacheHits,
           parseMs: Math.round(performance.now() - navigationStarted),
           budgetExhausted: false
         },
@@ -8216,26 +8252,26 @@ class EvidenceService {
           "Import and related-test navigation currently support worktree sources only; historical sources are not switched to the worktree"
         ]
       }));
-    const root = await navigationRoot(access.cwd, document.path, access.signal);
-    const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
-    const allowed = new Set(files.paths.map((file) => resolve17(access.cwd, file)));
-    const primaryPath = resolve17(access.cwd, document.path);
+    const root = await navigationRoot(access2.cwd, document.path, access2.signal);
+    const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+    const allowed = new Set(files.paths.map((file) => resolve17(access2.cwd, file)));
+    const primaryPath = resolve17(access2.cwd, document.path);
     const host = {
-      cwd: access.cwd,
-      ...access.signal ? { signal: access.signal } : {},
-      normalizePath: (file) => workspaceRelativePath(access.cwd, file),
+      cwd: access2.cwd,
+      ...access2.signal ? { signal: access2.signal } : {},
+      normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve17(access.cwd, file);
+        const absolutePath = resolve17(access2.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
           return document;
-        return expected ? access.refresh(file, expected) : access.load(file);
+        return expected ? access2.refresh(file, expected) : access2.load(file);
       },
-      syntax: (doc) => access.syntax(doc),
-      releaseSyntax: (doc) => access.releaseSyntax(doc),
+      syntax: (doc) => access2.syntax(doc),
+      releaseSyntax: (doc) => access2.releaseSyntax(doc),
       listFiles: async () => files,
-      maxFilesToParse: access.maxFiles
+      maxFilesToParse: access2.maxFiles
     };
     const request = {
       path: document.path,
@@ -8243,7 +8279,7 @@ class EvidenceService {
       ...input.symbol !== undefined ? { symbol: input.symbol } : {}
     };
     const result = input.mode === "imports" ? await navigateImports(host, request) : await findRelatedTests(host, request, {
-      entryPaths: await this.#testEntryPaths(root, files.paths, access.cwd, access.signal)
+      entryPaths: await this.#testEntryPaths(root, files.paths, access2.cwd, access2.signal)
     });
     return this.#analyses.page(this.#analyses.create({
       ...result,
@@ -8257,8 +8293,8 @@ class EvidenceService {
       stats: {
         filesEnumerated: files.paths.length,
         ...result.stats,
-        filesParsed: access.syntaxParses,
-        cacheHits: access.syntaxCacheHits
+        filesParsed: access2.syntaxParses,
+        cacheHits: access2.syntaxCacheHits
       },
       redact: input.redact ?? false
     }));

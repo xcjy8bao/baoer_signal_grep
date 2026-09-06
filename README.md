@@ -49,7 +49,9 @@ The plugin provides file locations and actual text so the agent can answer from 
 
 ## Install
 
-Have `rg` available in `PATH`. MCP needs Node.js 22.19+; Pi needs Pi 0.84.3+ and Node.js 22.19+ or Bun 1.4+.
+MCP needs Node.js 22.19+; Pi needs Pi 0.84.3+ and Node.js 22.19+ or Bun 1.4+. The package installs a platform-specific ripgrep binary through pinned `@vscode/ripgrep`; no system `rg`, shell function or `PATH` setup is required. Keep optional dependencies enabled during installation. Ripgrep installation works with lifecycle scripts disabled, and searches do not download executables.
+
+To use your own ripgrep, set `BAOER_SIGNAL_GREP_RG_PATH` in the MCP server or Pi process environment to the absolute executable file path (for example `/opt/homebrew/bin/rg`), then restart the host. This applies to content, filename and Git-source searches. Paths containing spaces are supported; aliases, shell functions, relative paths and `~` expansion are not. An invalid override fails explicitly without selecting another executable. If the platform package is missing or unusable, reinstall with optional dependencies enabled or configure your own binary. Native search enforcement remains active during dependency failures; use the host's plugin controls below if you need to disable it while repairing the installation.
 
 ### Pi
 
