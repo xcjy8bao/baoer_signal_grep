@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { AnalysisResultSet } from "./analysis-types.js";
 import { SignalGrepError } from "./errors.js";
+import { resolveSemanticProjectRoot } from "./project-root.js";
 import { SourceAccess, SourceBudgetError } from "./source-access.js";
 import { SourceDocumentError, type SourceDocument } from "./source-document.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
@@ -8,7 +9,8 @@ import { syntaxLanguage } from "./syntax.js";
 
 /** Only admitted, verified worktree source can become executable navigation evidence. */
 export async function semanticProject(access: SourceAccess, targetPath: string) {
-  const files = await listWorkspaceFiles(access.cwd, access.signal);
+  const root = await resolveSemanticProjectRoot(access.cwd, targetPath, access.signal);
+  const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
@@ -58,7 +60,7 @@ export async function semanticProject(access: SourceAccess, targetPath: string) 
       // oxlint-disable-next-line no-await-in-loop -- reread each captured version without doubling retained source memory.
       await access.refresh(document.path, document.reference);
     }
-    const after = await listWorkspaceFiles(access.cwd, access.signal);
+    const after = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
     if (JSON.stringify(after) !== JSON.stringify(files))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
@@ -76,5 +78,5 @@ export async function semanticProject(access: SourceAccess, targetPath: string) 
     },
     stats: { filesEnumerated: paths.length, filesSkipped: paths.length - documents.size },
   };
-  return { documents, primary, result, recheck };
+  return { documents, primary, result, recheck, root };
 }

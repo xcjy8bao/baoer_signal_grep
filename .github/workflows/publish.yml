@@ -31,7 +31,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { readFileSync } from 'node:fs';
           const tag = process.env.RELEASE_TAG;
-          if (!/^v\d+\.\d+\.\d+$/.test(tag ?? '')) throw new Error('Invalid release tag');
+          if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(tag ?? '')) throw new Error('Invalid release tag');
           const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
           const commit = git('rev-parse', `${tag}^{commit}`);
           if (commit !== git('rev-parse', 'origin/main') || commit !== git('rev-parse', 'HEAD')) {

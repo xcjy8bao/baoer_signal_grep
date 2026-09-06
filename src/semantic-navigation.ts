@@ -144,7 +144,7 @@ async function runSemanticNavigation(input: SignalGrepInput, access: SourceAcces
   if (!input.path || !isSemanticMode(input.mode))
     throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
   const project = await semanticProject(access, input.path);
-  const { result, documents, primary } = project;
+  const { result, documents, primary, root } = project;
   result.kind = input.mode;
   result.redact = input.redact ?? false;
   const mode = input.mode;
@@ -169,7 +169,7 @@ async function runSemanticNavigation(input: SignalGrepInput, access: SourceAcces
     }
   };
   await withTypeScript(
-    access.cwd,
+    root,
     [...documents.values()],
     async (channel) => {
       if (!graph) {
@@ -249,6 +249,7 @@ async function runSemanticNavigation(input: SignalGrepInput, access: SourceAcces
       }
     },
     access.signal,
+    access.cwd,
   );
   await project.recheck();
   result.filesRead = access.filesRead;
