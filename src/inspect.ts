@@ -194,7 +194,7 @@ export async function inspectSourceEvidence(
   }
   const evidence: InspectionEvidence = { target, structure, revision };
   const headerBytes = Buffer.byteLength(
-    `${target.path}:${String(target.line)}\n${inspectionDescription(evidence)}\n\n[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}]`,
+    `${target.path}:${String(target.line)}\n${inspectionDescription(evidence)}\n\n[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}${structure.reason ? `; ${structure.reason}` : ""}]`,
   );
   const maxBytes = Math.min(
     maxSourceBytes ?? MAX_RESULT_BYTES,
@@ -261,7 +261,7 @@ export async function inspectSource(
       ? { lineContentTruncated: source.truncatedLines.length }
       : {}),
   };
-  const status = `[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}${!source && target.retainedMatch ? "; refresh the search before inspecting this match" : ""}]`;
+  const status = `[structure: ${structure.status}${structure.provider ? ` via ${structure.provider}` : ""}${structure.reason ? `; ${structure.reason}` : ""}${!source && target.retainedMatch ? "; refresh the search before inspecting this match" : ""}]`;
   const text = source
     ? `${target.path}:${String(target.line)}\n${inspectionDescription(evidence)}\n\n${source.text}${sourceTruncationText(source)}\n\n${status}`
     : `${target.path}:${String(target.line)}\n\n${status}`;

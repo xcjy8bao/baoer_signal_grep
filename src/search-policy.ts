@@ -2,7 +2,7 @@ import type { SearchKind, ShellLanguage } from "./search-policy-commands.js";
 import { ShellSearchPolicy } from "./search-policy-shell.js";
 
 export const SEARCH_POLICY_GUIDANCE =
-  "Local content and filename searches must use baoer_signal_grep. Built-in search tools and direct search commands are blocked before execution. Use pattern for contents or mode=files with query for filenames. Keep read/edit/write, tests and builds available. Do not retry a blocked search through another shell or a custom script.";
+  "Local content and filename searches must use baoer_signal_grep. Built-in search tools and direct search commands are blocked before execution; filtering output from an unrelated producer at a pipeline tail remains available. Use pattern for contents or mode=files with query for filenames. Keep read/edit/write, tests and builds available. Do not retry a blocked search through another shell or a custom script.";
 export const PI_REPLACED_SEARCH_TOOLS = new Set(["grep", "find"]);
 const contentTools = new Set(["grep", "Grep", "SearchFileContent"]);
 const fileTools = new Set(["find", "Glob", "GlobFile", "SearchFiles"]);

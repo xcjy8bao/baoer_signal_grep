@@ -13,6 +13,7 @@ import type { AnalysisItem, AnalysisResultSet } from "./analysis-types.js";
 import { CursorError, SignalGrepError } from "./errors.js";
 import type { SignalGrepResult } from "./types.js";
 import { MAX_RESULT_BYTES } from "./types.js";
+import { modificationTimeBoundsText } from "./source.js";
 import {
   analysisTermPage,
   MAX_INLINE_TERM_COUNT_BYTES,
@@ -222,11 +223,12 @@ export class AnalysisStore {
     const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
     const items: NonNullable<SignalGrepResult["details"]["analysis"]>["items"] = [];
     const scope = result.scope
-      ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.`
+      ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.${modificationTimeBoundsText(result.scope.modifiedAfterMs, result.scope.modifiedBeforeMs)}`
       : "";
     const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
     const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
+    const hasItemDetails = result.items.some((item) => item.details !== undefined);
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${hasItemDetails ? " Structured output retains per-item evidence details." : ""}${scope}${coverage}${stats}`;
     const notice = result.reasons.length
       ? `\n${result.reasons.map((reason) => `[${reason}]`).join("\n")}`
       : "";
@@ -245,7 +247,7 @@ export class AnalysisStore {
               ...(result.redact ? { redact: true } : {}),
             }
           : undefined;
-      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `\n${item.excerpt}` : ""}${item.details ? `\nEvidence: ${JSON.stringify(item.details)}` : ""}${inspect ? `\nInspect: ${JSON.stringify(inspect)}` : ""}`;
+      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `\n${item.excerpt}` : ""}${inspect ? `\nInspect: ${JSON.stringify(inspect)}` : ""}`;
       const rowBytes = Buffer.byteLength(row) + 2;
       if (bytes + rowBytes > MAX_RESULT_BYTES) {
         if (items.length === 0)

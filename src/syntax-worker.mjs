@@ -152,6 +152,7 @@ var MAX_SEARCH_STORAGE_BYTES = 32 * 1024 * 1024;
 var MAX_RESULT_BYTES = 16 * 1024;
 var MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
 var MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
+var MAX_PATTERN_CHARACTERS = 64 * 1024;
 
 // src/syntax-worker.ts
 function fieldsFor(node, language) {

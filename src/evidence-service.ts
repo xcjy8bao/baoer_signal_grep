@@ -51,6 +51,7 @@ import { sameSourceRevision } from "./source.js";
 import type { CodeStructureProvider } from "./structure.js";
 import { filterRoleOccurrences, findFunctionConjunctions } from "./syntax-search.js";
 import { syntaxLanguage } from "./syntax.js";
+import { parsePythonOutline } from "./python-outline.js";
 import {
   MAX_ANY_OF_TERMS,
   MAX_CONFIGURABLE_STRUCTURE_FILES,
@@ -119,6 +120,8 @@ const searchFields = [
   "hidden",
   "context",
   "limit",
+  "modifiedAfter",
+  "modifiedBefore",
 ] satisfies (keyof SignalGrepInput)[];
 const inspectFields = [
   "paths",
@@ -215,6 +218,10 @@ function searchScope(request: SearchRequest): SearchScopeDetails {
     hidden: request.hidden,
     expandedToProjectRoot: request.expandedFromPath !== undefined,
     assertion: path === "." ? "project-wide" : "requested-scope",
+    ...(request.modifiedAfterMs !== undefined ? { modifiedAfterMs: request.modifiedAfterMs } : {}),
+    ...(request.modifiedBeforeMs !== undefined
+      ? { modifiedBeforeMs: request.modifiedBeforeMs }
+      : {}),
   };
 }
 
@@ -301,6 +308,10 @@ export class EvidenceService {
     signal?: AbortSignal,
   ): Promise<SignalGrepResult> {
     if (signal?.aborted) throw abortError();
+    if (input.changes && (input.modifiedAfter !== undefined || input.modifiedBefore !== undefined))
+      throw new SignalGrepError(
+        "modifiedAfter and modifiedBefore apply to worktree searches and cannot be combined with changes",
+      );
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
     const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
@@ -929,43 +940,62 @@ export class EvidenceService {
     if (!path) throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
     const document = loaded ?? (await access.load(path, reference));
     const language = syntaxLanguage(document.path);
-    if (!language || language === "go") {
+    const isPython = /\.py$/iu.test(document.path);
+    if ((!language && !isPython) || language === "go") {
       throw new SignalGrepError(
-        `${input.mode} requires reliable JS/TS/TSX syntax (${language ?? "unsupported"})`,
+        `${input.mode} requires reliable JS/TS/TSX or Python outline syntax (${language ?? "unsupported"})`,
       );
     }
     if (input.mode === "outline") {
-      const syntax = await access.syntax(document);
-      const supported = syntax.status === "ok" && syntax.language !== "go";
+      const syntax = isPython ? undefined : await access.syntax(document);
+      const supported = isPython || (syntax?.status === "ok" && syntax.language !== "go");
       const items: AnalysisItem[] = supported
-        ? syntax.symbols.map((symbol) => {
-            const range = {
-              start: document.toByteOffset(symbol.start),
-              end: document.toByteOffset(symbol.end),
-            };
-            const firstLine = document.lineAt(range.start);
-            const signatureEnd = symbol.bodyStart ?? symbol.end;
-            const signature = document.text.slice(
-              symbol.start,
-              Math.min(signatureEnd, symbol.start + 600),
-            );
-            return {
+        ? isPython
+          ? parsePythonOutline(document).map((symbol) => ({
               path: document.path,
-              line: firstLine,
+              line: symbol.startLine,
               label: `${symbol.kind} ${symbol.name}${symbol.hasBody ? "" : " (no implementation body)"}`,
-              excerpt: signature,
+              excerpt: symbol.signature,
               source: document.reference,
-              range,
+              range: symbol.range,
               details: {
                 kind: "symbol",
+                language: "python",
                 name: symbol.name,
                 scope: symbol.scope,
                 hasBody: symbol.hasBody,
-                exported: symbol.exported,
-                signatureTruncated: signatureEnd - symbol.start > 600,
+                exported: false,
+                syntax: "indentation-based outline; not compiler binding",
               },
-            };
-          })
+            }))
+          : (syntax?.symbols ?? []).map((symbol) => {
+              const range = {
+                start: document.toByteOffset(symbol.start),
+                end: document.toByteOffset(symbol.end),
+              };
+              const firstLine = document.lineAt(range.start);
+              const signatureEnd = symbol.bodyStart ?? symbol.end;
+              const signature = document.text.slice(
+                symbol.start,
+                Math.min(signatureEnd, symbol.start + 600),
+              );
+              return {
+                path: document.path,
+                line: firstLine,
+                label: `${symbol.kind} ${symbol.name}${symbol.hasBody ? "" : " (no implementation body)"}`,
+                excerpt: signature,
+                source: document.reference,
+                range,
+                details: {
+                  kind: "symbol",
+                  name: symbol.name,
+                  scope: symbol.scope,
+                  hasBody: symbol.hasBody,
+                  exported: symbol.exported,
+                  signatureTruncated: signatureEnd - symbol.start > 600,
+                },
+              };
+            })
         : [];
       return this.#analyses.page(
         this.#analyses.create({
@@ -974,17 +1004,21 @@ export class EvidenceService {
           items,
           partial: !supported,
           reasons: supported
-            ? []
+            ? isPython
+              ? [
+                  "Python outline uses indentation boundaries; it does not prove compiler bindings or runtime call relationships",
+                ]
+              : []
             : [
-                `Outline requires reliable JS/TS/TSX syntax (${syntax.language ?? "unsupported"}: ${syntax.status})`,
+                `Outline requires reliable JS/TS/TSX or Python syntax (${syntax?.language ?? "unsupported"}: ${syntax?.status ?? "unsupported"})`,
               ],
           filesRead: access.filesRead,
           bytesRead: access.bytesRead,
           stats: {
             filesEnumerated: 1,
-            filesParsed: access.syntaxParses,
+            filesParsed: isPython ? 0 : access.syntaxParses,
             filesSkipped: 0,
-            cacheHits: access.syntaxCacheHits,
+            cacheHits: isPython ? 0 : access.syntaxCacheHits,
             parseMs: Math.round(performance.now() - navigationStarted),
             budgetExhausted: false,
           },

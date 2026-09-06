@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2] - 2026-09-06
+
+- Add inclusive `modifiedAfter` and exclusive `modifiedBefore` Unix-millisecond filters for worktree searches, with the same verified metadata behavior for content and filename discovery.
+- Add bounded Python `mode="outline"` support for indentation-based class, function and method ranges. The result explicitly remains outline evidence rather than compiler bindings or runtime call relationships.
+- Validate path, pattern and file-filter sizes before starting search processes, and explain effective scope and modification-time bounds in returned details.
+- Keep analysis bodies concise while retaining per-item evidence in structured `details`, and make missing Universal Ctags actionable with a supported outline alternative.
+- Calibrate native search enforcement so output-only `grep`/`egrep`/`fgrep` (and PowerShell `Select-String`/`sls`) filters remain usable while alternate search producers and wrappers stay blocked.
+
 ## [1.2.1] - 2026-09-06
 
 - Bundle platform-specific ripgrep through a pinned dependency so MCP and Pi searches work without `rg` in `PATH`, including installations with lifecycle scripts disabled. Use one executable resolver for content, filename and Git-source searches, with an explicit `BAOER_SIGNAL_GREP_RG_PATH` override and actionable dependency errors.

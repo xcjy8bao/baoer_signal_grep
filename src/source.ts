@@ -44,6 +44,41 @@ export function sameSourceRevision(left: SourceRevision, right: SourceRevision):
   );
 }
 
+/** Worktree modification-time bounds are inclusive at the lower edge and exclusive at the upper edge. */
+export function matchesModificationTime(
+  revision: SourceRevision,
+  modifiedAfterMs?: number,
+  modifiedBeforeMs?: number,
+): boolean {
+  return (
+    (modifiedAfterMs === undefined || revision.mtimeMs >= modifiedAfterMs) &&
+    (modifiedBeforeMs === undefined || revision.mtimeMs < modifiedBeforeMs)
+  );
+}
+
+function modificationTimeDisplay(value: number): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? `${String(value)} Unix ms`
+    : JSON.stringify(date.toISOString());
+}
+
+export function modificationTimeBoundsText(
+  modifiedAfterMs?: number,
+  modifiedBeforeMs?: number,
+): string {
+  if (modifiedAfterMs === undefined && modifiedBeforeMs === undefined) return "";
+  const bounds = [
+    modifiedAfterMs === undefined
+      ? undefined
+      : `mtime >= ${modificationTimeDisplay(modifiedAfterMs)}`,
+    modifiedBeforeMs === undefined
+      ? undefined
+      : `mtime < ${modificationTimeDisplay(modifiedBeforeMs)}`,
+  ].filter((value): value is string => value !== undefined);
+  return ` [Modification-time filter: ${bounds.join("; ")}.]`;
+}
+
 export async function assertExistingSearchPath(path: string, cwd: string): Promise<void> {
   await new SearchPathPolicy(cwd).assertExistingPath(path);
 }

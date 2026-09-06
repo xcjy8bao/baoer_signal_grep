@@ -1,6 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { Language, Parser, type Node } from "web-tree-sitter";
-import { classifyCommand, type SearchKind, type ShellLanguage } from "./search-policy-commands.js";
+import {
+  classifyCommand,
+  executableName,
+  type SearchKind,
+  type ShellLanguage,
+} from "./search-policy-commands.js";
 
 export const MAX_POLICY_COMMAND_BYTES = 64 * 1024;
 const MAX_SHELL_NESTING = 4;
@@ -42,6 +47,38 @@ function commandWords(node: Node, language: ShellLanguage): Array<string | null>
               child !== null && !["command_argument_sep", "redirection"].includes(child.type),
           ) ?? []);
   return [literalWord(name, language), ...args.map((arg) => literalWord(arg, language))];
+}
+
+function isSafePipelineFilter(
+  node: Node,
+  language: ShellLanguage,
+  words: Array<string | null>,
+): boolean {
+  const executable = words[0];
+  if (executable === null || executable === undefined) return false;
+  const name = executableName(executable);
+  const filterNames =
+    language === "powershell"
+      ? new Set(["select-string", "sls"])
+      : new Set(["grep", "egrep", "fgrep"]);
+  if (!filterNames.has(language === "powershell" ? name.toLowerCase() : name)) return false;
+  const pipeline = node.parent;
+  if (!pipeline || pipeline.type !== "pipeline") return false;
+  const commands = pipeline.namedChildren.filter(
+    (child): child is Node => child !== null && child.type === "command",
+  );
+  const last = commands.at(-1);
+  if (
+    !last ||
+    last.startIndex !== node.startIndex ||
+    last.endIndex !== node.endIndex ||
+    commands.length < 2
+  )
+    return false;
+  return commands.slice(0, -1).every((candidate) => {
+    const decision = classifyCommand(commandWords(candidate, language), language);
+    return !decision.kind && !decision.nested;
+  });
 }
 
 /** WASM grammars are shipped with the hook; parsing never reads shell scripts or executes code. */
@@ -98,8 +135,13 @@ export class ShellSearchPolicy {
         const commands = tree.rootNode.descendantsOfType("command");
         for (const node of commands) {
           if (!node) continue;
-          const decision = classifyCommand(commandWords(node, language), language);
-          if (decision.kind) return decision.kind;
+          const words = commandWords(node, language);
+          const decision = classifyCommand(words, language);
+          if (
+            decision.kind &&
+            !(decision.kind === "content" && isSafePipelineFilter(node, language, words))
+          )
+            return decision.kind;
           if (decision.nested) {
             const nested = this.#inspect(
               decision.nested.command,

@@ -6,6 +6,7 @@ import { consumeCappedLines } from "./capped-lines.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
+import { matchesModificationTime } from "./source.js";
 import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
   MAX_SOURCE_REVISION_CONCURRENCY,
@@ -269,6 +270,8 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     const lossyPaths = new Set<string>();
     let totalMatches = 0;
     let truncatedLines = 0;
+    let modificationTimeFilterIncomplete = false;
+    let candidateRevisions = new Map<string, import("./types.js").SourceRevision>();
 
     const onLine = (line: string) => {
       if (line.length === 0) return;
@@ -287,6 +290,19 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       const rawContent = decodeRgText(event.data.lines, "line content");
       const normalizedContent = rawContent.text.replaceAll("\r", "").replace(/\n$/, "");
       const path = displayPath(rawPath.text, cwd);
+      if (request.modifiedAfterMs !== undefined || request.modifiedBeforeMs !== undefined) {
+        const revision = candidateRevisions.get(path.absolutePath);
+        if (!revision) {
+          modificationTimeFilterIncomplete = true;
+          retention.noteLimit(
+            `Modification time could not be verified for ${path.displayPath}; matching evidence was retained`,
+          );
+        } else if (
+          !matchesModificationTime(revision, request.modifiedAfterMs, request.modifiedBeforeMs)
+        ) {
+          return;
+        }
+      }
       if (rawPath.encoding === "utf-8") lossyPaths.add(path.absolutePath);
       const submatches = event.data.submatches ?? [];
       if (submatches.some((match) => match.end > rawContent.bytes.length))
@@ -337,6 +353,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         maxSourceRevisionFiles,
         signal,
       );
+      candidateRevisions = before;
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess(
         { executable, args, cwd, ...(signal ? { signal } : {}) },
@@ -358,7 +375,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         totalMatches,
         fileCounts,
         sourceRevisions,
-        snapshotComplete: matches.length === totalMatches,
+        snapshotComplete: matches.length === totalMatches && !modificationTimeFilterIncomplete,
         truncatedLines,
         retention: retention.details,
       };

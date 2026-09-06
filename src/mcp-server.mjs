@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.1",
+  version: "1.2.2",
   description: "Context-efficient local search for files, documents, notes and logs across Pi and MCP clients",
   keywords: [
     "ai-agent",
@@ -195,6 +195,9 @@ var MAX_RESULT_BYTES = 16 * 1024;
 var MAX_CONTEXT_LINES = 20;
 var MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
 var MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
+var MAX_PATH_CHARACTERS = 4096;
+var MAX_PATTERN_CHARACTERS = 64 * 1024;
+var MAX_FILE_FILTER_ITEMS = 64;
 var MAX_SOURCE_REVISION_CONCURRENCY = 16;
 var MAX_SOURCE_REVISION_FILES = 50000;
 
@@ -609,9 +612,6 @@ async function resolveRipgrepExecutable() {
   return executable;
 }
 
-// src/scan-revisions.ts
-import { resolve as resolve2 } from "node:path";
-
 // src/source.ts
 import { readFile, realpath as realpath2, stat as stat2 } from "node:fs/promises";
 var SOURCE_RANGE_METADATA_RESERVE_BYTES = 1024;
@@ -635,6 +635,22 @@ function sourceRevisionFromStats(metadata) {
 }
 function sameSourceRevision(left, right) {
   return left.size === right.size && left.mtimeMs === right.mtimeMs && (left.ctimeMs === undefined || right.ctimeMs === undefined || left.ctimeMs === right.ctimeMs) && left.inode === right.inode && left.device === right.device;
+}
+function matchesModificationTime(revision, modifiedAfterMs, modifiedBeforeMs) {
+  return (modifiedAfterMs === undefined || revision.mtimeMs >= modifiedAfterMs) && (modifiedBeforeMs === undefined || revision.mtimeMs < modifiedBeforeMs);
+}
+function modificationTimeDisplay(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? `${String(value)} Unix ms` : JSON.stringify(date.toISOString());
+}
+function modificationTimeBoundsText(modifiedAfterMs, modifiedBeforeMs) {
+  if (modifiedAfterMs === undefined && modifiedBeforeMs === undefined)
+    return "";
+  const bounds = [
+    modifiedAfterMs === undefined ? undefined : `mtime >= ${modificationTimeDisplay(modifiedAfterMs)}`,
+    modifiedBeforeMs === undefined ? undefined : `mtime < ${modificationTimeDisplay(modifiedBeforeMs)}`
+  ].filter((value) => value !== undefined);
+  return ` [Modification-time filter: ${bounds.join("; ")}.]`;
 }
 async function assertExistingPathInsideCwd(path, cwd) {
   if (!isPathInsideCwd(path, cwd)) {
@@ -752,6 +768,7 @@ function sourceRangeFromBytes(content, startLine, endLine, targetLine = startLin
 }
 
 // src/scan-revisions.ts
+import { resolve as resolve2 } from "node:path";
 async function captureBatch(paths, revisions, signal) {
   if (signal?.aborted)
     throw abortError();
@@ -971,6 +988,8 @@ function createRipgrepRunner(options = {}) {
     const lossyPaths = new Set;
     let totalMatches = 0;
     let truncatedLines = 0;
+    let modificationTimeFilterIncomplete = false;
+    let candidateRevisions = new Map;
     const onLine = (line) => {
       if (line.length === 0)
         return;
@@ -989,6 +1008,15 @@ function createRipgrepRunner(options = {}) {
       const rawContent = decodeRgText(event.data.lines, "line content");
       const normalizedContent = rawContent.text.replaceAll("\r", "").replace(/\n$/, "");
       const path = displayPath(rawPath.text, cwd);
+      if (request.modifiedAfterMs !== undefined || request.modifiedBeforeMs !== undefined) {
+        const revision = candidateRevisions.get(path.absolutePath);
+        if (!revision) {
+          modificationTimeFilterIncomplete = true;
+          retention.noteLimit(`Modification time could not be verified for ${path.displayPath}; matching evidence was retained`);
+        } else if (!matchesModificationTime(revision, request.modifiedAfterMs, request.modifiedBeforeMs)) {
+          return;
+        }
+      }
       if (rawPath.encoding === "utf-8")
         lossyPaths.add(path.absolutePath);
       const submatches = event.data.submatches ?? [];
@@ -1033,6 +1061,7 @@ function createRipgrepRunner(options = {}) {
         "--",
         searchTarget
       ], cwd, maxSourceRevisionFiles, signal);
+      candidateRevisions = before;
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess({ executable, args, cwd, ...signal ? { signal } : {} }, (stdout) => consumeCappedLines(stdout, onLine, { maxLineBytes: maxEventBytes }));
       if (code !== 0 && code !== 1) {
@@ -1050,7 +1079,7 @@ function createRipgrepRunner(options = {}) {
         totalMatches,
         fileCounts,
         sourceRevisions,
-        snapshotComplete: matches.length === totalMatches,
+        snapshotComplete: matches.length === totalMatches && !modificationTimeFilterIncomplete,
         truncatedLines,
         retention: retention.details
       };
@@ -1211,13 +1240,21 @@ function createCtagsStructureProvider(options = {}) {
         }
         if (hasCode(error, "ENOENT") || error instanceof CtagsCommandError) {
           return {
-            details: { status: "provider-unavailable", provider: "universal-ctags" },
+            details: {
+              status: "provider-unavailable",
+              provider: "universal-ctags",
+              reason: "Universal Ctags is unavailable; install universal-ctags or use JS/TS/Python outline support"
+            },
             currentRevision
           };
         }
         if (error instanceof CtagsProtocolError) {
           return {
-            details: { status: "parse-error", provider: "universal-ctags" },
+            details: {
+              status: "parse-error",
+              provider: "universal-ctags",
+              reason: "Universal Ctags returned invalid JSON output; check the installed provider"
+            },
             currentRevision
           };
         }
@@ -2360,6 +2397,40 @@ function list(value) {
     return [];
   return (Array.isArray(value) ? value : [value]).filter((item) => item.length > 0);
 }
+function validateText(value, field, maxCharacters, singleLine = false) {
+  if (!value.isWellFormed() || /\0/.test(value) || singleLine && /[\r\n]/.test(value))
+    throw new SignalGrepError(`${field} must be well-formed text without NUL or line breaks`);
+  if (value.length > maxCharacters)
+    throw new SignalGrepError(`${field} is too long (maximum ${String(maxCharacters)} characters); use a shorter value or a narrower working directory`);
+}
+function validateSearchPath(value, field = "path") {
+  validateText(value.replace(/^@/, ""), field, MAX_PATH_CHARACTERS, true);
+}
+function validateRawSearchInput(input) {
+  if (input.pattern !== undefined)
+    validateText(input.pattern, "pattern", MAX_PATTERN_CHARACTERS);
+  if (input.path !== undefined) {
+    validateSearchPath(input.path);
+  }
+  for (const [field, value] of [
+    ["glob", input.glob],
+    ["exclude", input.exclude]
+  ]) {
+    const values = list(value);
+    if (values.length > MAX_FILE_FILTER_ITEMS)
+      throw new SignalGrepError(`${field} accepts at most ${String(MAX_FILE_FILTER_ITEMS)} entries`);
+    values.forEach((item) => validateText(item, field, MAX_PATH_CHARACTERS, true));
+  }
+  for (const [field, value] of [
+    ["modifiedAfter", input.modifiedAfter],
+    ["modifiedBefore", input.modifiedBefore]
+  ]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+      throw new SignalGrepError(`${field} must be a non-negative Unix timestamp in milliseconds`);
+  }
+  if (input.modifiedAfter !== undefined && input.modifiedBefore !== undefined && input.modifiedAfter > input.modifiedBefore)
+    throw new SignalGrepError("modifiedAfter must be earlier than or equal to modifiedBefore");
+}
 function boundedInteger(value, fallback, minimum, maximum, field) {
   const candidate = value ?? fallback;
   if (!Number.isSafeInteger(candidate) || candidate < minimum || candidate > maximum) {
@@ -2368,6 +2439,7 @@ function boundedInteger(value, fallback, minimum, maximum, field) {
   return candidate;
 }
 function normalizeRequest(input) {
+  validateRawSearchInput(input);
   if (input.scope !== undefined && input.scope !== "strict" && input.scope !== "expand")
     throw new SignalGrepError("scope must be strict or expand");
   const pattern = input.pattern;
@@ -2386,6 +2458,8 @@ function normalizeRequest(input) {
     context: boundedInteger(input.context, 0, 0, MAX_CONTEXT_LINES, "context"),
     pageSize: boundedInteger(input.limit, DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, "limit"),
     redact: input.redact ?? false,
+    ...input.modifiedAfter !== undefined ? { modifiedAfterMs: input.modifiedAfter } : {},
+    ...input.modifiedBefore !== undefined ? { modifiedBeforeMs: input.modifiedBefore } : {},
     ...input.scope !== undefined ? { scope: input.scope } : {},
     ...input.wholeWord !== undefined ? { wholeWord: input.wholeWord } : {}
   };
@@ -4335,7 +4409,7 @@ function navigateSemantics(input, access2) {
 }
 
 // src/evidence-service.ts
-import { dirname as dirname5, resolve as resolve17 } from "node:path";
+import { dirname as dirname5, resolve as resolve18 } from "node:path";
 
 // src/analysis-store.ts
 import { randomUUID } from "node:crypto";
@@ -4555,10 +4629,11 @@ class AnalysisStore {
     const inlineTerms = pagedTerms ? undefined : result.termCounts;
     const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
     const items = [];
-    const scope = result.scope ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.` : "";
+    const scope = result.scope ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.${modificationTimeBoundsText(result.scope.modifiedAfterMs, result.scope.modifiedBeforeMs)}` : "";
     const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
     const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
-    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${scope}${coverage}${stats}`;
+    const hasItemDetails = result.items.some((item) => item.details !== undefined);
+    const header = `${result.kind}: ${result.items.length} retained ${result.unit} (${result.partial ? "PARTIAL" : "complete"}). ${result.counts ? `Counts: ${JSON.stringify(result.counts)}. ` : ""}${inlineTerms ? `Term counts: ${JSON.stringify(inlineTerms)}. ` : ""}${termsRequest ? `Term counts are paginated: ${JSON.stringify(termsRequest)}. ` : ""}Counts use ${result.unit}; they are not ordinary matching-line counts.${hasItemDetails ? " Structured output retains per-item evidence details." : ""}${scope}${coverage}${stats}`;
     const notice = result.reasons.length ? `
 ${result.reasons.map((reason) => `[${reason}]`).join(`
 `)}` : "";
@@ -4576,8 +4651,7 @@ ${result.reasons.map((reason) => `[${reason}]`).join(`
         ...result.redact ? { redact: true } : {}
       } : undefined;
       const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `
-${item.excerpt}` : ""}${item.details ? `
-Evidence: ${JSON.stringify(item.details)}` : ""}${inspect ? `
+${item.excerpt}` : ""}${inspect ? `
 Inspect: ${JSON.stringify(inspect)}` : ""}`;
       const rowBytes = Buffer.byteLength(row) + 2;
       if (bytes + rowBytes > MAX_RESULT_BYTES) {
@@ -6630,6 +6704,35 @@ async function runOwnedParallel(start, parent) {
 
 // src/file-discovery.ts
 import { posix as posix4 } from "node:path";
+
+// src/file-metadata-filter.ts
+import { resolve as resolve16 } from "node:path";
+async function filterPathsByModificationTime(cwd, paths, modifiedAfterMs, modifiedBeforeMs, signal) {
+  if (modifiedAfterMs === undefined && modifiedBeforeMs === undefined)
+    return { paths: [...paths], partial: false, reasons: [] };
+  const retained = [];
+  const reasons = new Set;
+  for (let offset = 0;offset < paths.length; offset += MAX_SOURCE_REVISION_CONCURRENCY) {
+    if (signal?.aborted)
+      throw abortError();
+    const batch = paths.slice(offset, offset + MAX_SOURCE_REVISION_CONCURRENCY);
+    const revisions = await Promise.all(batch.map(async (path) => {
+      const revision = await getSourceRevision(resolve16(cwd, path));
+      return revision ? { path, revision } : { path };
+    }));
+    for (const { path, revision } of revisions) {
+      if (!revision) {
+        reasons.add(`Modification time unavailable for ${path}; it was excluded from the filtered set`);
+        continue;
+      }
+      if (matchesModificationTime(revision, modifiedAfterMs, modifiedBeforeMs))
+        retained.push(path);
+    }
+  }
+  return { paths: retained, partial: reasons.size > 0, reasons: [...reasons] };
+}
+
+// src/file-discovery.ts
 var graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 function subsequenceScore(text, query) {
   const characters = Array.from(graphemes.segment(text), (item) => item.segment);
@@ -6681,7 +6784,8 @@ async function discoverFiles(input, cwd, signal) {
     exclude: request.exclude,
     hidden: request.hidden
   });
-  const selected = files.paths.flatMap((path) => {
+  const filtered = await filterPathsByModificationTime(cwd, files.paths, request.modifiedAfterMs, request.modifiedBeforeMs, signal);
+  const selected = filtered.paths.flatMap((path) => {
     const rank = scoreFilePath(path, query);
     return rank ? [{ path, ...rank }] : [];
   }).toSorted((left, right) => right.score - left.score || left.path.localeCompare(right.path));
@@ -6693,8 +6797,8 @@ async function discoverFiles(input, cwd, signal) {
   return {
     kind: "files",
     unit: "files",
-    partial: files.partial,
-    reasons: files.reasons,
+    partial: files.partial || filtered.partial,
+    reasons: [...new Set([...files.reasons, ...filtered.reasons])],
     items: selected.map((item) => ({
       path: item.path,
       line: 1,
@@ -6706,7 +6810,7 @@ async function discoverFiles(input, cwd, signal) {
         inspect: { mode: "inspect", path: item.path, line: 1 }
       }
     })),
-    coverage: { fileEnumeration: files.partial ? "partial" : "complete" },
+    coverage: { fileEnumeration: files.partial || filtered.partial ? "partial" : "complete" },
     stats: { filesEnumerated: files.paths.length },
     scope: {
       path: request.path ?? ".",
@@ -6715,7 +6819,9 @@ async function discoverFiles(input, cwd, signal) {
       exclude: request.exclude,
       hidden: request.hidden,
       expandedToProjectRoot: false,
-      assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide"
+      assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide",
+      ...request.modifiedAfterMs !== undefined ? { modifiedAfterMs: request.modifiedAfterMs } : {},
+      ...request.modifiedBeforeMs !== undefined ? { modifiedBeforeMs: request.modifiedBeforeMs } : {}
     },
     redact: input.redact ?? false
   };
@@ -6917,7 +7023,7 @@ class SourceContinuations {
 }
 
 // src/source-inspection.ts
-import { resolve as resolve16 } from "node:path";
+import { resolve as resolve17 } from "node:path";
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -6983,7 +7089,7 @@ async function prepare(target, access2, structure) {
     }
   } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range) {
     const result = await structure.inspect({
-      absolutePath: resolve16(access2.cwd, target.path),
+      absolutePath: resolve17(access2.cwd, target.path),
       cwd: access2.cwd,
       line: target.line,
       expectedRevision: document.reference.origin.revision
@@ -7023,7 +7129,7 @@ function blockDetails(block) {
   };
 }
 function render(items, blocks, single) {
-  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
+  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
 Retry: ${JSON.stringify(item.retry)}` : ""}`);
   const sourceRows = blocks.map((block, index) => `[Block #${index + 1}] ${block.document.path}; ${block.document.reference.origin.kind === "git" ? `commit ${block.document.reference.origin.commit}; blob ${block.document.reference.origin.blob}` : `source sha256 ${block.document.reference.origin.contentHash}`}
 ${block.text.join(`
@@ -7160,7 +7266,7 @@ ${preview.text}`);
     if (block.remaining.length)
       block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve16(access2.cwd, block.document.path));
+      const current = await getSourceRevision(resolve17(access2.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -7537,6 +7643,200 @@ function findFunctionConjunctions(document, analysis, terms, changedRanges) {
   return { items, partial: false, reasons: [] };
 }
 
+// src/python-outline.ts
+function indentation(line) {
+  let width = 0;
+  for (const character of line) {
+    if (character === " ")
+      width += 1;
+    else if (character === "\t")
+      width += 4;
+    else
+      break;
+  }
+  return width;
+}
+function stripStringsAndComments(line, state) {
+  const code = line.split("");
+  const blank = (start, end) => {
+    for (let index2 = start;index2 < end; index2 += 1)
+      code[index2] = " ";
+  };
+  let index = 0;
+  while (index < line.length) {
+    if (state.tripleQuote) {
+      const delimiter2 = state.tripleQuote.repeat(3);
+      const close = line.indexOf(delimiter2, index);
+      if (close < 0) {
+        blank(index, line.length);
+        return code.join("");
+      }
+      blank(index, close + 3);
+      index = close + 3;
+      delete state.tripleQuote;
+      continue;
+    }
+    const character = line[index];
+    if (character === "#") {
+      blank(index, line.length);
+      break;
+    }
+    if (character !== "'" && character !== '"') {
+      index += 1;
+      continue;
+    }
+    const delimiter = line.slice(index, index + 3);
+    if (delimiter === "'''" || delimiter === '"""') {
+      state.tripleQuote = character;
+      blank(index, Math.min(line.length, index + 3));
+      index += 3;
+      continue;
+    }
+    blank(index, index + 1);
+    index += 1;
+    while (index < line.length) {
+      if (line[index] === "\\") {
+        blank(index, Math.min(line.length, index + 2));
+        index += 2;
+        continue;
+      }
+      if (line[index] === character) {
+        blank(index, index + 1);
+        index += 1;
+        break;
+      }
+      blank(index, index + 1);
+      index += 1;
+    }
+  }
+  return code.join("");
+}
+function scanLines(document) {
+  const state = {};
+  let depth = 0;
+  return document.text.split(`
+`).map((text) => {
+    const code = stripStringsAndComments(text, state);
+    const depthBefore = depth;
+    depth = scanTopLevelColon(code, depth).depth;
+    return {
+      text,
+      code,
+      indent: indentation(text),
+      meaningful: code.trim().length > 0,
+      depthBefore,
+      depthAfter: depth
+    };
+  });
+}
+function declarations(lines) {
+  return lines.flatMap((line, lineIndex) => {
+    const match = /^([ \t]*)(?:(?:async)[ \t]+)?(def|class)[ \t]+([\p{ID_Start}_][\p{ID_Continue}]*)[ \t]*(?=[:(])/u.exec(line.code);
+    if (!match)
+      return [];
+    return [
+      {
+        name: match[3] ?? "",
+        kind: match[2] === "class" ? "class" : "function",
+        indent: line.indent,
+        lineIndex
+      }
+    ];
+  });
+}
+function endLines(lines) {
+  const nextBoundaries = Array.from({ length: lines.length }, () => lines.length);
+  const candidates = [];
+  for (let lineIndex = lines.length - 1;lineIndex >= 0; lineIndex -= 1) {
+    const line = lines[lineIndex];
+    if (!line?.meaningful || line.depthBefore !== 0)
+      continue;
+    while (candidates.at(-1) && (candidates.at(-1)?.indent ?? 0) > line.indent) {
+      candidates.pop();
+    }
+    nextBoundaries[lineIndex] = candidates.at(-1)?.lineIndex ?? lines.length;
+    candidates.push({ lineIndex, indent: line.indent });
+  }
+  return nextBoundaries;
+}
+function scanTopLevelColon(code, initialDepth) {
+  let depth = initialDepth;
+  let colon = -1;
+  for (let index = 0;index < code.length; index += 1) {
+    const character = code[index];
+    if (character === "(" || character === "[" || character === "{")
+      depth += 1;
+    else if (character === ")" || character === "]" || character === "}")
+      depth = Math.max(0, depth - 1);
+    else if (character === ":" && depth === 0 && colon < 0)
+      colon = index;
+  }
+  return { depth, colon };
+}
+function hasBody(lines, declaration2, endLine) {
+  let headerEnded = false;
+  let depth = 0;
+  for (let lineIndex = declaration2.lineIndex;lineIndex < endLine; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (!line)
+      continue;
+    const scanned = scanTopLevelColon(line.code, depth);
+    depth = scanned.depth;
+    if (scanned.colon < 0)
+      continue;
+    headerEnded = true;
+    if (line.code.slice(scanned.colon + 1).trim().length > 0)
+      return true;
+    break;
+  }
+  if (!headerEnded)
+    return false;
+  for (let lineIndex = declaration2.lineIndex + 1;lineIndex < endLine; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (line?.meaningful && line.indent > declaration2.indent)
+      return true;
+  }
+  return false;
+}
+function parsePythonOutline(document) {
+  if (!document.utf8)
+    return [];
+  const lines = scanLines(document);
+  const found = declarations(lines);
+  const boundaries = endLines(lines);
+  const active = [];
+  return found.map((declaration2) => {
+    while (active.at(-1) && (active.at(-1)?.lineIndex ?? 0) >= declaration2.lineIndex) {
+      active.pop();
+    }
+    while (active.at(-1) && (active.at(-1)?.indent ?? 0) >= declaration2.indent) {
+      active.pop();
+    }
+    const parents = [...active];
+    const boundary = boundaries[declaration2.lineIndex] ?? lines.length;
+    const endLine = boundary === lines.length ? lines.length : boundary;
+    const nearestClass = parents.toReversed().find((candidate) => candidate.kind === "class");
+    const kind = declaration2.kind === "function" && nearestClass ? "method" : declaration2.kind;
+    const scope = parents.map((item2) => item2.name);
+    const range = document.lineRange(declaration2.lineIndex + 1, endLine);
+    const lineStart = document.toCharacterOffset(range.start);
+    const signature = document.text.slice(lineStart, Math.min(document.toCharacterOffset(range.end), lineStart + 600)).split(`
+`, 1)[0]?.trimEnd() ?? "";
+    const item = {
+      name: declaration2.name,
+      kind,
+      startLine: declaration2.lineIndex + 1,
+      endLine,
+      scope,
+      hasBody: hasBody(lines, declaration2, boundary),
+      range,
+      signature
+    };
+    active.push(declaration2);
+    return item;
+  });
+}
+
 // src/evidence-service.ts
 function isEvidenceRequest(input) {
   return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || (input.cursor?.includes(".analysis") ?? false);
@@ -7562,7 +7862,9 @@ var searchFields = [
   "ignoreCase",
   "hidden",
   "context",
-  "limit"
+  "limit",
+  "modifiedAfter",
+  "modifiedBefore"
 ];
 var inspectFields = [
   "paths",
@@ -7634,13 +7936,15 @@ function searchScope(request) {
     exclude: [...request.exclude],
     hidden: request.hidden,
     expandedToProjectRoot: request.expandedFromPath !== undefined,
-    assertion: path === "." ? "project-wide" : "requested-scope"
+    assertion: path === "." ? "project-wide" : "requested-scope",
+    ...request.modifiedAfterMs !== undefined ? { modifiedAfterMs: request.modifiedAfterMs } : {},
+    ...request.modifiedBeforeMs !== undefined ? { modifiedBeforeMs: request.modifiedBeforeMs } : {}
   };
 }
 async function navigationRoot(cwd, path, signal) {
-  const absolute = resolve17(cwd, path);
+  const absolute = resolve18(cwd, path);
   if (isPathInsideCwd(absolute, cwd))
-    return resolve17(cwd);
+    return resolve18(cwd);
   return await findGitRepository(dirname5(absolute), signal) ?? dirname5(absolute);
 }
 
@@ -7697,6 +8001,8 @@ class EvidenceService {
   async search(input, cwd, signal) {
     if (signal?.aborted)
       throw abortError();
+    if (input.changes && (input.modifiedAfter !== undefined || input.modifiedBefore !== undefined))
+      throw new SignalGrepError("modifiedAfter and modifiedBefore apply to worktree searches and cannot be combined with changes");
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
     const access2 = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
@@ -8099,14 +8405,14 @@ class EvidenceService {
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
       const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
-      const allowed = new Set(files.paths.map((file) => resolve17(access2.cwd, file)));
-      const primaryPath = resolve17(access2.cwd, document.path);
+      const allowed = new Set(files.paths.map((file) => resolve18(access2.cwd, file)));
+      const primaryPath = resolve18(access2.cwd, document.path);
       const host = {
         cwd: access2.cwd,
         ...access2.signal ? { signal: access2.signal } : {},
         normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve17(access2.cwd, file);
+          const absolutePath = resolve18(access2.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
@@ -8190,13 +8496,30 @@ class EvidenceService {
       throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
     const document = loaded ?? await access2.load(path, reference);
     const language = syntaxLanguage(document.path);
-    if (!language || language === "go") {
-      throw new SignalGrepError(`${input.mode} requires reliable JS/TS/TSX syntax (${language ?? "unsupported"})`);
+    const isPython = /\.py$/iu.test(document.path);
+    if (!language && !isPython || language === "go") {
+      throw new SignalGrepError(`${input.mode} requires reliable JS/TS/TSX or Python outline syntax (${language ?? "unsupported"})`);
     }
     if (input.mode === "outline") {
-      const syntax = await access2.syntax(document);
-      const supported = syntax.status === "ok" && syntax.language !== "go";
-      const items = supported ? syntax.symbols.map((symbol) => {
+      const syntax = isPython ? undefined : await access2.syntax(document);
+      const supported = isPython || syntax?.status === "ok" && syntax.language !== "go";
+      const items = supported ? isPython ? parsePythonOutline(document).map((symbol) => ({
+        path: document.path,
+        line: symbol.startLine,
+        label: `${symbol.kind} ${symbol.name}${symbol.hasBody ? "" : " (no implementation body)"}`,
+        excerpt: symbol.signature,
+        source: document.reference,
+        range: symbol.range,
+        details: {
+          kind: "symbol",
+          language: "python",
+          name: symbol.name,
+          scope: symbol.scope,
+          hasBody: symbol.hasBody,
+          exported: false,
+          syntax: "indentation-based outline; not compiler binding"
+        }
+      })) : (syntax?.symbols ?? []).map((symbol) => {
         const range = {
           start: document.toByteOffset(symbol.start),
           end: document.toByteOffset(symbol.end)
@@ -8226,16 +8549,18 @@ class EvidenceService {
         unit: "symbols",
         items,
         partial: !supported,
-        reasons: supported ? [] : [
-          `Outline requires reliable JS/TS/TSX syntax (${syntax.language ?? "unsupported"}: ${syntax.status})`
+        reasons: supported ? isPython ? [
+          "Python outline uses indentation boundaries; it does not prove compiler bindings or runtime call relationships"
+        ] : [] : [
+          `Outline requires reliable JS/TS/TSX or Python syntax (${syntax?.language ?? "unsupported"}: ${syntax?.status ?? "unsupported"})`
         ],
         filesRead: access2.filesRead,
         bytesRead: access2.bytesRead,
         stats: {
           filesEnumerated: 1,
-          filesParsed: access2.syntaxParses,
+          filesParsed: isPython ? 0 : access2.syntaxParses,
           filesSkipped: 0,
-          cacheHits: access2.syntaxCacheHits,
+          cacheHits: isPython ? 0 : access2.syntaxCacheHits,
           parseMs: Math.round(performance.now() - navigationStarted),
           budgetExhausted: false
         },
@@ -8254,14 +8579,14 @@ class EvidenceService {
       }));
     const root = await navigationRoot(access2.cwd, document.path, access2.signal);
     const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
-    const allowed = new Set(files.paths.map((file) => resolve17(access2.cwd, file)));
-    const primaryPath = resolve17(access2.cwd, document.path);
+    const allowed = new Set(files.paths.map((file) => resolve18(access2.cwd, file)));
+    const primaryPath = resolve18(access2.cwd, document.path);
     const host = {
       cwd: access2.cwd,
       ...access2.signal ? { signal: access2.signal } : {},
       normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve17(access2.cwd, file);
+        const absolutePath = resolve18(access2.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
@@ -8302,7 +8627,7 @@ class EvidenceService {
 }
 
 // src/service.ts
-import { resolve as resolve18 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 
 // src/format.ts
 import { readFile as readFile2 } from "node:fs/promises";
@@ -8892,9 +9217,10 @@ function cursorPathSelection(input, cwd) {
   const policy = new SearchPathPolicy(cwd);
   for (const rawPath of rawPaths) {
     const label = rawPath.replace(/^@/, "");
+    validateSearchPath(label, input.paths !== undefined ? "paths" : "path");
     if (label.length === 0)
       throw new SignalGrepError("Cursor paths cannot be empty");
-    const absolutePath = resolve18(cwd, label);
+    const absolutePath = resolve19(cwd, label);
     policy.assertPath(absolutePath);
     if (absolutePaths.has(absolutePath))
       continue;
@@ -8932,14 +9258,16 @@ function searchScope2(request) {
     exclude: [...request.exclude],
     hidden: request.hidden,
     expandedToProjectRoot: request.expandedFromPath !== undefined,
-    assertion: path === "." ? "project-wide" : "requested-scope"
+    assertion: path === "." ? "project-wide" : "requested-scope",
+    ...request.modifiedAfterMs !== undefined ? { modifiedAfterMs: request.modifiedAfterMs } : {},
+    ...request.modifiedBeforeMs !== undefined ? { modifiedBeforeMs: request.modifiedBeforeMs } : {}
   };
 }
 function emptyResultText(scope) {
-  const filters = scope.glob.length || scope.exclude.length || !scope.hidden ? " Include/exclude and hidden-file filters were applied." : "";
+  const filters = scope.glob.length || scope.exclude.length || !scope.hidden || scope.modifiedAfterMs !== undefined || scope.modifiedBeforeMs !== undefined ? " Include/exclude and hidden-file filters were applied." : "";
   const expansion = scope.expandedToProjectRoot ? ` after the requested path ${JSON.stringify(scope.requestedPath)} also returned no matches` : "";
   const range = scope.assertion === "project-wide" ? "project root" : "requested path";
-  return `No matches found anywhere in ${range} ${JSON.stringify(scope.path)}${expansion}.${filters}`;
+  return `No matches found anywhere in ${range} ${JSON.stringify(scope.path)}${expansion}.${filters}${modificationTimeBoundsText(scope.modifiedAfterMs, scope.modifiedBeforeMs)}`;
 }
 function scopeExpansionNote(scope, totalMatches) {
   if (!scope?.expandedToProjectRoot)
@@ -9014,6 +9342,10 @@ function rejectCursorOnlyOptions(input) {
     ignored.push("context");
   if (input.limit !== undefined)
     ignored.push("limit");
+  if (input.modifiedAfter !== undefined)
+    ignored.push("modifiedAfter");
+  if (input.modifiedBefore !== undefined)
+    ignored.push("modifiedBefore");
   if (input.line !== undefined)
     ignored.push("line");
   if (input.matchIndex !== undefined)
@@ -9042,6 +9374,13 @@ class SignalGrepService {
     this.#evidence = new EvidenceService(this.#runRipgrep, this.#snapshots, options.structure);
   }
   async search(input, cwd, signal, options = {}) {
+    validateRawSearchInput(input);
+    for (const path of input.paths ?? [])
+      validateSearchPath(path, "paths");
+    for (const target of input.targets ?? []) {
+      if (target && typeof target.path === "string")
+        validateSearchPath(target.path, "targets.path");
+    }
     const combined = signal ? AbortSignal.any([signal, this.#lifecycle.signal]) : this.#lifecycle.signal;
     const request = this.#search(input, cwd, combined, options);
     this.#active.add(request);
@@ -9210,7 +9549,7 @@ Next request: ${JSON.stringify(nextRequest)}` : ""}` : "";
     const text = `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).
 ${fileRange}
 
-${summary.body}${omitted}${samples}${sampleOmissions}${followUp}${sourceVerificationNote(details)}`;
+${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${followUp}${sourceVerificationNote(details)}`;
     return {
       text,
       details: {
@@ -9288,7 +9627,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
     return {
       text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}
 
-[Matches ${range} of ${snapshot.totalMatches}${selection2}; ${completenessNote(snapshot)}.]${next}${sourceVerificationNote(details)}`,
+[Matches ${range} of ${snapshot.totalMatches}${selection2}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
       details: {
         ...details,
         returnedMatches: page.returnedMatches,
@@ -9351,7 +9690,7 @@ function stringEnum(values, options) {
     ...options?.description ? { description: options.description } : {}
   });
 }
-var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. files+query discovers filenames; structure+pattern matches AST shapes. JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
+var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
@@ -9372,7 +9711,7 @@ var signalGrepSchema = Type.Object({
     maxItems: MAX_ANY_OF_TOTAL_TERMS,
     description: `Exact literal union: ${String(MIN_ANY_OF_TERMS)}-${String(MAX_ANY_OF_TOTAL_TERMS)} distinct case-sensitive single-line terms, at most ${String(MAX_LITERAL_TERM_BYTES)} UTF-8 bytes each. Requests above ${String(MAX_ANY_OF_TERMS)} terms are split into version-checked chunks and merged. Returns every retained occurrence attributed to its term. Omit pattern, allOf, within, roles, literal and ignoreCase.`
   })),
-  allOf: Type.Optional(Type.Array(Type.String(), {
+  allOf: Type.Optional(Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
     minItems: 2,
     maxItems: 3,
     description: "Explicit AND: 2-3 distinct case-sensitive literal terms, all in one file (default) or one function. Omit pattern, roles, literal and ignoreCase."
@@ -9415,9 +9754,11 @@ var signalGrepSchema = Type.Object({
     description: "Binding name for imports/tests/impact; semantic modes accept it only when it identifies one source occurrence. Prefer exact path+line+column when the name repeats."
   })),
   pattern: Type.Optional(Type.String({
+    maxLength: MAX_PATTERN_CHARACTERS,
     description: "Ordinary search: regex or literal=true text. mode=structure: ast-grep code pattern, at most 4 KiB, including $NAME and $$$ARGS metavariables; no regex/literal options. Omit for discovery, semantic navigation, inspection and cursors."
   })),
   path: Type.Optional(Type.String({
+    maxLength: MAX_PATH_CHARACTERS,
     description: "Search root or source file. A zero-result content search expands from cwd unless scope=strict. Compiler navigation stays within admitted workspace sources. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped."
   })),
   paths: Type.Optional(Type.Array(Type.String(), {
@@ -9425,10 +9766,20 @@ var signalGrepSchema = Type.Object({
     maxItems: MAX_SELECTED_PATHS,
     description: "Exact retained files to select together from a cursor; unavailable for a new search."
   })),
-  glob: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
+  glob: Type.Optional(Type.Union([
+    Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+    Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
+      maxItems: MAX_FILE_FILTER_ITEMS
+    })
+  ], {
     description: "Include glob or globs, for example '*.ts' or 'src/**'."
   })),
-  exclude: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], {
+  exclude: Type.Optional(Type.Union([
+    Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+    Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
+      maxItems: MAX_FILE_FILTER_ITEMS
+    })
+  ], {
     description: "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional."
   })),
   literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text." })),
@@ -9438,6 +9789,16 @@ var signalGrepSchema = Type.Object({
   hidden: Type.Optional(Type.Boolean({ description: "Search hidden files (default true; .git is always excluded)." })),
   redact: Type.Optional(Type.Boolean({
     description: "Optional display-only masking for credential-like values and private-key bodies. Default false. It never changes searched files, admitted matches, counts, or cursor completeness."
+  })),
+  modifiedAfter: Type.Optional(Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+    description: "Worktree modification-time lower bound, inclusive, as a Unix timestamp in milliseconds. Not valid with Git changes."
+  })),
+  modifiedBefore: Type.Optional(Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+    description: "Worktree modification-time upper bound, exclusive, as a Unix timestamp in milliseconds. Not valid with Git changes."
   })),
   maxFilesToParse: Type.Optional(Type.Integer({
     minimum: 1,
@@ -9487,7 +9848,10 @@ var signalGrepSchema = Type.Object({
     maxItems: MAX_INSPECT_TARGETS,
     description: "Inspect up to five visible match numbers together using the same cursor; mutually exclusive with matchIndex, path, line and targets."
   })),
-  targets: Type.Optional(Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }) }), {
+  targets: Type.Optional(Type.Array(Type.Object({
+    path: Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+    line: Type.Integer({ minimum: 1 })
+  }), {
     minItems: 1,
     maxItems: MAX_INSPECT_TARGETS,
     description: "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget."
@@ -9869,14 +10233,14 @@ async function startSignalGrepMcpServer(options = {}) {
   const host = options.host ?? DEFAULT_MCP_HOST;
   const port = options.port ?? DEFAULT_MCP_PORT;
   try {
-    await new Promise((resolve19, reject) => {
+    await new Promise((resolve20, reject) => {
       const onError = (error) => {
         httpServer.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         httpServer.off("error", onError);
-        resolve19();
+        resolve20();
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
@@ -9898,8 +10262,8 @@ async function startSignalGrepMcpServer(options = {}) {
     closePromise = (async () => {
       state.closing = true;
       clearInterval(sweepTimer);
-      const stopListening = new Promise((resolve19, reject) => {
-        httpServer.close((error) => error ? reject(error) : resolve19());
+      const stopListening = new Promise((resolve20, reject) => {
+        httpServer.close((error) => error ? reject(error) : resolve20());
       });
       const initialCleanup = await Promise.allSettled([
         ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),

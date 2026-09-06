@@ -7,12 +7,18 @@ import { CursorError, SignalGrepError } from "./errors.js";
 import { formatMatchPage, MatchPageSoftLimitError, type MatchPageOptions } from "./format.js";
 import { formatSummary } from "./summary.js";
 import { summarySourcePreviews } from "./summary-previews.js";
-import { normalizeRequest, type RawSearchInput } from "./request.js";
+import {
+  normalizeRequest,
+  type RawSearchInput,
+  validateRawSearchInput,
+  validateSearchPath,
+} from "./request.js";
 import { redactSignalGrepResult } from "./redaction.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
 import { SearchPathPolicy } from "./path-policy.js";
 import { SnapshotStore } from "./snapshot-store.js";
+import { modificationTimeBoundsText } from "./source.js";
 import {
   DEFAULT_SUMMARY_FILE_LIMIT,
   MAX_INSPECT_TARGETS,
@@ -82,6 +88,7 @@ function cursorPathSelection(input: SignalGrepInput, cwd: string): PathSelection
   const policy = new SearchPathPolicy(cwd);
   for (const rawPath of rawPaths) {
     const label = rawPath.replace(/^@/, "");
+    validateSearchPath(label, input.paths !== undefined ? "paths" : "path");
     if (label.length === 0) throw new SignalGrepError("Cursor paths cannot be empty");
     const absolutePath = resolve(cwd, label);
     policy.assertPath(absolutePath);
@@ -130,19 +137,27 @@ function searchScope(request: SearchSnapshot["request"]): SearchScopeDetails {
     hidden: request.hidden,
     expandedToProjectRoot: request.expandedFromPath !== undefined,
     assertion: path === "." ? "project-wide" : "requested-scope",
+    ...(request.modifiedAfterMs !== undefined ? { modifiedAfterMs: request.modifiedAfterMs } : {}),
+    ...(request.modifiedBeforeMs !== undefined
+      ? { modifiedBeforeMs: request.modifiedBeforeMs }
+      : {}),
   };
 }
 
 function emptyResultText(scope: SearchScopeDetails): string {
   const filters =
-    scope.glob.length || scope.exclude.length || !scope.hidden
+    scope.glob.length ||
+    scope.exclude.length ||
+    !scope.hidden ||
+    scope.modifiedAfterMs !== undefined ||
+    scope.modifiedBeforeMs !== undefined
       ? " Include/exclude and hidden-file filters were applied."
       : "";
   const expansion = scope.expandedToProjectRoot
     ? ` after the requested path ${JSON.stringify(scope.requestedPath)} also returned no matches`
     : "";
   const range = scope.assertion === "project-wide" ? "project root" : "requested path";
-  return `No matches found anywhere in ${range} ${JSON.stringify(scope.path)}${expansion}.${filters}`;
+  return `No matches found anywhere in ${range} ${JSON.stringify(scope.path)}${expansion}.${filters}${modificationTimeBoundsText(scope.modifiedAfterMs, scope.modifiedBeforeMs)}`;
 }
 
 function scopeExpansionNote(scope: SearchScopeDetails | undefined, totalMatches: number): string {
@@ -214,6 +229,8 @@ function rejectCursorOnlyOptions(input: SignalGrepInput): void {
   if (input.hidden !== undefined) ignored.push("hidden");
   if (input.context !== undefined) ignored.push("context");
   if (input.limit !== undefined) ignored.push("limit");
+  if (input.modifiedAfter !== undefined) ignored.push("modifiedAfter");
+  if (input.modifiedBefore !== undefined) ignored.push("modifiedBefore");
   if (input.line !== undefined) ignored.push("line");
   if (input.matchIndex !== undefined) ignored.push("matchIndex");
   if (input.matchIndices !== undefined) ignored.push("matchIndices");
@@ -248,6 +265,12 @@ export class SignalGrepService {
     signal?: AbortSignal,
     options: SignalGrepSearchOptions = {},
   ): Promise<SignalGrepResult> {
+    validateRawSearchInput(input);
+    for (const path of input.paths ?? []) validateSearchPath(path, "paths");
+    for (const target of input.targets ?? []) {
+      if (target && typeof target.path === "string")
+        validateSearchPath(target.path, "targets.path");
+    }
     const combined = signal
       ? AbortSignal.any([signal, this.#lifecycle.signal])
       : this.#lifecycle.signal;
@@ -484,7 +507,7 @@ export class SignalGrepService {
     const followUp = cursor
       ? `\n\nSnapshot cursor="${cursor}".${inspectRequest ? `\nInspect samples: ${JSON.stringify(inspectRequest)}` : ""}${matchesRequest ? `\nRetrieve matching lines: ${JSON.stringify(matchesRequest)}` : ""}${nextRequest ? `\nNext request: ${JSON.stringify(nextRequest)}` : ""}`
       : "";
-    const text = `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).\n${fileRange}\n\n${summary.body}${omitted}${samples}${sampleOmissions}${followUp}${sourceVerificationNote(details)}`;
+    const text = `${snapshot.totalMatches} matches across ${snapshot.fileCounts.size} files (${completenessNote(snapshot)}).\n${fileRange}\n\n${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${followUp}${sourceVerificationNote(details)}`;
 
     return {
       text,
@@ -602,7 +625,7 @@ export class SignalGrepService {
     const details = baseDetails(snapshot, mode);
 
     return {
-      text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}\n\n[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${next}${sourceVerificationNote(details)}`,
+      text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}\n\n[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
       details: {
         ...details,
         returnedMatches: page.returnedMatches,

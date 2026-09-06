@@ -4,6 +4,7 @@ import { SignalGrepError } from "./errors.js";
 import { SearchPathPolicy } from "./path-policy.js";
 import { normalizeRequest, type RawSearchInput } from "./request.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
+import { filterPathsByModificationTime } from "./file-metadata-filter.js";
 
 interface FileScore {
   score: number;
@@ -65,7 +66,14 @@ export async function discoverFiles(
     exclude: request.exclude,
     hidden: request.hidden,
   });
-  const selected = files.paths
+  const filtered = await filterPathsByModificationTime(
+    cwd,
+    files.paths,
+    request.modifiedAfterMs,
+    request.modifiedBeforeMs,
+    signal,
+  );
+  const selected = filtered.paths
     .flatMap((path) => {
       const rank = scoreFilePath(path, query);
       return rank ? [{ path, ...rank }] : [];
@@ -82,8 +90,8 @@ export async function discoverFiles(
   return {
     kind: "files",
     unit: "files",
-    partial: files.partial,
-    reasons: files.reasons,
+    partial: files.partial || filtered.partial,
+    reasons: [...new Set([...files.reasons, ...filtered.reasons])],
     items: selected.map((item) => ({
       path: item.path,
       line: 1,
@@ -95,7 +103,7 @@ export async function discoverFiles(
         inspect: { mode: "inspect", path: item.path, line: 1 },
       },
     })),
-    coverage: { fileEnumeration: files.partial ? "partial" : "complete" },
+    coverage: { fileEnumeration: files.partial || filtered.partial ? "partial" : "complete" },
     stats: { filesEnumerated: files.paths.length },
     scope: {
       path: request.path ?? ".",
@@ -105,6 +113,12 @@ export async function discoverFiles(
       hidden: request.hidden,
       expandedToProjectRoot: false,
       assertion: request.path && request.path !== "." ? "requested-scope" : "project-wide",
+      ...(request.modifiedAfterMs !== undefined
+        ? { modifiedAfterMs: request.modifiedAfterMs }
+        : {}),
+      ...(request.modifiedBeforeMs !== undefined
+        ? { modifiedBeforeMs: request.modifiedBeforeMs }
+        : {}),
     },
     redact: input.redact ?? false,
   };

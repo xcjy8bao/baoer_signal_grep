@@ -11,6 +11,9 @@ import {
   MAX_INSPECT_TARGETS,
   MAX_PAGE_SIZE,
   MAX_SELECTED_PATHS,
+  MAX_FILE_FILTER_ITEMS,
+  MAX_PATH_CHARACTERS,
+  MAX_PATTERN_CHARACTERS,
 } from "./types.js";
 
 function stringEnum<const Values extends readonly string[]>(
@@ -25,7 +28,7 @@ function stringEnum<const Values extends readonly string[]>(
 }
 
 export const SIGNAL_GREP_DESCRIPTION =
-  "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. files+query discovers filenames; structure+pattern matches AST shapes. JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
+  "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate references, same-spelling candidates and related-test evidence. concept+query ranks local multilingual model candidates after explicit model installation; it never downloads a model during search. Compiler relationships are static, not runtime proof. Use returned path/line evidence directly, or copy inspection/continuation requests when more context is needed. Limits, source changes, ranking reasons and partial coverage are explicit.";
 
 export const signalGrepSchema = Type.Object({
   column: Type.Optional(
@@ -61,7 +64,7 @@ export const signalGrepSchema = Type.Object({
     }),
   ),
   allOf: Type.Optional(
-    Type.Array(Type.String(), {
+    Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
       minItems: 2,
       maxItems: 3,
       description:
@@ -131,12 +134,14 @@ export const signalGrepSchema = Type.Object({
   ),
   pattern: Type.Optional(
     Type.String({
+      maxLength: MAX_PATTERN_CHARACTERS,
       description:
         "Ordinary search: regex or literal=true text. mode=structure: ast-grep code pattern, at most 4 KiB, including $NAME and $$$ARGS metavariables; no regex/literal options. Omit for discovery, semantic navigation, inspection and cursors.",
     }),
   ),
   path: Type.Optional(
     Type.String({
+      maxLength: MAX_PATH_CHARACTERS,
       description:
         "Search root or source file. A zero-result content search expands from cwd unless scope=strict. Compiler navigation stays within admitted workspace sources. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped.",
     }),
@@ -150,15 +155,31 @@ export const signalGrepSchema = Type.Object({
     }),
   ),
   glob: Type.Optional(
-    Type.Union([Type.String(), Type.Array(Type.String())], {
-      description: "Include glob or globs, for example '*.ts' or 'src/**'.",
-    }),
+    Type.Union(
+      [
+        Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+        Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
+          maxItems: MAX_FILE_FILTER_ITEMS,
+        }),
+      ],
+      {
+        description: "Include glob or globs, for example '*.ts' or 'src/**'.",
+      },
+    ),
   ),
   exclude: Type.Optional(
-    Type.Union([Type.String(), Type.Array(Type.String())], {
-      description:
-        "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional.",
-    }),
+    Type.Union(
+      [
+        Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+        Type.Array(Type.String({ maxLength: MAX_PATH_CHARACTERS }), {
+          maxItems: MAX_FILE_FILTER_ITEMS,
+        }),
+      ],
+      {
+        description:
+          "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional.",
+      },
+    ),
   ),
   literal: Type.Optional(Type.Boolean({ description: "Treat pattern as literal text." })),
   ignoreCase: Type.Optional(
@@ -173,6 +194,22 @@ export const signalGrepSchema = Type.Object({
     Type.Boolean({
       description:
         "Optional display-only masking for credential-like values and private-key bodies. Default false. It never changes searched files, admitted matches, counts, or cursor completeness.",
+    }),
+  ),
+  modifiedAfter: Type.Optional(
+    Type.Integer({
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description:
+        "Worktree modification-time lower bound, inclusive, as a Unix timestamp in milliseconds. Not valid with Git changes.",
+    }),
+  ),
+  modifiedBefore: Type.Optional(
+    Type.Integer({
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description:
+        "Worktree modification-time upper bound, exclusive, as a Unix timestamp in milliseconds. Not valid with Git changes.",
     }),
   ),
   maxFilesToParse: Type.Optional(
@@ -247,12 +284,18 @@ export const signalGrepSchema = Type.Object({
     }),
   ),
   targets: Type.Optional(
-    Type.Array(Type.Object({ path: Type.String(), line: Type.Integer({ minimum: 1 }) }), {
-      minItems: 1,
-      maxItems: MAX_INSPECT_TARGETS,
-      description:
-        "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget.",
-    }),
+    Type.Array(
+      Type.Object({
+        path: Type.String({ maxLength: MAX_PATH_CHARACTERS }),
+        line: Type.Integer({ minimum: 1 }),
+      }),
+      {
+        minItems: 1,
+        maxItems: MAX_INSPECT_TARGETS,
+        description:
+          "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget.",
+      },
+    ),
   ),
   cursor: Type.Optional(
     Type.String({ description: "Opaque cursor from a previous stable search snapshot." }),
