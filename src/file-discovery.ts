@@ -1,4 +1,4 @@
-import { posix } from "node:path";
+import { basename as platformBasename, posix, relative, resolve, sep } from "node:path";
 import type { AnalysisResultSet } from "./analysis-types.js";
 import { SignalGrepError } from "./errors.js";
 import { SearchPathPolicy } from "./path-policy.js";
@@ -49,6 +49,15 @@ export function scoreFilePath(path: string, query: string): FileScore | undefine
   };
 }
 
+function pathRelativeToDiscoveryRoot(cwd: string, root: string, path: string): string {
+  const absoluteRoot = resolve(cwd, root);
+  const absolutePath = resolve(cwd, path);
+  const scoped = relative(absoluteRoot, absolutePath).split(sep).join("/");
+  // A file can itself be the requested root; its basename is the only
+  // candidate path and must remain searchable without scoring the root name.
+  return scoped || platformBasename(absolutePath);
+}
+
 export async function discoverFiles(
   input: RawSearchInput & { query?: string },
   cwd: string,
@@ -60,8 +69,11 @@ export async function discoverFiles(
       "File query must be well-formed single-line text of at most 256 characters",
     );
   const request = normalizeRequest({ ...input, pattern: "" });
+  const policy = new SearchPathPolicy(cwd);
+  const discoveryRoot = request.path ?? ".";
+  const scoringRoot = await policy.resolveSearchTarget(discoveryRoot);
   const files = await listWorkspaceFiles(cwd, signal, {
-    ...(request.path ? { path: request.path } : {}),
+    path: scoringRoot,
     glob: request.glob,
     exclude: request.exclude,
     hidden: request.hidden,
@@ -75,11 +87,10 @@ export async function discoverFiles(
   );
   const selected = filtered.paths
     .flatMap((path) => {
-      const rank = scoreFilePath(path, query);
+      const rank = scoreFilePath(pathRelativeToDiscoveryRoot(cwd, scoringRoot, path), query);
       return rank ? [{ path, ...rank }] : [];
     })
     .toSorted((left, right) => right.score - left.score || left.path.localeCompare(right.path));
-  const policy = new SearchPathPolicy(cwd);
   for (let offset = 0; offset < selected.length; offset += 16) {
     // oxlint-disable-next-line no-await-in-loop -- bounded canonical-path checks enforce the same protected-path policy.
     await Promise.all(

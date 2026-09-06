@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.3-1] - 2026-09-06
+
+- Scope semantic project snapshots and stability checks to the target's containing project boundary, so unrelated files outside that project do not invalidate navigation.
+- Make file-discovery validation errors name the valid discovery modes and show the `mode="files"` plus `query` repair shape.
+- Rank file-discovery candidates relative to the requested root, so the root's own path cannot create false filename matches.
+
 ## [1.2.3] - 2026-09-06
 
 - Add native OMP (Oh My Pi) compatibility with the `baoer_signal_grep` tool, profile-aware configuration, direct-search enforcement, lifecycle cleanup and a self-contained published extension bundle.

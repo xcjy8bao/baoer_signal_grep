@@ -4,6 +4,7 @@ import type { GitChangeRequest } from "./git-source.js";
 import type { SyntaxRoleName } from "./syntax.js";
 import { resolve } from "node:path";
 import { CursorError, SignalGrepError } from "./errors.js";
+import { DISCOVERY_MODE_REQUIRED_ERROR } from "./discovery-errors.js";
 import { formatMatchPage, MatchPageSoftLimitError, type MatchPageOptions } from "./format.js";
 import { formatSummary } from "./summary.js";
 import { summarySourcePreviews } from "./summary-previews.js";
@@ -303,7 +304,7 @@ export class SignalGrepService {
     if (isEvidenceRequest(input)) return this.#evidence.search(input, cwd, signal);
     if (input.column !== undefined)
       throw new SignalGrepError("column requires semantic navigation");
-    if (input.query !== undefined) throw new SignalGrepError("query requires a discovery mode");
+    if (input.query !== undefined) throw new SignalGrepError(DISCOVERY_MODE_REQUIRED_ERROR);
     if (input.maxFilesToParse !== undefined) {
       throw new SignalGrepError("maxFilesToParse is only valid for structural analysis requests");
     }

@@ -52,6 +52,7 @@ async function runTypeScript<T>(
   documents: readonly SourceDocument[],
   operation: (channel: JsonRpcChannel, capabilities: Record<string, unknown>) => Promise<T>,
   parent?: AbortSignal,
+  sourceCwd = cwd,
 ): Promise<T> {
   const executable = executablePath();
   const deadline = new AbortController();
@@ -93,7 +94,7 @@ async function runTypeScript<T>(
         });
         for (const document of documents) {
           // oxlint-disable-next-line no-await-in-loop -- canonical URIs prevent duplicate compiler identities for workspace symlinks.
-          const uri = await semanticUri(cwd, document.path);
+          const uri = await semanticUri(sourceCwd, document.path);
           // oxlint-disable-next-line no-await-in-loop -- ordered didOpen notifications install the verified source snapshot.
           await channel.notify("textDocument/didOpen", {
             textDocument: {
@@ -136,6 +137,10 @@ export function withTypeScript<T>(
   documents: readonly SourceDocument[],
   operation: (channel: JsonRpcChannel, capabilities: Record<string, unknown>) => Promise<T>,
   parent?: AbortSignal,
+  sourceCwd = cwd,
 ): Promise<T> {
-  return compilerQueue.run(() => runTypeScript(cwd, documents, operation, parent), parent);
+  return compilerQueue.run(
+    () => runTypeScript(cwd, documents, operation, parent, sourceCwd),
+    parent,
+  );
 }

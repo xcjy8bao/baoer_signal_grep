@@ -1,4 +1,5 @@
 import { bindImpactCandidates } from "./impact-bindings.js";
+import { fileDiscoveryQueryHint } from "./discovery-errors.js";
 import { conceptSearch } from "./concept-search.js";
 import { structuralSearch } from "./structural-search.js";
 import { isSemanticMode } from "./semantic-protocol.js";
@@ -91,17 +92,16 @@ function rejectFields(
   fields: (keyof SignalGrepInput)[],
   operation: string,
   cursor = false,
+  hint = "copy the complete returned request",
 ): void {
   const present = fields.filter((field) => input[field] !== undefined);
   if (present.length)
     throw cursor
       ? new CursorError(
-          `${operation} does not accept ${present.join(", ")}; copy the complete returned request`,
+          `${operation} does not accept ${present.join(", ")}; ${hint}`,
           "E_CURSOR_OPTIONS_CONFLICT",
         )
-      : new SignalGrepError(
-          `${operation} does not accept ${present.join(", ")}; copy the complete returned request`,
-        );
+      : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
 }
 const searchFields = [
   "query",
@@ -411,6 +411,8 @@ export class EvidenceService {
           ...inspectFields,
         ],
         "mode=files",
+        false,
+        fileDiscoveryQueryHint(input.query ?? input.pattern),
       );
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
     }

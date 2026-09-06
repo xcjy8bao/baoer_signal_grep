@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.3",
+  version: "1.2.3-1",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -1638,7 +1638,7 @@ function executablePath() {
     throw new SignalGrepError(`TypeScript semantic provider is unavailable for ${process.platform}/${process.arch}; reinstall with optional dependencies enabled`, { cause: error });
   }
 }
-async function runTypeScript(cwd, documents, operation, parent) {
+async function runTypeScript(cwd, documents, operation, parent, sourceCwd = cwd) {
   const executable = executablePath();
   const deadline = new AbortController;
   const signal = parent ? AbortSignal.any([parent, deadline.signal]) : deadline.signal;
@@ -1675,7 +1675,7 @@ async function runTypeScript(cwd, documents, operation, parent) {
         settings: { "js/ts": preferences, typescript: preferences, javascript: preferences }
       });
       for (const document of documents) {
-        const uri = await semanticUri(cwd, document.path);
+        const uri = await semanticUri(sourceCwd, document.path);
         await channel.notify("textDocument/didOpen", {
           textDocument: {
             uri,
@@ -1700,8 +1700,8 @@ async function runTypeScript(cwd, documents, operation, parent) {
     clearTimeout(timer);
   }
 }
-function withTypeScript(cwd, documents, operation, parent) {
-  return compilerQueue.run(() => runTypeScript(cwd, documents, operation, parent), parent);
+function withTypeScript(cwd, documents, operation, parent, sourceCwd = cwd) {
+  return compilerQueue.run(() => runTypeScript(cwd, documents, operation, parent, sourceCwd), parent);
 }
 
 // src/syntax.ts
@@ -2386,6 +2386,16 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
   }
   return { items: [...retained.values()], bound };
 }
+
+// src/discovery-errors.ts
+var FILE_DISCOVERY_QUERY_PLACEHOLDER = "<filename-or-path>";
+function repairQuery(value) {
+  return typeof value === "string" && value.length <= 256 && value.isWellFormed() && !/[\r\n\0]/.test(value) ? value : FILE_DISCOVERY_QUERY_PLACEHOLDER;
+}
+function fileDiscoveryQueryHint(value) {
+  return `file discovery uses query; retry with ${JSON.stringify({ mode: "files", query: repairQuery(value) })}`;
+}
+var DISCOVERY_MODE_REQUIRED_ERROR = 'query requires an explicit discovery mode: use mode=files for filename/path discovery or mode=concept for semantic discovery; for example {"mode":"files","query":"<filename-or-path>"}';
 
 // src/concept-search.ts
 import { dirname as dirname4 } from "node:path";
@@ -4163,20 +4173,87 @@ function rankEvidence(items, priority) {
 }
 
 // src/semantic-navigation.ts
-import { resolve as resolve13 } from "node:path";
+import { resolve as resolve14 } from "node:path";
 
 // src/semantic-project.ts
-import { resolve as resolve12 } from "node:path";
+import { resolve as resolve13 } from "node:path";
+
+// src/project-root.ts
+import { readdir, realpath as realpath5 } from "node:fs/promises";
+import { dirname as dirname5, relative as relative7, resolve as resolve12 } from "node:path";
+var TYPESCRIPT_CONFIG_FILE = /^[tj]sconfig[^/]*\.json$/i;
+function isMissingPath(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+async function projectConfig(directory, signal) {
+  if (signal?.aborted)
+    throw abortError();
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile() || entry.isSymbolicLink());
+    if (files.some((entry) => TYPESCRIPT_CONFIG_FILE.test(entry.name)))
+      return "typescript";
+    if (files.some((entry) => entry.name.toLowerCase() === "package.json"))
+      return "package";
+    return;
+  } catch (error) {
+    if (isMissingPath(error))
+      return;
+    throw error;
+  }
+}
+async function gitRootWithinCwd(cwd, gitRoot) {
+  const absoluteCwd = resolve12(cwd);
+  const [canonicalCwd, canonicalRoot] = await Promise.all([
+    realpath5(absoluteCwd),
+    realpath5(gitRoot)
+  ]);
+  if (!isPathInsideCwd(canonicalRoot, canonicalCwd))
+    return;
+  return resolve12(absoluteCwd, relative7(canonicalCwd, canonicalRoot));
+}
+async function resolveSemanticProjectRoot(cwd, targetPath, signal) {
+  const absoluteCwd = resolve12(cwd);
+  const absoluteTarget = resolve12(absoluteCwd, targetPath);
+  if (!isPathInsideCwd(absoluteTarget, absoluteCwd))
+    return absoluteCwd;
+  const targetDirectory = dirname5(absoluteTarget);
+  const gitRoot = await findGitRepository(targetDirectory, signal);
+  if (gitRoot) {
+    const localGitRoot = await gitRootWithinCwd(absoluteCwd, gitRoot);
+    if (localGitRoot)
+      return localGitRoot;
+  }
+  let packageRoot;
+  let current = targetDirectory;
+  while (isPathInsideCwd(current, absoluteCwd)) {
+    const marker = await projectConfig(current, signal);
+    if (marker === "typescript")
+      return current;
+    if (marker === "package" && packageRoot === undefined)
+      packageRoot = current;
+    if (current === absoluteCwd)
+      break;
+    const parent = dirname5(current);
+    if (parent === current || !isPathInsideCwd(parent, absoluteCwd))
+      break;
+    current = parent;
+  }
+  return packageRoot ?? targetDirectory;
+}
+
+// src/semantic-project.ts
 async function semanticProject(access2, targetPath) {
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal);
+  const root = await resolveSemanticProjectRoot(access2.cwd, targetPath, access2.signal);
+  const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
-  const target = resolve12(access2.cwd, targetPath);
-  if (!paths.some((path) => resolve12(access2.cwd, path) === target))
+  const target = resolve13(access2.cwd, targetPath);
+  if (!paths.some((path) => resolve13(access2.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
-  paths.sort((a, b) => Number(resolve12(access2.cwd, b) === target) - Number(resolve12(access2.cwd, a) === target) || a.localeCompare(b));
+  paths.sort((a, b) => Number(resolve13(access2.cwd, b) === target) - Number(resolve13(access2.cwd, a) === target) || a.localeCompare(b));
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata = [];
@@ -4189,7 +4266,7 @@ async function semanticProject(access2, targetPath) {
       if (!document.utf8)
         throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
       if (paths.includes(path))
-        documents.set(resolve12(access2.cwd, path), document);
+        documents.set(resolve13(access2.cwd, path), document);
       else
         metadata.push(document);
     } catch (error) {
@@ -4211,7 +4288,7 @@ async function semanticProject(access2, targetPath) {
         throw new Error("Expected worktree semantic source");
       await access2.refresh(document.path, document.reference);
     }
-    const after = await listWorkspaceFiles(access2.cwd, access2.signal);
+    const after = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
     if (JSON.stringify(after) !== JSON.stringify(files))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
@@ -4229,7 +4306,7 @@ async function semanticProject(access2, targetPath) {
     },
     stats: { filesEnumerated: paths.length, filesSkipped: paths.length - documents.size }
   };
-  return { documents, primary, result, recheck };
+  return { documents, primary, result, recheck, root };
 }
 
 // src/semantic-navigation.ts
@@ -4320,7 +4397,7 @@ async function runSemanticNavigation(input, access2) {
   if (!input.path || !isSemanticMode(input.mode))
     throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
   const project = await semanticProject(access2, input.path);
-  const { result, documents, primary } = project;
+  const { result, documents, primary, root } = project;
   result.kind = input.mode;
   result.redact = input.redact ?? false;
   const mode = input.mode;
@@ -4338,7 +4415,7 @@ async function runSemanticNavigation(input, access2) {
       result.reasons.push("Compiler returned a location outside admitted source coverage; dependency/ignored/over-budget source was not exposed");
     }
   };
-  await withTypeScript(access2.cwd, [...documents.values()], async (channel) => {
+  await withTypeScript(root, [...documents.values()], async (channel) => {
     if (!graph) {
       const found = await queryLocations(channel, mode, {
         textDocument: { uri: await semanticUri(access2.cwd, primary.path) },
@@ -4383,7 +4460,7 @@ async function runSemanticNavigation(input, access2) {
             await add(target, "dependency");
           } else if (targetDocument === primary) {
             await add({
-              path: resolve13(access2.cwd, document.path),
+              path: resolve14(access2.cwd, document.path),
               range: {
                 start: lspPosition(document, specifier.start),
                 end: lspPosition(document, specifier.end)
@@ -4394,7 +4471,7 @@ async function runSemanticNavigation(input, access2) {
       }
       access2.releaseSyntax(document);
     }
-  }, access2.signal);
+  }, access2.signal, access2.cwd);
   await project.recheck();
   result.filesRead = access2.filesRead;
   result.bytesRead = access2.bytesRead;
@@ -4416,7 +4493,7 @@ function navigateSemantics(input, access2) {
 }
 
 // src/evidence-service.ts
-import { dirname as dirname5, resolve as resolve18 } from "node:path";
+import { dirname as dirname6, resolve as resolve20 } from "node:path";
 
 // src/analysis-store.ts
 import { randomUUID } from "node:crypto";
@@ -4745,7 +4822,7 @@ Inspect: ${JSON.stringify(inspect)}` : ""}`;
 }
 
 // src/inspect.ts
-import { resolve as resolve14 } from "node:path";
+import { resolve as resolve15 } from "node:path";
 function resolveInspectionTarget(input, cwd, snapshots) {
   let path = input.path?.replace(/^@/, "");
   let line = input.line;
@@ -4772,7 +4849,7 @@ function resolveInspectionTarget(input, cwd, snapshots) {
   if (line === undefined || !Number.isSafeInteger(line) || line < 1) {
     throw new SignalGrepError("line must be a positive integer when mode=inspect");
   }
-  const absolutePath = retainedMatch?.absolutePath ?? resolve14(cwd, path);
+  const absolutePath = retainedMatch?.absolutePath ?? resolve15(cwd, path);
   new SearchPathPolicy(cwd).assertPath(absolutePath);
   let expectedRevision;
   if (input.cursor) {
@@ -4794,7 +4871,7 @@ function resolveInspectionTarget(input, cwd, snapshots) {
 }
 
 // src/evidence-candidates.ts
-import { resolve as resolve15 } from "node:path";
+import { resolve as resolve16 } from "node:path";
 class CandidateLimit extends SignalGrepError {
 }
 function record(value) {
@@ -4956,7 +5033,7 @@ async function ordinaryCandidates(options) {
 async function collectEvidenceCandidates(options) {
   if (!options.changes)
     return ordinaryCandidates(options);
-  if (options.request.path && !isPathInsideCwd(resolve15(options.cwd, options.request.path), options.cwd)) {
+  if (options.request.path && !isPathInsideCwd(resolve16(options.cwd, options.request.path), options.cwd)) {
     throw new SignalGrepError("Git changes for paths outside cwd are not supported; relaunch Pi from that repository or a common parent");
   }
   const reasons = new Set;
@@ -6710,10 +6787,10 @@ async function runOwnedParallel(start, parent) {
 }
 
 // src/file-discovery.ts
-import { posix as posix4 } from "node:path";
+import { basename as platformBasename, posix as posix4, relative as relative8, resolve as resolve18, sep as sep4 } from "node:path";
 
 // src/file-metadata-filter.ts
-import { resolve as resolve16 } from "node:path";
+import { resolve as resolve17 } from "node:path";
 async function filterPathsByModificationTime(cwd, paths, modifiedAfterMs, modifiedBeforeMs, signal) {
   if (modifiedAfterMs === undefined && modifiedBeforeMs === undefined)
     return { paths: [...paths], partial: false, reasons: [] };
@@ -6724,7 +6801,7 @@ async function filterPathsByModificationTime(cwd, paths, modifiedAfterMs, modifi
       throw abortError();
     const batch = paths.slice(offset, offset + MAX_SOURCE_REVISION_CONCURRENCY);
     const revisions = await Promise.all(batch.map(async (path) => {
-      const revision = await getSourceRevision(resolve16(cwd, path));
+      const revision = await getSourceRevision(resolve17(cwd, path));
       return revision ? { path, revision } : { path };
     }));
     for (const { path, revision } of revisions) {
@@ -6780,23 +6857,31 @@ function scoreFilePath(path, query) {
     reason: "ordered fuzzy path characters; candidate, not an exact filename"
   };
 }
+function pathRelativeToDiscoveryRoot(cwd, root, path) {
+  const absoluteRoot = resolve18(cwd, root);
+  const absolutePath = resolve18(cwd, path);
+  const scoped = relative8(absoluteRoot, absolutePath).split(sep4).join("/");
+  return scoped || platformBasename(absolutePath);
+}
 async function discoverFiles(input, cwd, signal) {
   const query = input.query ?? "";
   if (query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
     throw new SignalGrepError("File query must be well-formed single-line text of at most 256 characters");
   const request = normalizeRequest({ ...input, pattern: "" });
+  const policy = new SearchPathPolicy(cwd);
+  const discoveryRoot = request.path ?? ".";
+  const scoringRoot = await policy.resolveSearchTarget(discoveryRoot);
   const files = await listWorkspaceFiles(cwd, signal, {
-    ...request.path ? { path: request.path } : {},
+    path: scoringRoot,
     glob: request.glob,
     exclude: request.exclude,
     hidden: request.hidden
   });
   const filtered = await filterPathsByModificationTime(cwd, files.paths, request.modifiedAfterMs, request.modifiedBeforeMs, signal);
   const selected = filtered.paths.flatMap((path) => {
-    const rank = scoreFilePath(path, query);
+    const rank = scoreFilePath(pathRelativeToDiscoveryRoot(cwd, scoringRoot, path), query);
     return rank ? [{ path, ...rank }] : [];
   }).toSorted((left, right) => right.score - left.score || left.path.localeCompare(right.path));
-  const policy = new SearchPathPolicy(cwd);
   for (let offset = 0;offset < selected.length; offset += 16) {
     await Promise.all(selected.slice(offset, offset + 16).map((item) => policy.assertExistingPath(item.path)));
     signal?.throwIfAborted();
@@ -7030,7 +7115,7 @@ class SourceContinuations {
 }
 
 // src/source-inspection.ts
-import { resolve as resolve17 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -7096,7 +7181,7 @@ async function prepare(target, access2, structure) {
     }
   } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range) {
     const result = await structure.inspect({
-      absolutePath: resolve17(access2.cwd, target.path),
+      absolutePath: resolve19(access2.cwd, target.path),
       cwd: access2.cwd,
       line: target.line,
       expectedRevision: document.reference.origin.revision
@@ -7273,7 +7358,7 @@ ${preview.text}`);
     if (block.remaining.length)
       block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve17(access2.cwd, block.document.path));
+      const current = await getSourceRevision(resolve19(access2.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -7848,10 +7933,10 @@ function parsePythonOutline(document) {
 function isEvidenceRequest(input) {
   return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
-function rejectFields(input, fields, operation, cursor = false) {
+function rejectFields(input, fields, operation, cursor = false, hint = "copy the complete returned request") {
   const present = fields.filter((field) => input[field] !== undefined);
   if (present.length)
-    throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; copy the complete returned request`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; copy the complete returned request`);
+    throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; ${hint}`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
 }
 var searchFields = [
   "query",
@@ -7949,10 +8034,10 @@ function searchScope(request) {
   };
 }
 async function navigationRoot(cwd, path, signal) {
-  const absolute = resolve18(cwd, path);
+  const absolute = resolve20(cwd, path);
   if (isPathInsideCwd(absolute, cwd))
-    return resolve18(cwd);
-  return await findGitRepository(dirname5(absolute), signal) ?? dirname5(absolute);
+    return resolve20(cwd);
+  return await findGitRepository(dirname6(absolute), signal) ?? dirname6(absolute);
 }
 
 class EvidenceService {
@@ -8085,7 +8170,7 @@ class EvidenceService {
         "roles",
         "changes",
         ...inspectFields
-      ], "mode=files");
+      ], "mode=files", false, fileDiscoveryQueryHint(input.query ?? input.pattern));
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
     }
     if (input.mode === "impact")
@@ -8412,14 +8497,14 @@ class EvidenceService {
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
       const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
-      const allowed = new Set(files.paths.map((file) => resolve18(access2.cwd, file)));
-      const primaryPath = resolve18(access2.cwd, document.path);
+      const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
+      const primaryPath = resolve20(access2.cwd, document.path);
       const host = {
         cwd: access2.cwd,
         ...access2.signal ? { signal: access2.signal } : {},
         normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve18(access2.cwd, file);
+          const absolutePath = resolve20(access2.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
@@ -8586,14 +8671,14 @@ class EvidenceService {
       }));
     const root = await navigationRoot(access2.cwd, document.path, access2.signal);
     const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
-    const allowed = new Set(files.paths.map((file) => resolve18(access2.cwd, file)));
-    const primaryPath = resolve18(access2.cwd, document.path);
+    const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
+    const primaryPath = resolve20(access2.cwd, document.path);
     const host = {
       cwd: access2.cwd,
       ...access2.signal ? { signal: access2.signal } : {},
       normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve18(access2.cwd, file);
+        const absolutePath = resolve20(access2.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
@@ -8634,7 +8719,7 @@ class EvidenceService {
 }
 
 // src/service.ts
-import { resolve as resolve19 } from "node:path";
+import { resolve as resolve21 } from "node:path";
 
 // src/format.ts
 import { readFile as readFile2 } from "node:fs/promises";
@@ -9227,7 +9312,7 @@ function cursorPathSelection(input, cwd) {
     validateSearchPath(label, input.paths !== undefined ? "paths" : "path");
     if (label.length === 0)
       throw new SignalGrepError("Cursor paths cannot be empty");
-    const absolutePath = resolve19(cwd, label);
+    const absolutePath = resolve21(cwd, label);
     policy.assertPath(absolutePath);
     if (absolutePaths.has(absolutePath))
       continue;
@@ -9409,7 +9494,7 @@ class SignalGrepService {
     if (input.column !== undefined)
       throw new SignalGrepError("column requires semantic navigation");
     if (input.query !== undefined)
-      throw new SignalGrepError("query requires a discovery mode");
+      throw new SignalGrepError(DISCOVERY_MODE_REQUIRED_ERROR);
     if (input.maxFilesToParse !== undefined) {
       throw new SignalGrepError("maxFilesToParse is only valid for structural analysis requests");
     }
@@ -10240,14 +10325,14 @@ async function startSignalGrepMcpServer(options = {}) {
   const host = options.host ?? DEFAULT_MCP_HOST;
   const port = options.port ?? DEFAULT_MCP_PORT;
   try {
-    await new Promise((resolve20, reject) => {
+    await new Promise((resolve22, reject) => {
       const onError = (error) => {
         httpServer.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         httpServer.off("error", onError);
-        resolve20();
+        resolve22();
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
@@ -10269,8 +10354,8 @@ async function startSignalGrepMcpServer(options = {}) {
     closePromise = (async () => {
       state.closing = true;
       clearInterval(sweepTimer);
-      const stopListening = new Promise((resolve20, reject) => {
-        httpServer.close((error) => error ? reject(error) : resolve20());
+      const stopListening = new Promise((resolve22, reject) => {
+        httpServer.close((error) => error ? reject(error) : resolve22());
       });
       const initialCleanup = await Promise.allSettled([
         ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
