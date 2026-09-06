@@ -60,4 +60,4 @@ jobs:
       - name: Install npm with trusted publishing support
         run: npm install --global npm@11.15.0
       - name: Publish with npm provenance
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag latest
