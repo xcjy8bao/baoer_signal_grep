@@ -71,6 +71,14 @@ pi install npm:baoer_signal_grep
 
 安装或更新后重启 Pi。Pi 默认让常规搜索使用本插件，读取、编辑、测试、构建和脚本仍可使用。如需关闭强制搜索，在 `~/.pi/agent/baoer_signal_grep.json` 中设置 `"enforceSearch": false` 后重启；设置 `"locale": "zh-CN"` 可启用中文界面。
 
+### OMP（Oh My Pi）
+
+```bash
+omp install npm:baoer_signal_grep@latest
+```
+
+安装或更新后重启 OMP。安装包声明了 OMP 原生扩展：注册 `baoer_signal_grep`，从活动工具集中移除 OMP 内置的 `grep` 和 `glob`，并在执行前阻止直接搜索命令；读取、编辑、测试、构建和其他开发工具仍可使用。OMP 当前 profile 会被正确识别：默认配置文件是 `~/.omp/agent/baoer_signal_grep.json`，命名 profile 使用 `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`。如需关闭 OMP 的强制搜索，在当前配置文件中设置 `"enforceSearch": false` 后重启 OMP；设置 `"locale": "zh-CN"` 可启用中文界面。
+
 ### Claude Code 或 Codex：连接 MCP
 
 ```bash

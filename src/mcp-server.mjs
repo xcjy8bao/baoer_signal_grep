@@ -9,8 +9,8 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.2",
-  description: "Context-efficient local search for files, documents, notes and logs across Pi and MCP clients",
+  version: "1.2.3",
+  description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
     "claude-code",
@@ -19,6 +19,8 @@ var package_default = {
     "context-engineering",
     "grep",
     "mcp",
+    "oh-my-pi",
+    "omp",
     "pi",
     "pi-extension",
     "pi-package",
@@ -134,6 +136,11 @@ var package_default = {
   knip: {
     entry: [
       "src/mcp-server.ts"
+    ]
+  },
+  omp: {
+    extensions: [
+      "./plugins/baoer-signal-grep/omp-extension.mjs"
     ]
   },
   pi: {

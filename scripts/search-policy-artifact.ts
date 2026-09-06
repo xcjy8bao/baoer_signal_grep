@@ -6,6 +6,8 @@ const repository = resolve(import.meta.dirname, "..");
 export const searchPluginRoot = join(repository, "plugins/baoer-signal-grep");
 export const SEARCH_PLUGIN_FILES = [
   "LICENSE",
+  "package.json",
+  "omp-extension.mjs",
   ".codex-plugin/plugin.json",
   ".claude-plugin/plugin.json",
   ".mcp.json",
@@ -32,6 +34,16 @@ export async function buildSearchPlugin(root: string): Promise<void> {
     sourcemap: "none",
   });
   if (!result.success) throw new AggregateError(result.logs, "Search policy hook build failed");
+  const ompResult = await Bun.build({
+    entrypoints: [join(repository, "src/omp-marketplace-entry.ts")],
+    outdir: root,
+    naming: "omp-extension.mjs",
+    root: repository,
+    target: "bun",
+    format: "esm",
+    sourcemap: "none",
+  });
+  if (!ompResult.success) throw new AggregateError(ompResult.logs, "OMP extension build failed");
   const notices = await Promise.all(
     [
       ["web-tree-sitter", "tree-sitter.wasm"],
@@ -54,6 +66,13 @@ export async function buildSearchPlugin(root: string): Promise<void> {
     homepage: packageJson.homepage,
     license: packageJson.license,
   };
+  const ompPackage = {
+    name: "baoer-signal-grep",
+    version: packageJson.version,
+    private: true,
+    type: "module",
+    omp: { extensions: ["./omp-extension.mjs"] },
+  };
   const mcp = {
     baoer_signal_grep: {
       command: "npx",
@@ -68,6 +87,7 @@ export async function buildSearchPlugin(root: string): Promise<void> {
     },
   };
   const files: Record<string, unknown> = {
+    "package.json": ompPackage,
     ".codex-plugin/plugin.json": {
       ...identity,
       mcpServers: "./.mcp.json",

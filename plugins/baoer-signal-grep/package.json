@@ -1,0 +1,11 @@
+{
+  "name": "baoer-signal-grep",
+  "version": "1.2.3",
+  "private": true,
+  "type": "module",
+  "omp": {
+    "extensions": [
+      "./omp-extension.mjs"
+    ]
+  }
+}

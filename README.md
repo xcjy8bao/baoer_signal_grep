@@ -71,6 +71,14 @@ pi install npm:baoer_signal_grep
 
 Restart Pi after installing or updating. Pi uses this plugin for conventional searches by default; reads, edits, tests, builds and scripts remain available. To turn enforcement off, set `"enforceSearch": false` in `~/.pi/agent/baoer_signal_grep.json` and restart. Set `"locale": "zh-CN"` there for the Chinese interface.
 
+### OMP (Oh My Pi)
+
+```bash
+omp install npm:baoer_signal_grep@latest
+```
+
+Restart OMP after installing or updating. The package declares its native OMP extension, which registers `baoer_signal_grep`, removes OMP's built-in `grep` and `glob` entries from the active tool set, and blocks direct search commands while leaving reads, edits, tests, builds and other development tools available. OMP's active profile is respected; the default configuration file is `~/.omp/agent/baoer_signal_grep.json`, and a named profile uses `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`. Set `"enforceSearch": false` in the active file to disable OMP enforcement, then restart OMP. Set `"locale": "zh-CN"` to use the Chinese interface.
+
 ### Claude Code or Codex: MCP connection
 
 ```bash
