@@ -36,7 +36,7 @@
 
 工作区搜索支持用 Unix 毫秒时间戳传入 `modifiedAfter` 和 `modifiedBefore`。下界包含、上界不包含，因此可以准确表示一个时间窗口，不必改动搜索关键词。内容搜索和文件名搜索使用同一过滤条件；无法核验文件元数据时会明确报告证据不完整，不会静默当作命中。
 
-对文件路径使用 `mode: "outline"` 可以查看有边界的符号范围。JavaScript 和 TypeScript 使用语法提供方；Python 使用基于缩进的类、函数和方法 outline。Python 结果适合定位后续要看的范围，但不宣称编译器绑定、运行时调用关系或测试覆盖。
+对文件路径使用 `mode: "outline"` 可以查看有边界的符号范围。JavaScript 和 TypeScript 使用语法提供方；Python 使用基于缩进的类、函数和方法 outline。Python 结果适合定位后续要看的范围，但不宣称编译器绑定、运行时调用关系或测试覆盖。`mode: "tests"` 目前只支持 JavaScript 和 TypeScript 的关联测试候选；对 Python 会明确返回 partial 不支持结果，应改用 `mode: "outline"`。
 
 可读正文会保持精简；每项证据的范围、计数、覆盖状态和继续请求仍保留在结构化 `details` 中，客户端无需为了拿到这些字段再次搜索。
 

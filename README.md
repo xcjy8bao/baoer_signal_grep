@@ -36,7 +36,7 @@ Long results arrive in pages with a way to continue. When the original material 
 
 Worktree searches can use `modifiedAfter` and `modifiedBefore` as Unix millisecond bounds. The lower bound is inclusive and the upper bound is exclusive, so a time window can be expressed without changing the search pattern. The same filter applies to content and filename searches; unavailable file metadata is reported as incomplete evidence rather than silently treated as a match.
 
-Use `mode: "outline"` with a file path to see bounded symbol ranges. JavaScript and TypeScript use the syntax provider; Python files use indentation-based class, function and method evidence. Python outline results are useful for finding a range to inspect, but do not claim compiler bindings, runtime calls or test coverage.
+Use `mode: "outline"` with a file path to see bounded symbol ranges. JavaScript and TypeScript use the syntax provider; Python files use indentation-based class, function and method evidence. Python outline results are useful for finding a range to inspect, but do not claim compiler bindings, runtime calls or test coverage. `mode: "tests"` currently supports related-test candidates for JavaScript and TypeScript sources; Python requests return an explicit partial unsupported result and should use `mode: "outline"` instead.
 
 The readable result keeps the main evidence compact. Per-item ranges, counts, coverage and continuation requests remain in structured `details`, so a client can use the structured fields without requiring a second search.
 

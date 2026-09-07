@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import { abortError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
+import {
+  classifyRipgrepDiagnostics,
+  type RipgrepUnreadableDiagnostic,
+} from "./ripgrep-diagnostics.js";
 import { getSourceRevision, sameSourceRevision } from "./source.js";
 import {
   MAX_PROTOCOL_LINE_BYTES,
@@ -30,7 +34,7 @@ export async function captureCandidateRevisions(
   cwd: string,
   maxFiles: number,
   signal?: AbortSignal,
-): Promise<Map<string, SourceRevision>> {
+): Promise<{ revisions: Map<string, SourceRevision>; unreadable: RipgrepUnreadableDiagnostic[] }> {
   const revisions = new Map<string, SourceRevision>();
   let candidateCount = 0;
   const result = await runOwnedProcess(
@@ -73,12 +77,15 @@ export async function captureCandidateRevisions(
       await captureBatch(batch, revisions, signal);
     },
   );
+  const diagnostics = classifyRipgrepDiagnostics(result.stderr);
+  if (result.code === 2 && diagnostics.other.length === 0 && diagnostics.unreadable.length > 0)
+    return { revisions, unreadable: diagnostics.unreadable };
   if (result.code !== 0 && result.code !== 1) {
     throw new SignalGrepError(
       result.stderr.trim() || `ripgrep file enumeration exited with status ${String(result.code)}`,
     );
   }
-  return revisions;
+  return { revisions, unreadable: diagnostics.unreadable };
 }
 
 export async function retainStableSourceRevisions(

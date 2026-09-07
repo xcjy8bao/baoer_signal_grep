@@ -4,6 +4,11 @@ import { runOwnedProcess } from "./owned-process.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { fileScopeArguments } from "./rg.js";
 import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
+import {
+  classifyRipgrepDiagnostics,
+  describeUnreadableDiagnostics,
+  hasRequestedRootUnreadable,
+} from "./ripgrep-diagnostics.js";
 import { MAX_PROTOCOL_LINE_BYTES, MAX_SOURCE_REVISION_FILES } from "./types.js";
 
 export interface WorkspaceFileOptions {
@@ -109,7 +114,12 @@ export async function listWorkspaceFiles(
           throw new SignalGrepError("Candidate enumeration ended without a NUL delimiter");
       },
     );
-    if (result.code !== 0 && result.code !== 1)
+    const diagnostics = classifyRipgrepDiagnostics(result.stderr);
+    if (hasRequestedRootUnreadable(diagnostics.unreadable, cwd, searchPath))
+      throw new SignalGrepError(describeUnreadableDiagnostics(diagnostics.unreadable));
+    if (diagnostics.unreadable.length > 0)
+      reasons.add(describeUnreadableDiagnostics(diagnostics.unreadable));
+    if (result.code === 2 && (diagnostics.other.length > 0 || diagnostics.unreadable.length === 0))
       throw new SignalGrepError(
         result.stderr.trim() || `Candidate enumeration exited ${String(result.code)}`,
       );

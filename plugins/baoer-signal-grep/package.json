@@ -1,6 +1,6 @@
 {
   "name": "baoer-signal-grep",
-  "version": "1.2.3-3",
+  "version": "1.2.3-4",
   "private": true,
   "type": "module",
   "omp": {

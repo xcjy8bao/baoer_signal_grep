@@ -144,7 +144,7 @@ function resolveContextBudget(usage) {
 }
 
 // src/rg.ts
-import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve3 } from "path";
+import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve4 } from "path";
 
 // src/errors.ts
 class SignalGrepError extends Error {
@@ -645,6 +645,44 @@ async function resolveRipgrepExecutable() {
   return executable;
 }
 
+// src/ripgrep-diagnostics.ts
+import { resolve as resolve2 } from "path";
+var UNREADABLE_SUFFIX = /:\s+Permission denied(?:\s+\(os error 13\))?\s*$/iu;
+var UNREADABLE_CODE = /\(os error 13\)\s*$/iu;
+function diagnosticLines(stderr) {
+  return stderr.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.length > 0);
+}
+function unreadablePath(line, suffix) {
+  const match = suffix.exec(line);
+  if (!match || match.index === undefined)
+    return;
+  const prefix = line.slice(0, match.index).trim();
+  const separator = prefix.indexOf(": ");
+  const path = (separator < 0 ? prefix : prefix.slice(separator + 2)).trim();
+  return path.replace(/^['"]|['"]$/gu, "") || undefined;
+}
+function classifyRipgrepDiagnostics(stderr) {
+  const unreadable = [];
+  const other = [];
+  for (const line of diagnosticLines(stderr)) {
+    const path = unreadablePath(line, UNREADABLE_SUFFIX);
+    if (path !== undefined || UNREADABLE_CODE.test(line)) {
+      unreadable.push({ message: line, ...path ? { path } : {} });
+    } else {
+      other.push(line);
+    }
+  }
+  return { unreadable, other };
+}
+function hasRequestedRootUnreadable(diagnostics, cwd, searchPath) {
+  const expected = resolve2(cwd, searchPath);
+  return diagnostics.some((diagnostic) => diagnostic.path === undefined || resolve2(cwd, diagnostic.path) === expected);
+}
+function describeUnreadableDiagnostics(diagnostics) {
+  const messages = [...new Set(diagnostics.map((diagnostic) => diagnostic.message))];
+  return `Ripgrep skipped ${String(messages.length)} unreadable path(s); search coverage is partial: ${messages.join("; ")}`;
+}
+
 // src/source.ts
 import { readFile as readFile2, realpath as realpath2, stat as stat2 } from "fs/promises";
 var SOURCE_RANGE_METADATA_RESERVE_BYTES = 1024;
@@ -801,7 +839,7 @@ function sourceRangeFromBytes(content, startLine, endLine, targetLine = startLin
 }
 
 // src/scan-revisions.ts
-import { resolve as resolve2 } from "path";
+import { resolve as resolve3 } from "path";
 async function captureBatch(paths, revisions, signal) {
   if (signal?.aborted)
     throw abortError();
@@ -833,7 +871,7 @@ async function captureCandidateRevisions(executable, args2, cwd, maxFiles, signa
           const path = rawPath.toString("utf8");
           if (Buffer.from(path, "utf8").equals(rawPath)) {
             candidateCount += 1;
-            batch.push(resolve2(cwd, path));
+            batch.push(resolve3(cwd, path));
           }
           if (batch.length === MAX_SOURCE_REVISION_CONCURRENCY) {
             await captureBatch(batch, revisions, signal);
@@ -852,10 +890,13 @@ async function captureCandidateRevisions(executable, args2, cwd, maxFiles, signa
     }
     await captureBatch(batch, revisions, signal);
   });
+  const diagnostics = classifyRipgrepDiagnostics(result.stderr);
+  if (result.code === 2 && diagnostics.other.length === 0 && diagnostics.unreadable.length > 0)
+    return { revisions, unreadable: diagnostics.unreadable };
   if (result.code !== 0 && result.code !== 1) {
     throw new SignalGrepError(result.stderr.trim() || `ripgrep file enumeration exited with status ${String(result.code)}`);
   }
-  return revisions;
+  return { revisions, unreadable: diagnostics.unreadable };
 }
 async function retainStableSourceRevisions(paths, before, signal) {
   const after = new Map;
@@ -898,7 +939,7 @@ function decodeRgText(value, field) {
   throw new SignalGrepError(`ripgrep JSON event omitted ${field}`);
 }
 function displayPath(rawPath, cwd) {
-  const absolutePath = isAbsolute3(rawPath) ? rawPath : resolve3(cwd, rawPath);
+  const absolutePath = isAbsolute3(rawPath) ? rawPath : resolve4(cwd, rawPath);
   const localPath = relative2(cwd, absolutePath).replaceAll("\\", "/");
   const isInsideCwd = localPath !== ".." && !localPath.startsWith("../") && !isAbsolute3(localPath);
   return {
@@ -1044,7 +1085,7 @@ function fileScopeArguments(request) {
   return args2;
 }
 function buildRipgrepArguments(request, cwd, validatedSearchPath) {
-  const searchPath = validatedSearchPath ?? resolve3(cwd, request.path ?? ".");
+  const searchPath = validatedSearchPath ?? resolve4(cwd, request.path ?? ".");
   const policy = new SearchPathPolicy(cwd);
   policy.assertPath(searchPath);
   const args2 = [
@@ -1057,7 +1098,7 @@ function buildRipgrepArguments(request, cwd, validatedSearchPath) {
     ...policy.ripgrepGlobArguments(searchPath)
   ];
   args2.push(...patternArguments(request));
-  const searchTarget = isPathInsideCwd(searchPath, cwd) ? relative2(resolve3(cwd), searchPath) || "." : searchPath;
+  const searchTarget = isPathInsideCwd(searchPath, cwd) ? relative2(resolve4(cwd), searchPath) || "." : searchPath;
   args2.push("--", request.pattern, searchTarget);
   return args2;
 }
@@ -1076,11 +1117,11 @@ function createRipgrepRunner(options = {}) {
     if (signal?.aborted)
       throw abortError();
     const executable = options.executable ?? await resolveRipgrepExecutable();
-    const searchPath = resolve3(cwd, request.path ?? ".");
+    const searchPath = resolve4(cwd, request.path ?? ".");
     const policy = new SearchPathPolicy(cwd);
     const validatedSearchPath = await policy.resolveSearchTarget(searchPath);
     const expectedSearchTarget = await policy.resolveExistingPath(validatedSearchPath);
-    const searchTarget = isPathInsideCwd(validatedSearchPath, cwd) ? relative2(resolve3(cwd), validatedSearchPath) || "." : validatedSearchPath;
+    const searchTarget = isPathInsideCwd(validatedSearchPath, cwd) ? relative2(resolve4(cwd), validatedSearchPath) || "." : validatedSearchPath;
     const args2 = buildRipgrepArguments(request, cwd, validatedSearchPath);
     if (signal?.aborted)
       throw abortError();
@@ -1167,7 +1208,11 @@ function createRipgrepRunner(options = {}) {
         "--",
         searchTarget
       ], cwd, maxSourceRevisionFiles, signal);
-      candidateRevisions = before;
+      if (hasRequestedRootUnreadable(before.unreadable, cwd, validatedSearchPath))
+        throw new SignalGrepError(describeUnreadableDiagnostics(before.unreadable));
+      candidateRevisions = before.revisions;
+      if (before.unreadable.length > 0)
+        retention.noteLimit(describeUnreadableDiagnostics(before.unreadable));
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess({ executable, args: args2, cwd, ...signal ? { signal } : {} }, (stdout) => consumeCappedLines(stdout, onLine, {
         maxLineBytes: maxEventBytes,
@@ -1180,13 +1225,18 @@ function createRipgrepRunner(options = {}) {
           retention.noteLimit(`Skipped oversized ripgrep match line in ${JSON.stringify(label)}; observed at least ${String(observedBytes)} bytes, limit is ${String(maxEventBytes)} bytes`);
         }
       }));
-      if (code !== 0 && code !== 1) {
+      const diagnostics = classifyRipgrepDiagnostics(stderr);
+      if (hasRequestedRootUnreadable(diagnostics.unreadable, cwd, validatedSearchPath))
+        throw new SignalGrepError(describeUnreadableDiagnostics(diagnostics.unreadable));
+      if (diagnostics.unreadable.length > 0)
+        retention.noteLimit(describeUnreadableDiagnostics(diagnostics.unreadable));
+      if (code === 2 && (diagnostics.other.length > 0 || diagnostics.unreadable.length === 0)) {
         throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);
       }
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const retainedPaths = new Set(matches.map((match) => match.absolutePath).filter((path) => !lossyPaths.has(path)));
       await assertRetainedPathsAllowed(policy, [...retainedPaths], signal);
-      const sourceRevisions = await retainStableSourceRevisions(retainedPaths, before, signal);
+      const sourceRevisions = await retainStableSourceRevisions(retainedPaths, before.revisions, signal);
       if (signal?.aborted)
         throw abortError();
       return {
@@ -1211,7 +1261,7 @@ function createRipgrepRunner(options = {}) {
 }
 
 // src/structure.ts
-import { isAbsolute as isAbsolute4, resolve as resolve4 } from "path";
+import { isAbsolute as isAbsolute4, resolve as resolve5 } from "path";
 var CTAGS_CAPABILITY_ARGUMENTS = [
   "--output-format=json",
   "--fields=+ne",
@@ -1301,7 +1351,7 @@ async function runCtagsCommand(executable, absolutePath, cwd, signal) {
   return tags;
 }
 function pathMatches(tagPath, absolutePath, cwd) {
-  return resolve4(isAbsolute4(tagPath) ? tagPath : resolve4(cwd, tagPath)) === resolve4(absolutePath);
+  return resolve5(isAbsolute4(tagPath) ? tagPath : resolve5(cwd, tagPath)) === resolve5(absolutePath);
 }
 function symbolFromTag(tag) {
   if (tag.line === undefined || tag.end === undefined || tag.end < tag.line)
@@ -1515,17 +1565,17 @@ function rangeEvidence(document2, range) {
 // src/semantic-sources.ts
 import { pathToFileURL } from "url";
 import { realpath as realpath3 } from "fs/promises";
-import { resolve as resolve5 } from "path";
+import { resolve as resolve6 } from "path";
 async function semanticSources(cwd, documents) {
   const known = new Map;
   const policy = new SearchPathPolicy(cwd);
   for (const document2 of documents) {
-    const absolute = resolve5(cwd, document2.path);
+    const absolute = resolve6(cwd, document2.path);
     known.set(absolute, document2);
     known.set(await realpath3(absolute), document2);
   }
   return async (path) => {
-    const absolute = resolve5(cwd, path);
+    const absolute = resolve6(cwd, path);
     policy.assertPath(absolute);
     const direct = known.get(absolute);
     if (direct)
@@ -1540,11 +1590,11 @@ async function semanticSources(cwd, documents) {
   };
 }
 async function semanticUri(cwd, path) {
-  return pathToFileURL(await realpath3(resolve5(cwd, path))).href;
+  return pathToFileURL(await realpath3(resolve6(cwd, path))).href;
 }
 
 // src/impact-bindings.ts
-import { resolve as resolve6 } from "path";
+import { resolve as resolve7 } from "path";
 
 // src/semantic-protocol.ts
 import { fileURLToPath } from "url";
@@ -1579,8 +1629,8 @@ class JsonRpcChannel {
 `),
       body2
     ]);
-    await new Promise((resolve6, reject) => {
-      this.#stdin.write(frame, (error) => error ? reject(error) : resolve6());
+    await new Promise((resolve7, reject) => {
+      this.#stdin.write(frame, (error) => error ? reject(error) : resolve7());
     });
   }
   async request(method, params) {
@@ -2523,8 +2573,8 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
   const name2 = syntax.nodes.find((node) => node.start >= target.symbol.start && node.end <= target.symbol.end && target.document.text.slice(node.start, node.end) === target.symbol.name && node.kind.endsWith("identifier"));
   if (!name2)
     throw new SignalGrepError("Impact compiler target has no exact identifier position");
-  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve6(access2.cwd, file.document.path), file.document]));
-  documents.set(resolve6(access2.cwd, target.document.path), target.document);
+  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve7(access2.cwd, file.document.path), file.document]));
+  documents.set(resolve7(access2.cwd, target.document.path), target.document);
   const sourceAt = await semanticSources(access2.cwd, documents.values());
   const references = await withTypeScript(access2.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
     textDocument: { uri: await semanticUri(access2.cwd, target.document.path) },
@@ -2532,7 +2582,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     context: { includeDeclaration: true }
   })), access2.signal);
   const retained = new Map(occurrences.map((item) => [
-    `${resolve6(access2.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
+    `${resolve7(access2.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
     item
   ]));
   let bound = 0;
@@ -2541,7 +2591,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     if (!document2)
       continue;
     const range = byteRange(document2, reference.range);
-    const key = `${resolve6(access2.cwd, document2.path)}:${String(range.start)}:${String(range.end)}`;
+    const key = `${resolve7(access2.cwd, document2.path)}:${String(range.start)}:${String(range.end)}`;
     const existing = retained.get(key);
     const line = document2.lineAt(range.start);
     const evidence = sourceEvidence(document2, range);
@@ -2671,28 +2721,28 @@ function normalizeRequest(input) {
 }
 
 // src/source-access.ts
-import { extname as extname2, resolve as resolve11 } from "path";
+import { extname as extname2, resolve as resolve12 } from "path";
 
 // src/historical-paths.ts
 import { lstat, mkdir, mkdtemp, open, rm, writeFile } from "fs/promises";
 import { constants as constants2 } from "fs";
 import { tmpdir } from "os";
-import { dirname as dirname3, join as join3, parse, relative as relative4, resolve as resolve8 } from "path";
+import { dirname as dirname3, join as join3, parse, relative as relative4, resolve as resolve9 } from "path";
 
 // src/workspace-files.ts
-import { relative as relative3, resolve as resolve7, sep as sep2 } from "path";
+import { relative as relative3, resolve as resolve8, sep as sep2 } from "path";
 class EnumerationLimit extends Error {
 }
 function workspaceRelativePath(cwd, path, policy = new SearchPathPolicy(cwd)) {
-  const absolute = resolve7(cwd, path);
+  const absolute = resolve8(cwd, path);
   policy.assertPath(absolute);
-  const local = relative3(resolve7(cwd), absolute);
+  const local = relative3(resolve8(cwd), absolute);
   if (local.split(sep2).some((part) => part.toLowerCase() === ".git"))
     throw new SignalGrepError("Git internals are excluded from source candidates");
   return isPathInsideCwd(absolute, cwd) ? local.split(sep2).join("/") : absolute.replaceAll("\\", "/");
 }
 async function listWorkspaceFiles(cwd, signal, options = {}) {
-  const absolutePath = resolve7(cwd, options.path ?? ".");
+  const absolutePath = resolve8(cwd, options.path ?? ".");
   const policy = new SearchPathPolicy(cwd);
   const searchPath = await policy.resolveSearchTarget(absolutePath);
   const maxFiles = options.maxFiles ?? MAX_SOURCE_REVISION_FILES;
@@ -2749,7 +2799,12 @@ async function listWorkspaceFiles(cwd, signal, options = {}) {
       if (pending.length > 0)
         throw new SignalGrepError("Candidate enumeration ended without a NUL delimiter");
     });
-    if (result.code !== 0 && result.code !== 1)
+    const diagnostics = classifyRipgrepDiagnostics(result.stderr);
+    if (hasRequestedRootUnreadable(diagnostics.unreadable, cwd, searchPath))
+      throw new SignalGrepError(describeUnreadableDiagnostics(diagnostics.unreadable));
+    if (diagnostics.unreadable.length > 0)
+      reasons.add(describeUnreadableDiagnostics(diagnostics.unreadable));
+    if (result.code === 2 && (diagnostics.other.length > 0 || diagnostics.unreadable.length === 0))
       throw new SignalGrepError(result.stderr.trim() || `Candidate enumeration exited ${String(result.code)}`);
   } catch (error) {
     if (!(error instanceof EnumerationLimit))
@@ -2773,7 +2828,7 @@ function partitionPaths(paths) {
 }
 function relevantDirectories(cwd, paths) {
   const directories = new Set;
-  for (const path of [cwd, ...paths.map((sourcePath) => dirname3(resolve8(cwd, sourcePath)))]) {
+  for (const path of [cwd, ...paths.map((sourcePath) => dirname3(resolve9(cwd, sourcePath)))]) {
     let current = path;
     for (;; ) {
       directories.add(current);
@@ -2786,7 +2841,7 @@ function relevantDirectories(cwd, paths) {
   return [...directories];
 }
 async function filterHistoricalPaths(cwd, paths, request, signal) {
-  if (!isPathInsideCwd(resolve8(cwd, request.path ?? "."), cwd)) {
+  if (!isPathInsideCwd(resolve9(cwd, request.path ?? "."), cwd)) {
     throw new SignalGrepError("Historical path filtering requires a path inside cwd");
   }
   const selectedPath = workspaceRelativePath(cwd, request.path ?? ".");
@@ -2798,7 +2853,7 @@ async function filterHistoricalPaths(cwd, paths, request, signal) {
   if (bounded.length === 0)
     return { paths: [], partial: reasons.size > 0, reasons: [...reasons], ignoreBytesRead: 0 };
   const root = await mkdtemp(join3(tmpdir(), "baoer_signal_grep-paths-"));
-  const absoluteCwd = resolve8(cwd);
+  const absoluteCwd = resolve9(cwd);
   const volumeRoot = parse(absoluteCwd).root;
   const ignoreFiles = [];
   let ignoreBytesRead = 0;
@@ -2860,7 +2915,7 @@ async function filterHistoricalPaths(cwd, paths, request, signal) {
       await mkdir(target, { recursive: true });
       for (const path of group) {
         const safe = workspaceRelativePath(absoluteCwd, path);
-        const placeholder = resolve8(target, safe);
+        const placeholder = resolve9(target, safe);
         await mkdir(dirname3(placeholder), { recursive: true });
         await writeFile(placeholder, "");
       }
@@ -3058,7 +3113,7 @@ async function sourceSimilarity(oldContent, newContent, budget) {
 import { createHash } from "crypto";
 import { constants as constants3 } from "fs";
 import { lstat as lstat2, open as open2 } from "fs/promises";
-import { isAbsolute as isAbsolute5, relative as relative5, resolve as resolve9, sep as sep3 } from "path";
+import { isAbsolute as isAbsolute5, relative as relative5, resolve as resolve10, sep as sep3 } from "path";
 
 // src/git-process.ts
 var GIT_READ_ARGUMENTS = [
@@ -3202,8 +3257,8 @@ function splitGitRecords(output) {
 // src/git-repository.ts
 async function verifyWorktreeRevision(cwd, path, expected) {
   try {
-    const current = await lstat2(resolve9(cwd, path));
-    await assertExistingPathInsideCwd(resolve9(cwd, path), cwd);
+    const current = await lstat2(resolve10(cwd, path));
+    await assertExistingPathInsideCwd(resolve10(cwd, path), cwd);
     if (current.isFile() && sameSourceRevision(sourceRevisionFromStats(current), expected))
       return;
   } catch (error) {
@@ -3215,8 +3270,8 @@ async function verifyWorktreeRevision(cwd, path, expected) {
 function gitPath(cwd, path) {
   if (path.length === 0 || path.includes("\x00"))
     throw new SignalGrepError("Git source path is invalid");
-  const absolute = resolve9(cwd, path);
-  const local = relative5(resolve9(cwd), absolute).split(sep3).join("/");
+  const absolute = resolve10(cwd, path);
+  const local = relative5(resolve10(cwd), absolute).split(sep3).join("/");
   if (!isPathInsideCwd(absolute, cwd) || local.split("/").some((part) => part.toLowerCase() === ".git")) {
     throw new SignalGrepError("Git source path must stay within the working directory and outside .git");
   }
@@ -3240,7 +3295,7 @@ async function resolveGitRepository(cwd, signal) {
   const root = decodeGitPath(output).replace(/\r?\n$/, "");
   if (!isAbsolute5(root))
     throw new SignalGrepError("Git returned an invalid repository root");
-  return resolve9(root);
+  return resolve10(root);
 }
 async function findGitRepository(cwd, signal) {
   try {
@@ -3338,7 +3393,7 @@ async function readGitBlob(cwd, commit, entry, budget, signal) {
   };
 }
 async function readWorktreeSource(cwd, path, budget, signal) {
-  const absolute = resolve9(cwd, path);
+  const absolute = resolve10(cwd, path);
   if (signal?.aborted)
     throw abortError();
   let discovered = false;
@@ -3643,7 +3698,7 @@ async function readGitSource(cwd, identity, signal, options = {}) {
 import { isUtf8 } from "buffer";
 import { createHash as createHash2 } from "crypto";
 import { open as open3, realpath as realpath4 } from "fs/promises";
-import { relative as relative6, resolve as resolve10 } from "path";
+import { relative as relative6, resolve as resolve11 } from "path";
 class SourceDocumentError extends SignalGrepError {
   reason;
   constructor(reason, message) {
@@ -3789,7 +3844,7 @@ async function readWorkspaceDocument(path, cwd, signal, expected, readBudget = M
   if (expected?.kind === "git") {
     throw new SignalGrepError("A Git source reference cannot be read from the worktree");
   }
-  const absolute = resolve10(cwd, path);
+  const absolute = resolve11(cwd, path);
   const [canonical, canonicalCwd] = await Promise.all([
     new SearchPathPolicy(cwd).resolveExistingPath(absolute),
     realpath4(cwd)
@@ -3952,10 +4007,10 @@ class SourceAccess {
   async load(path, expected) {
     if (this.signal?.aborted)
       throw abortError();
-    if (expected && resolve11(this.cwd, expected.path) !== resolve11(this.cwd, path)) {
+    if (expected && resolve12(this.cwd, expected.path) !== resolve12(this.cwd, path)) {
       throw new SignalGrepError("Source reference path does not match the requested file");
     }
-    const key = JSON.stringify([resolve11(this.cwd, path), expected?.origin]);
+    const key = JSON.stringify([resolve12(this.cwd, path), expected?.origin]);
     const existing = this.#documents.get(key);
     if (existing)
       return existing;
@@ -3985,7 +4040,7 @@ class SourceAccess {
     if (remaining <= 0)
       throw new SourceBudgetError("Structural scan reached the 32 MiB read limit");
     if (expected?.origin.kind !== "git") {
-      const metadata2 = await getSourceRevision(resolve11(this.cwd, path));
+      const metadata2 = await getSourceRevision(resolve12(this.cwd, path));
       if (metadata2 && metadata2.size > remaining)
         throw new SourceBudgetError("Next source exceeds the remaining 32 MiB structural read budget");
     }
@@ -4367,14 +4422,14 @@ function rankEvidence(items, priority) {
 }
 
 // src/semantic-navigation.ts
-import { resolve as resolve14 } from "path";
+import { resolve as resolve15 } from "path";
 
 // src/semantic-project.ts
-import { resolve as resolve13 } from "path";
+import { resolve as resolve14 } from "path";
 
 // src/project-root.ts
 import { readdir, realpath as realpath5 } from "fs/promises";
-import { dirname as dirname5, relative as relative7, resolve as resolve12 } from "path";
+import { dirname as dirname5, relative as relative7, resolve as resolve13 } from "path";
 var TYPESCRIPT_CONFIG_FILE = /^[tj]sconfig[^/]*\.json$/i;
 function isMissingPath(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
@@ -4397,18 +4452,18 @@ async function projectConfig(directory, signal) {
   }
 }
 async function gitRootWithinCwd(cwd, gitRoot) {
-  const absoluteCwd = resolve12(cwd);
+  const absoluteCwd = resolve13(cwd);
   const [canonicalCwd, canonicalRoot] = await Promise.all([
     realpath5(absoluteCwd),
     realpath5(gitRoot)
   ]);
   if (!isPathInsideCwd(canonicalRoot, canonicalCwd))
     return;
-  return resolve12(absoluteCwd, relative7(canonicalCwd, canonicalRoot));
+  return resolve13(absoluteCwd, relative7(canonicalCwd, canonicalRoot));
 }
 async function resolveSemanticProjectRoot(cwd, targetPath, signal) {
-  const absoluteCwd = resolve12(cwd);
-  const absoluteTarget = resolve12(absoluteCwd, targetPath);
+  const absoluteCwd = resolve13(cwd);
+  const absoluteTarget = resolve13(absoluteCwd, targetPath);
   if (!isPathInsideCwd(absoluteTarget, absoluteCwd))
     return absoluteCwd;
   const targetDirectory = dirname5(absoluteTarget);
@@ -4453,10 +4508,10 @@ async function semanticProject(access2, targetPath) {
     return language && language !== "go";
   });
   const metadataPaths = files.paths.filter((path) => semanticMetadataPath.test(path));
-  const target = resolve13(access2.cwd, targetPath);
-  if (!paths.some((path) => resolve13(access2.cwd, path) === target))
+  const target = resolve14(access2.cwd, targetPath);
+  if (!paths.some((path) => resolve14(access2.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
-  paths.sort((a, b) => Number(resolve13(access2.cwd, b) === target) - Number(resolve13(access2.cwd, a) === target) || a.localeCompare(b));
+  paths.sort((a, b) => Number(resolve14(access2.cwd, b) === target) - Number(resolve14(access2.cwd, a) === target) || a.localeCompare(b));
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata2 = [];
@@ -4466,7 +4521,7 @@ async function semanticProject(access2, targetPath) {
       if (!document2.utf8)
         throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
       if (paths.includes(path))
-        documents.set(resolve13(access2.cwd, path), document2);
+        documents.set(resolve14(access2.cwd, path), document2);
       else
         metadata2.push(document2);
     } catch (error) {
@@ -4660,7 +4715,7 @@ async function runSemanticNavigation(input, access2) {
             await add(target, "dependency");
           } else if (targetDocument === primary) {
             await add({
-              path: resolve14(access2.cwd, document2.path),
+              path: resolve15(access2.cwd, document2.path),
               range: {
                 start: lspPosition(document2, specifier.start),
                 end: lspPosition(document2, specifier.end)
@@ -4693,7 +4748,7 @@ function navigateSemantics(input, access2) {
 }
 
 // src/evidence-service.ts
-import { dirname as dirname6, resolve as resolve20 } from "path";
+import { dirname as dirname6, resolve as resolve21 } from "path";
 
 // src/analysis-store.ts
 import { randomUUID } from "crypto";
@@ -5022,7 +5077,7 @@ Inspect: ${JSON.stringify(inspect)}` : ""}`;
 }
 
 // src/inspect.ts
-import { resolve as resolve15 } from "path";
+import { resolve as resolve16 } from "path";
 function resolveInspectionTarget(input, cwd, snapshots) {
   let path = input.path?.replace(/^@/, "");
   let line = input.line;
@@ -5049,7 +5104,7 @@ function resolveInspectionTarget(input, cwd, snapshots) {
   if (line === undefined || !Number.isSafeInteger(line) || line < 1) {
     throw new SignalGrepError("line must be a positive integer when mode=inspect");
   }
-  const absolutePath = retainedMatch?.absolutePath ?? resolve15(cwd, path);
+  const absolutePath = retainedMatch?.absolutePath ?? resolve16(cwd, path);
   new SearchPathPolicy(cwd).assertPath(absolutePath);
   let expectedRevision;
   if (input.cursor) {
@@ -5071,7 +5126,7 @@ function resolveInspectionTarget(input, cwd, snapshots) {
 }
 
 // src/evidence-candidates.ts
-import { resolve as resolve16 } from "path";
+import { resolve as resolve17 } from "path";
 class CandidateLimit extends SignalGrepError {
 }
 function record(value) {
@@ -5236,7 +5291,7 @@ async function ordinaryCandidates(options) {
 async function collectEvidenceCandidates(options) {
   if (!options.changes)
     return ordinaryCandidates(options);
-  if (options.request.path && !isPathInsideCwd(resolve16(options.cwd, options.request.path), options.cwd)) {
+  if (options.request.path && !isPathInsideCwd(resolve17(options.cwd, options.request.path), options.cwd)) {
     throw new SignalGrepError("Git changes for paths outside cwd are not supported; relaunch Pi from that repository or a common parent");
   }
   const reasons = new Set;
@@ -6990,10 +7045,10 @@ async function runOwnedParallel(start2, parent) {
 }
 
 // src/file-discovery.ts
-import { basename as platformBasename, posix as posix4, relative as relative8, resolve as resolve18, sep as sep4 } from "path";
+import { basename as platformBasename, posix as posix4, relative as relative8, resolve as resolve19, sep as sep4 } from "path";
 
 // src/file-metadata-filter.ts
-import { resolve as resolve17 } from "path";
+import { resolve as resolve18 } from "path";
 async function filterPathsByModificationTime(cwd, paths, modifiedAfterMs, modifiedBeforeMs, signal) {
   if (modifiedAfterMs === undefined && modifiedBeforeMs === undefined)
     return { paths: [...paths], partial: false, reasons: [] };
@@ -7004,7 +7059,7 @@ async function filterPathsByModificationTime(cwd, paths, modifiedAfterMs, modifi
       throw abortError();
     const batch = paths.slice(offset, offset + MAX_SOURCE_REVISION_CONCURRENCY);
     const revisions = await Promise.all(batch.map(async (path) => {
-      const revision = await getSourceRevision(resolve17(cwd, path));
+      const revision = await getSourceRevision(resolve18(cwd, path));
       return revision ? { path, revision } : { path };
     }));
     for (const { path, revision } of revisions) {
@@ -7061,8 +7116,8 @@ function scoreFilePath(path, query) {
   };
 }
 function pathRelativeToDiscoveryRoot(cwd, root, path) {
-  const absoluteRoot = resolve18(cwd, root);
-  const absolutePath = resolve18(cwd, path);
+  const absoluteRoot = resolve19(cwd, root);
+  const absolutePath = resolve19(cwd, path);
   const scoped = relative8(absoluteRoot, absolutePath).split(sep4).join("/");
   return scoped || platformBasename(absolutePath);
 }
@@ -7318,7 +7373,7 @@ class SourceContinuations {
 }
 
 // src/source-inspection.ts
-import { resolve as resolve19 } from "path";
+import { resolve as resolve20 } from "path";
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -7384,7 +7439,7 @@ async function prepare(target, access2, structure) {
     }
   } else if (document2.utf8 && structure && document2.reference.origin.kind === "worktree" && !target.range) {
     const result = await structure.inspect({
-      absolutePath: resolve19(access2.cwd, target.path),
+      absolutePath: resolve20(access2.cwd, target.path),
       cwd: access2.cwd,
       line: target.line,
       expectedRevision: document2.reference.origin.revision
@@ -7561,7 +7616,7 @@ ${preview.text}`);
     if (block.remaining.length)
       block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve19(access2.cwd, block.document.path));
+      const current = await getSourceRevision(resolve20(access2.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -8238,10 +8293,11 @@ function searchScope(request) {
   };
 }
 async function navigationRoot(cwd, path, signal) {
-  const absolute = resolve20(cwd, path);
-  if (isPathInsideCwd(absolute, cwd))
-    return resolve20(cwd);
-  return await findGitRepository(dirname6(absolute), signal) ?? dirname6(absolute);
+  const absolute = resolve21(cwd, path);
+  const repository = await findGitRepository(dirname6(absolute), signal);
+  if (repository)
+    return repository;
+  return isPathInsideCwd(absolute, cwd) ? resolve21(cwd) : dirname6(absolute);
 }
 function navigationFilters(input) {
   const request = normalizeRequest({
@@ -8253,7 +8309,7 @@ function navigationFilters(input) {
   return { glob: request.glob, exclude: request.exclude, hidden: request.hidden };
 }
 function navigationScope(cwd, root, requestedPath, filters) {
-  const projectRoot = resolve20(cwd);
+  const projectRoot = resolve21(cwd);
   return {
     path: root === projectRoot ? "." : root,
     requestedPath,
@@ -8734,15 +8790,15 @@ class EvidenceService {
         exclude: filters.exclude,
         hidden: filters.hidden
       });
-      const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
-      const primaryPath = resolve20(access2.cwd, document2.path);
+      const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
+      const primaryPath = resolve21(access2.cwd, document2.path);
       allowed.add(primaryPath);
       const host = {
         cwd: access2.cwd,
         ...access2.signal ? { signal: access2.signal } : {},
         normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve20(access2.cwd, file);
+          const absolutePath = resolve21(access2.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
@@ -8914,21 +8970,44 @@ class EvidenceService {
       }));
     const root = await navigationRoot(access2.cwd, document2.path, access2.signal);
     const filters = navigationFilters(input);
+    if (input.mode === "tests" && isPython)
+      return this.#analyses.page(this.#analyses.create({
+        kind: "tests",
+        unit: "evidence-items",
+        items: [],
+        partial: true,
+        reasons: [
+          'Python related-test navigation is not supported; use mode="outline" for Python source structure'
+        ],
+        filesRead: access2.filesRead,
+        bytesRead: access2.bytesRead,
+        stats: {
+          filesEnumerated: 0,
+          filesParsed: 0,
+          filesSkipped: 0,
+          cacheHits: 0,
+          parseMs: Math.round(performance.now() - navigationStarted),
+          budgetExhausted: false
+        },
+        coverage: { navigation: "not-applicable" },
+        scope: navigationScope(access2.cwd, root, document2.path, filters),
+        redact: input.redact ?? false
+      }));
     const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
       path: root,
       glob: filters.glob,
       exclude: filters.exclude,
       hidden: filters.hidden
     });
-    const allowed = new Set(files.paths.map((file) => resolve20(access2.cwd, file)));
-    const primaryPath = resolve20(access2.cwd, document2.path);
+    const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
+    const primaryPath = resolve21(access2.cwd, document2.path);
     allowed.add(primaryPath);
     const host = {
       cwd: access2.cwd,
       ...access2.signal ? { signal: access2.signal } : {},
       normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve20(access2.cwd, file);
+        const absolutePath = resolve21(access2.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
@@ -8970,7 +9049,7 @@ class EvidenceService {
 }
 
 // src/service.ts
-import { resolve as resolve21 } from "path";
+import { resolve as resolve22 } from "path";
 
 // src/format.ts
 import { readFile as readFile3 } from "fs/promises";
@@ -9564,7 +9643,7 @@ function cursorPathSelection(input, cwd) {
     validateSearchPath(label, input.paths !== undefined ? "paths" : "path");
     if (label.length === 0)
       throw new SignalGrepError("Cursor paths cannot be empty");
-    const absolutePath = resolve21(cwd, label);
+    const absolutePath = resolve22(cwd, label);
     policy.assertPath(absolutePath);
     if (absolutePaths.has(absolutePath))
       continue;
@@ -10006,7 +10085,7 @@ function signalGrepPromptGuidelines() {
     `Use allOf:["term1","term2"] for explicit same-file literal AND, or add within:"function" for own-implementation JS/TS/TSX code. Use roles:["declaration"] or roles:["call"] with a single pattern for JS/TS/TSX/Go syntactic occurrences.`,
     `Use anyOf:["term1","term2"] when every exact occurrence of 2-64 literals is needed in one version-bound result. It is case-sensitive, reports retained counts per input term, and runs requests above eight terms as bounded parallel chunks. Large term-count inventories have separate termCountsNextRequest pages; copy those requests to retrieve the complete term map.`,
     `For a changed-code question, add changes:{base:"HEAD",scope:"lines",side:"new"}; omit target for the working tree, use side:"old" for deleted evidence. Copy returned continuation requests to preserve source versions.`,
-    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. Imports/tests accept glob, exclude and hidden to narrow the repository candidate scope; the target source remains admitted. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
+    `Use mode:"outline" with path to see symbols, mode:"imports" with path and a binding symbol or line to follow static named/default ESM links, and mode:"tests" with path for related test candidates. tests supports JS/TS/TSX sources only; Python supports outline but not related-test navigation. Imports/tests accept glob, exclude and hidden to narrow the repository candidate scope; the target source remains admitted. Import links do not prove runtime calls; test candidates do not prove coverage or passing tests.`,
     `Before changing one known JS/TS/TSX symbol, use mode:"impact" with path plus symbol or line to retrieve the exact target, every exact same-spelling candidate, and related-test evidence together. Compiler-confirmed references in verified candidate documents are ranked first; remaining same spelling does not prove binding, and returned tests have not been run. Use references for a dedicated workspace reference inventory.`,
     `Use mode:"files" plus query for unknown filenames and fuzzy paths. Use wholeWord:true for a single-pattern whole-word search. exclude contains file globs, not content negation.`,
     `Use JS/TS modes definitions, references, implementations, callers or callees with path+line+column (1-based UTF-16), or an unambiguous symbol. Returned evidence includes exact positions and executable next requests. The compiler resolves project aliases, package exports and workspace packages; static relationships do not prove runtime dispatch. dependencies/dependents take only a workspace file path.`,
@@ -14312,10 +14391,10 @@ class TuiBase extends Container {
     return null;
   }
   queryTerminalBackgroundColor({ timeoutMs }) {
-    return new Promise((resolve22) => {
+    return new Promise((resolve23) => {
       const query = {
         settled: false,
-        resolve: resolve22,
+        resolve: resolve23,
         timer: undefined
       };
       query.timer = setTimeout(() => {
@@ -14333,7 +14412,7 @@ class TuiBase extends Container {
     });
   }
   queryTerminalColorScheme({ timeoutMs }) {
-    return new Promise((resolve22) => {
+    return new Promise((resolve23) => {
       let settled = false;
       let timer;
       let unsubscribe = () => {};
@@ -14346,7 +14425,7 @@ class TuiBase extends Container {
           timer = undefined;
         }
         unsubscribe();
-        resolve22(scheme);
+        resolve23(scheme);
       };
       unsubscribe = this.onTerminalColorSchemeChange(settle);
       timer = setTimeout(() => settle(undefined), timeoutMs);
@@ -19041,8 +19120,8 @@ var Module2 = (() => {
     var moduleRtn;
     var Module = moduleArg;
     var readyPromiseResolve, readyPromiseReject;
-    var readyPromise = new Promise((resolve22, reject) => {
-      readyPromiseResolve = resolve22;
+    var readyPromise = new Promise((resolve23, reject) => {
+      readyPromiseResolve = resolve23;
       readyPromiseReject = reject;
     });
     var ENVIRONMENT_IS_WEB = typeof window == "object";
@@ -19122,13 +19201,13 @@ var Module2 = (() => {
         }
         readAsync = /* @__PURE__ */ __name(async (url) => {
           if (isFileURI(url)) {
-            return new Promise((resolve22, reject) => {
+            return new Promise((resolve23, reject) => {
               var xhr = new XMLHttpRequest;
               xhr.open("GET", url, true);
               xhr.responseType = "arraybuffer";
               xhr.onload = () => {
                 if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                  resolve22(xhr.response);
+                  resolve23(xhr.response);
                   return;
                 }
                 reject(xhr.status);
@@ -19348,10 +19427,10 @@ var Module2 = (() => {
       __name(receiveInstantiationResult, "receiveInstantiationResult");
       var info2 = getWasmImports();
       if (Module["instantiateWasm"]) {
-        return new Promise((resolve22, reject) => {
+        return new Promise((resolve23, reject) => {
           Module["instantiateWasm"](info2, (mod, inst) => {
             receiveInstance(mod, inst);
-            resolve22(mod.exports);
+            resolve23(mod.exports);
           });
         });
       }
@@ -25562,7 +25641,7 @@ var signalGrepSchema = exports_typebox.Object({
     "dependencies",
     "dependents"
   ], {
-    description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. Compiler results are static evidence; concept and related-test results remain candidates."
+    description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. tests supports JS/TS/TSX sources; Python supports outline, not related-test navigation. Compiler results are static evidence; concept and related-test results remain candidates."
   })),
   line: exports_typebox.Optional(exports_typebox.Number({
     description: "1-indexed source line for path inspection/navigation/impact. Omit with matchIndex, matchIndices or targets."

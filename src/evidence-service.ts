@@ -228,8 +228,9 @@ function searchScope(request: SearchRequest): SearchScopeDetails {
 
 async function navigationRoot(cwd: string, path: string, signal?: AbortSignal): Promise<string> {
   const absolute = resolve(cwd, path);
-  if (isPathInsideCwd(absolute, cwd)) return resolve(cwd);
-  return (await findGitRepository(dirname(absolute), signal)) ?? dirname(absolute);
+  const repository = await findGitRepository(dirname(absolute), signal);
+  if (repository) return repository;
+  return isPathInsideCwd(absolute, cwd) ? resolve(cwd) : dirname(absolute);
 }
 
 type NavigationFilters = Pick<SearchRequest, "glob" | "exclude" | "hidden">;
@@ -1108,6 +1109,31 @@ export class EvidenceService {
       );
     const root = await navigationRoot(access.cwd, document.path, access.signal);
     const filters = navigationFilters(input);
+    if (input.mode === "tests" && isPython)
+      return this.#analyses.page(
+        this.#analyses.create({
+          kind: "tests",
+          unit: "evidence-items",
+          items: [],
+          partial: true,
+          reasons: [
+            'Python related-test navigation is not supported; use mode="outline" for Python source structure',
+          ],
+          filesRead: access.filesRead,
+          bytesRead: access.bytesRead,
+          stats: {
+            filesEnumerated: 0,
+            filesParsed: 0,
+            filesSkipped: 0,
+            cacheHits: 0,
+            parseMs: Math.round(performance.now() - navigationStarted),
+            budgetExhausted: false,
+          },
+          coverage: { navigation: "not-applicable" },
+          scope: navigationScope(access.cwd, root, document.path, filters),
+          redact: input.redact ?? false,
+        }),
+      );
     const files = await listWorkspaceFiles(access.cwd, access.signal, {
       path: root,
       glob: filters.glob,
