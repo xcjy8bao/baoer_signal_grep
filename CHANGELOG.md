@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.3-3] - 2026-09-07
+
+- Recover from oversized ripgrep match lines during impact and broad searches, retaining partial status and source diagnostics instead of aborting the search.
+
 ## [1.2.3-2] - 2026-09-06
 
 - Fix redaction coverage for suffixed and compound sensitive variable names, including service keys and access-token variants.

@@ -1,8 +1,10 @@
-import { StringDecoder } from "node:string_decoder";
 import { MAX_PROTOCOL_LINE_BYTES } from "./types.js";
+
+const MAX_DIAGNOSTIC_PREFIX_BYTES = 8 * 1024;
 
 export interface CappedLineReaderOptions {
   maxLineBytes?: number;
+  onLineTooLong?: (details: { prefix: string; observedBytes: number }) => void;
 }
 
 /**
@@ -16,34 +18,95 @@ export async function consumeCappedLines(
   options: CappedLineReaderOptions = {},
 ): Promise<void> {
   const maxLineBytes = options.maxLineBytes ?? MAX_PROTOCOL_LINE_BYTES;
-  const decoder = new StringDecoder("utf8");
-  let buffer = "";
+  if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 1)
+    throw new Error("Capped line byte limit must be a positive safe integer");
 
-  const consumeBuffer = (final: boolean) => {
-    let newline = buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).replace(/\r$/, "");
-      if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
-        throw new Error(`Input line exceeds the ${String(maxLineBytes)}-byte limit`);
-      }
-      onLine(line);
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
+  let lineChunks: Uint8Array[] = [];
+  let lineBytes = 0;
+  let discarding = false;
+
+  const resetLine = () => {
+    lineChunks = [];
+    lineBytes = 0;
+  };
+
+  const lastLineByte = (): number | undefined => {
+    const chunk = lineChunks.at(-1);
+    return chunk && chunk.length > 0 ? chunk[chunk.length - 1] : undefined;
+  };
+
+  const prefixFor = (segment: Uint8Array, totalBytes: number): string => {
+    const prefixBytes = Math.min(MAX_DIAGNOSTIC_PREFIX_BYTES, totalBytes);
+    const prefix = Buffer.allocUnsafe(prefixBytes);
+    let copied = 0;
+    for (const chunk of lineChunks) {
+      if (copied === prefixBytes) break;
+      const length = Math.min(chunk.length, prefixBytes - copied);
+      prefix.set(chunk.subarray(0, length), copied);
+      copied += length;
     }
+    if (copied < prefixBytes) {
+      const length = Math.min(segment.length, prefixBytes - copied);
+      prefix.set(segment.subarray(0, length), copied);
+    }
+    return prefix.toString("utf8");
+  };
 
-    if (Buffer.byteLength(buffer, "utf8") > maxLineBytes) {
+  const lineText = (withoutTrailingCarriageReturn: boolean): string => {
+    const contentBytes = lineBytes - (withoutTrailingCarriageReturn && lineBytes > 0 ? 1 : 0);
+    const bytes = Buffer.concat(lineChunks, lineBytes);
+    return bytes.toString("utf8", 0, contentBytes);
+  };
+
+  const reportOverflow = (segment: Uint8Array, observedBytes: number, final: boolean): void => {
+    if (!options.onLineTooLong)
       throw new Error(
         `Input line exceeds the ${String(maxLineBytes)}-byte limit${final ? " at end of stream" : ""}`,
       );
+    options.onLineTooLong({
+      prefix: prefixFor(segment, observedBytes),
+      observedBytes,
+    });
+  };
+
+  const consumeChunk = (chunk: Uint8Array, final: boolean) => {
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(10, offset);
+      const end = newline >= 0 ? newline : chunk.length;
+      const segment = chunk.subarray(offset, end);
+
+      if (discarding) {
+        if (newline < 0) return;
+        discarding = false;
+        resetLine();
+        offset = newline + 1;
+        continue;
+      }
+
+      const observedBytes = lineBytes + segment.length;
+      const hasTrailingCarriageReturn =
+        newline >= 0 && observedBytes > 0 && (segment.at(-1) ?? lastLineByte()) === 13;
+      const contentBytes = observedBytes - (hasTrailingCarriageReturn ? 1 : 0);
+      if (contentBytes > maxLineBytes) {
+        reportOverflow(segment, observedBytes, final && newline < 0);
+        resetLine();
+        if (newline < 0) discarding = true;
+        else offset = newline + 1;
+        continue;
+      }
+
+      if (segment.length > 0) lineChunks.push(segment);
+      lineBytes = observedBytes;
+      if (newline < 0) return;
+      onLine(lineText(hasTrailingCarriageReturn));
+      resetLine();
+      offset = newline + 1;
     }
   };
 
-  for await (const chunk of stream) {
-    buffer += decoder.write(Buffer.from(chunk));
-    consumeBuffer(false);
-  }
-
-  buffer += decoder.end();
-  consumeBuffer(true);
-  if (buffer.length > 0) onLine(buffer);
+  for await (const chunk of stream) consumeChunk(chunk, false);
+  if (discarding) return;
+  consumeChunk(new Uint8Array(), true);
+  if (lineBytes > 0) onLine(lineText(false));
 }
