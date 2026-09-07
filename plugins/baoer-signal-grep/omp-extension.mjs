@@ -265,36 +265,95 @@ class SearchRetention {
 }
 
 // src/capped-lines.ts
-import { StringDecoder } from "string_decoder";
+var MAX_DIAGNOSTIC_PREFIX_BYTES = 8 * 1024;
 async function consumeCappedLines(stream, onLine, options = {}) {
   const maxLineBytes = options.maxLineBytes ?? MAX_PROTOCOL_LINE_BYTES;
-  const decoder = new StringDecoder("utf8");
-  let buffer = "";
-  const consumeBuffer = (final) => {
-    let newline = buffer.indexOf(`
-`);
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).replace(/\r$/, "");
-      if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
-        throw new Error(`Input line exceeds the ${String(maxLineBytes)}-byte limit`);
-      }
-      onLine(line);
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf(`
-`);
+  if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes < 1)
+    throw new Error("Capped line byte limit must be a positive safe integer");
+  let lineChunks = [];
+  let lineBytes = 0;
+  let discarding = false;
+  const resetLine = () => {
+    lineChunks = [];
+    lineBytes = 0;
+  };
+  const lastLineByte = () => {
+    const chunk = lineChunks.at(-1);
+    return chunk && chunk.length > 0 ? chunk[chunk.length - 1] : undefined;
+  };
+  const prefixFor = (segment, totalBytes) => {
+    const prefixBytes = Math.min(MAX_DIAGNOSTIC_PREFIX_BYTES, totalBytes);
+    const prefix = Buffer.allocUnsafe(prefixBytes);
+    let copied = 0;
+    for (const chunk of lineChunks) {
+      if (copied === prefixBytes)
+        break;
+      const length = Math.min(chunk.length, prefixBytes - copied);
+      prefix.set(chunk.subarray(0, length), copied);
+      copied += length;
     }
-    if (Buffer.byteLength(buffer, "utf8") > maxLineBytes) {
+    if (copied < prefixBytes) {
+      const length = Math.min(segment.length, prefixBytes - copied);
+      prefix.set(segment.subarray(0, length), copied);
+    }
+    return prefix.toString("utf8");
+  };
+  const lineText = (withoutTrailingCarriageReturn) => {
+    const contentBytes = lineBytes - (withoutTrailingCarriageReturn && lineBytes > 0 ? 1 : 0);
+    const bytes = Buffer.concat(lineChunks, lineBytes);
+    return bytes.toString("utf8", 0, contentBytes);
+  };
+  const reportOverflow = (segment, observedBytes, final) => {
+    if (!options.onLineTooLong)
       throw new Error(`Input line exceeds the ${String(maxLineBytes)}-byte limit${final ? " at end of stream" : ""}`);
+    options.onLineTooLong({
+      prefix: prefixFor(segment, observedBytes),
+      observedBytes
+    });
+  };
+  const consumeChunk = (chunk, final) => {
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(10, offset);
+      const end = newline >= 0 ? newline : chunk.length;
+      const segment = chunk.subarray(offset, end);
+      if (discarding) {
+        if (newline < 0)
+          return;
+        discarding = false;
+        resetLine();
+        offset = newline + 1;
+        continue;
+      }
+      const observedBytes = lineBytes + segment.length;
+      const hasTrailingCarriageReturn = newline >= 0 && observedBytes > 0 && (segment.at(-1) ?? lastLineByte()) === 13;
+      const contentBytes = observedBytes - (hasTrailingCarriageReturn ? 1 : 0);
+      if (contentBytes > maxLineBytes) {
+        reportOverflow(segment, observedBytes, final && newline < 0);
+        resetLine();
+        if (newline < 0)
+          discarding = true;
+        else
+          offset = newline + 1;
+        continue;
+      }
+      if (segment.length > 0)
+        lineChunks.push(segment);
+      lineBytes = observedBytes;
+      if (newline < 0)
+        return;
+      onLine(lineText(hasTrailingCarriageReturn));
+      resetLine();
+      offset = newline + 1;
     }
   };
-  for await (const chunk of stream) {
-    buffer += decoder.write(Buffer.from(chunk));
-    consumeBuffer(false);
-  }
-  buffer += decoder.end();
-  consumeBuffer(true);
-  if (buffer.length > 0)
-    onLine(buffer);
+  for await (const chunk of stream)
+    consumeChunk(chunk, false);
+  if (discarding)
+    return;
+  consumeChunk(new Uint8Array, true);
+  if (lineBytes > 0)
+    onLine(lineText(false));
 }
 
 // src/path-policy.ts
@@ -847,6 +906,75 @@ function displayPath(rawPath, cwd) {
     displayPath: isInsideCwd && localPath.length > 0 ? localPath : absolutePath
   };
 }
+function jsonObjectEnd(value, start2, end) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start2;index < end; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped)
+        escaped = false;
+      else if (character === "\\")
+        escaped = true;
+      else if (character === '"')
+        inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character !== "}")
+      continue;
+    depth -= 1;
+    if (depth === 0)
+      return index + 1;
+  }
+  return;
+}
+function jsonObjectStringProperty(value, property, pathStart) {
+  let offset = pathStart + '"path"'.length;
+  while (/\s/.test(value[offset] ?? ""))
+    offset += 1;
+  if (value[offset] !== ":")
+    return;
+  offset += 1;
+  while (/\s/.test(value[offset] ?? ""))
+    offset += 1;
+  if (value[offset] !== "{")
+    return;
+  const objectEnd = jsonObjectEnd(value, offset, value.length);
+  if (objectEnd === undefined)
+    return;
+  try {
+    const parsed = JSON.parse(value.slice(offset, objectEnd));
+    if (!isRecord(parsed))
+      return;
+    const candidate = parsed[property];
+    return typeof candidate === "string" ? candidate : undefined;
+  } catch {
+    return;
+  }
+}
+function oversizedMatchPath(prefix, cwd) {
+  const pathStart = prefix.indexOf('"path"');
+  if (pathStart < 0)
+    return;
+  const text = jsonObjectStringProperty(prefix, "text", pathStart);
+  if (text !== undefined)
+    return displayPath(text, cwd);
+  const encoded = jsonObjectStringProperty(prefix, "bytes", pathStart);
+  if (encoded === undefined)
+    return;
+  const bytes = Buffer.from(encoded, "base64");
+  const decoded = bytes.toString("utf8");
+  return Buffer.from(decoded, "utf8").equals(bytes) ? displayPath(decoded, cwd) : undefined;
+}
 async function assertSearchTargetIdentity(policy, path, expectedCanonical) {
   const currentCanonical = await policy.resolveExistingPath(path);
   if (currentCanonical !== expectedCanonical) {
@@ -960,6 +1088,7 @@ function createRipgrepRunner(options = {}) {
     const retention = new SearchRetention(options.maxStoredBytes, options.maxStoredOccurrences);
     const fileCounts = new Map;
     const lossyPaths = new Set;
+    const oversizedPathReasons = new Set;
     let totalMatches = 0;
     let truncatedLines = 0;
     let modificationTimeFilterIncomplete = false;
@@ -1040,7 +1169,17 @@ function createRipgrepRunner(options = {}) {
       ], cwd, maxSourceRevisionFiles, signal);
       candidateRevisions = before;
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
-      const { code, stderr } = await runOwnedProcess({ executable, args: args2, cwd, ...signal ? { signal } : {} }, (stdout) => consumeCappedLines(stdout, onLine, { maxLineBytes: maxEventBytes }));
+      const { code, stderr } = await runOwnedProcess({ executable, args: args2, cwd, ...signal ? { signal } : {} }, (stdout) => consumeCappedLines(stdout, onLine, {
+        maxLineBytes: maxEventBytes,
+        onLineTooLong: ({ prefix, observedBytes }) => {
+          const source = oversizedMatchPath(prefix, cwd);
+          const label = source?.displayPath ?? "unknown source";
+          if (oversizedPathReasons.has(label))
+            return;
+          oversizedPathReasons.add(label);
+          retention.noteLimit(`Skipped oversized ripgrep match line in ${JSON.stringify(label)}; observed at least ${String(observedBytes)} bytes, limit is ${String(maxEventBytes)} bytes`);
+        }
+      }));
       if (code !== 0 && code !== 1) {
         throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);
       }
@@ -5016,8 +5155,11 @@ async function ordinaryCandidates(options) {
   if (options.signal?.aborted)
     throw abortError();
   const reasons = new Set;
-  if (!scan.snapshotComplete)
+  if (!scan.snapshotComplete) {
     reasons.add("Search retention is partial; only retained matching files can be analyzed");
+    for (const reason of scan.retention?.reasons ?? [])
+      reasons.add(reason);
+  }
   const grouped = new Map;
   for (const match of scan.matches) {
     const existing = grouped.get(match.absolutePath);

@@ -110,6 +110,70 @@ function displayPath(rawPath: string, cwd: string): { absolutePath: string; disp
     displayPath: isInsideCwd && localPath.length > 0 ? localPath : absolutePath,
   };
 }
+function jsonObjectEnd(value: string, start: number, end: number): number | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < end; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character !== "}") continue;
+    depth -= 1;
+    if (depth === 0) return index + 1;
+  }
+  return undefined;
+}
+
+function jsonObjectStringProperty(
+  value: string,
+  property: string,
+  pathStart: number,
+): string | undefined {
+  let offset = pathStart + '"path"'.length;
+  while (/\s/.test(value[offset] ?? "")) offset += 1;
+  if (value[offset] !== ":") return undefined;
+  offset += 1;
+  while (/\s/.test(value[offset] ?? "")) offset += 1;
+  if (value[offset] !== "{") return undefined;
+  const objectEnd = jsonObjectEnd(value, offset, value.length);
+  if (objectEnd === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value.slice(offset, objectEnd));
+    if (!isRecord(parsed)) return undefined;
+    const candidate = parsed[property];
+    return typeof candidate === "string" ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function oversizedMatchPath(
+  prefix: string,
+  cwd: string,
+): { absolutePath: string; displayPath: string } | undefined {
+  const pathStart = prefix.indexOf('"path"');
+  if (pathStart < 0) return undefined;
+  const text = jsonObjectStringProperty(prefix, "text", pathStart);
+  if (text !== undefined) return displayPath(text, cwd);
+  const encoded = jsonObjectStringProperty(prefix, "bytes", pathStart);
+  if (encoded === undefined) return undefined;
+  const bytes = Buffer.from(encoded, "base64");
+  const decoded = bytes.toString("utf8");
+  return Buffer.from(decoded, "utf8").equals(bytes) ? displayPath(decoded, cwd) : undefined;
+}
 
 async function assertSearchTargetIdentity(
   policy: SearchPathPolicy,
@@ -268,6 +332,7 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
     const retention = new SearchRetention(options.maxStoredBytes, options.maxStoredOccurrences);
     const fileCounts = new Map<string, number>();
     const lossyPaths = new Set<string>();
+    const oversizedPathReasons = new Set<string>();
     let totalMatches = 0;
     let truncatedLines = 0;
     let modificationTimeFilterIncomplete = false;
@@ -361,7 +426,19 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess(
         { executable, args, cwd, ...(signal ? { signal } : {}) },
-        (stdout) => consumeCappedLines(stdout, onLine, { maxLineBytes: maxEventBytes }),
+        (stdout) =>
+          consumeCappedLines(stdout, onLine, {
+            maxLineBytes: maxEventBytes,
+            onLineTooLong: ({ prefix, observedBytes }) => {
+              const source = oversizedMatchPath(prefix, cwd);
+              const label = source?.displayPath ?? "unknown source";
+              if (oversizedPathReasons.has(label)) return;
+              oversizedPathReasons.add(label);
+              retention.noteLimit(
+                `Skipped oversized ripgrep match line in ${JSON.stringify(label)}; observed at least ${String(observedBytes)} bytes, limit is ${String(maxEventBytes)} bytes`,
+              );
+            },
+          }),
       );
       if (code !== 0 && code !== 1) {
         throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);

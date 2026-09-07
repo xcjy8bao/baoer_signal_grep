@@ -185,8 +185,10 @@ async function ordinaryCandidates(options: EvidenceCandidateOptions): Promise<Ev
   const scan = await options.runRipgrep(options.request, options.cwd, options.signal);
   if (options.signal?.aborted) throw abortError();
   const reasons = new Set<string>();
-  if (!scan.snapshotComplete)
+  if (!scan.snapshotComplete) {
     reasons.add("Search retention is partial; only retained matching files can be analyzed");
+    for (const reason of scan.retention?.reasons ?? []) reasons.add(reason);
+  }
   const grouped = new Map<string, typeof scan.matches>();
   for (const match of scan.matches) {
     const existing = grouped.get(match.absolutePath);
