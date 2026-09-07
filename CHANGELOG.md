@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.3-4] - 2026-09-07
+
+- Keep impact and related-test navigation inside the target's containing Git repository instead of a broad MCP cwd.
+- Preserve readable matches when ripgrep skips inaccessible descendants, reporting skipped paths as partial coverage while keeping root access failures fatal.
+- Advertise that related-test navigation supports JS/TS/TSX only and return an actionable partial result for Python sources.
+
 ## [1.2.3-3] - 2026-09-07
 
 - Recover from oversized ripgrep match lines during impact and broad searches, retaining partial status and source diagnostics instead of aborting the search.

@@ -6,6 +6,11 @@ import { consumeCappedLines } from "./capped-lines.js";
 import { isPathInsideCwd, SearchPathPolicy } from "./path-policy.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { resolveRipgrepExecutable } from "./ripgrep-executable.js";
+import {
+  classifyRipgrepDiagnostics,
+  describeUnreadableDiagnostics,
+  hasRequestedRootUnreadable,
+} from "./ripgrep-diagnostics.js";
 import { matchesModificationTime } from "./source.js";
 import { captureCandidateRevisions, retainStableSourceRevisions } from "./scan-revisions.js";
 import {
@@ -422,7 +427,11 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         maxSourceRevisionFiles,
         signal,
       );
-      candidateRevisions = before;
+      if (hasRequestedRootUnreadable(before.unreadable, cwd, validatedSearchPath))
+        throw new SignalGrepError(describeUnreadableDiagnostics(before.unreadable));
+      candidateRevisions = before.revisions;
+      if (before.unreadable.length > 0)
+        retention.noteLimit(describeUnreadableDiagnostics(before.unreadable));
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
       const { code, stderr } = await runOwnedProcess(
         { executable, args, cwd, ...(signal ? { signal } : {}) },
@@ -440,7 +449,12 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
             },
           }),
       );
-      if (code !== 0 && code !== 1) {
+      const diagnostics = classifyRipgrepDiagnostics(stderr);
+      if (hasRequestedRootUnreadable(diagnostics.unreadable, cwd, validatedSearchPath))
+        throw new SignalGrepError(describeUnreadableDiagnostics(diagnostics.unreadable));
+      if (diagnostics.unreadable.length > 0)
+        retention.noteLimit(describeUnreadableDiagnostics(diagnostics.unreadable));
+      if (code === 2 && (diagnostics.other.length > 0 || diagnostics.unreadable.length === 0)) {
         throw new SignalGrepError(stderr.trim() || `ripgrep exited with status ${String(code)}`);
       }
       await assertSearchTargetIdentity(policy, validatedSearchPath, expectedSearchTarget);
@@ -448,7 +462,11 @@ export function createRipgrepRunner(options: RipgrepRunnerOptions = {}) {
         matches.map((match) => match.absolutePath).filter((path) => !lossyPaths.has(path)),
       );
       await assertRetainedPathsAllowed(policy, [...retainedPaths], signal);
-      const sourceRevisions = await retainStableSourceRevisions(retainedPaths, before, signal);
+      const sourceRevisions = await retainStableSourceRevisions(
+        retainedPaths,
+        before.revisions,
+        signal,
+      );
       if (signal?.aborted) throw abortError();
       return {
         request,

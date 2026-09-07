@@ -1,6 +1,6 @@
 {
   "name": "baoer_signal_grep",
-  "version": "1.2.3-3",
+  "version": "1.2.3-4",
   "description": "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   "keywords": [
     "ai-agent",
