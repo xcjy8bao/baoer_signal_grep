@@ -407,6 +407,8 @@ export class EvidenceService {
           "matchIndex",
         ],
         "mode=concept",
+        false,
+        "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact",
       );
       return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access)));
     }

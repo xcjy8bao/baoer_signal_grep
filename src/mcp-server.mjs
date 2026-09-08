@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.3-5",
+  version: "1.2.3-6",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -4053,6 +4053,26 @@ function conciseWorkerError(stderr) {
     return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
   return "worker returned no concise diagnostic";
 }
+function scoreProfile(scores) {
+  const ordered = scores.toSorted((a, b) => b - a);
+  const count = ordered.length;
+  const top = ordered[0];
+  const min = ordered.at(-1);
+  if (top === undefined || min === undefined || count === 0)
+    throw new Error("Concept score profile requires at least one score");
+  const middle = Math.floor(count / 2);
+  const middleValue = ordered[middle] ?? top;
+  const median = count % 2 === 1 ? middleValue : ((ordered[middle - 1] ?? top) + middleValue) / 2;
+  const second = ordered[1];
+  return {
+    count,
+    top,
+    ...second !== undefined ? { second, topMargin: top - second } : {},
+    median: median ?? top,
+    min,
+    spread: top - min
+  };
+}
 function passage(document, start) {
   let end = Math.min(document.text.length, start + MAX_CONCEPT_CHARS);
   if (end < document.text.length) {
@@ -4217,7 +4237,8 @@ async function runConceptSearch(input, access2) {
     }).toSorted((a, b) => b.details.score - a.details.score || a.path.localeCompare(b.path) || a.line - b.line);
     result.stats = {
       inferencePeakRssBytes: inferred.peakRssBytes,
-      passagesRanked: passages.length
+      passagesRanked: passages.length,
+      scoreProfile: scoreProfile(inferred.scores)
     };
   }
   result.filesRead = access2.filesRead;
@@ -7240,13 +7261,14 @@ class SourceContinuations {
   constructor(now = Date.now) {
     this.#now = now;
   }
-  create(source, target, gaps) {
+  create(source, target, gaps, boundary) {
     this.#sweep();
     const item = {
       id: randomUUID2(),
       source: structuredClone(source),
       target: mergeByteRanges(target),
       gaps: mergeByteRanges(gaps),
+      ...boundary ? { boundary } : {},
       accessed: this.#now(),
       issued: new Set([0])
     };
@@ -7254,14 +7276,14 @@ class SourceContinuations {
       throw new CursorError("Source continuation requires missing ranges inside its target");
     }
     this.#items.set(item.id, item);
-    while (this.#items.size > MAX_SOURCE_CONTINUATIONS || Buffer.byteLength(JSON.stringify([...this.#items.values()].map((continuation) => ({
+    while (this.#items.size > MAX_SOURCE_CONTINUATIONS || Buffer.byteLength(JSON.stringify([...this.#items.values()].map((continuation) => Object.assign({
       id: continuation.id,
       source: continuation.source,
       target: continuation.target,
       gaps: continuation.gaps,
       accessed: continuation.accessed,
       issued: [...continuation.issued]
-    })))) > MAX_SOURCE_CONTINUATION_BYTES) {
+    }, continuation.boundary ? { boundary: continuation.boundary } : {})))) > MAX_SOURCE_CONTINUATION_BYTES) {
       let oldest;
       for (const candidate of this.#items.values()) {
         if (!oldest || candidate.accessed < oldest.accessed)
@@ -7280,7 +7302,8 @@ class SourceContinuations {
     return {
       source: structuredClone(item.source),
       target: item.target.map((range) => ({ ...range })),
-      remaining: this.#remaining(item, consumed)
+      remaining: this.#remaining(item, consumed),
+      ...item.boundary ? { boundary: item.boundary } : {}
     };
   }
   advance(cursor, returned) {
@@ -7414,8 +7437,18 @@ async function prepare(target, access2, structure) {
     details = { status: "provider-unavailable", ...language ? { language } : {} };
   }
   range ??= document.lineRange(Math.max(1, target.line - 10), Math.min(document.lineStarts.length, target.line + 10));
+  const boundary = target.range ? "requested-range" : details.status === "available" && details.range ? "syntax" : "line-window";
   document.checkRange(range);
-  return { target, document, range, structure: details, focus };
+  return { target, document, range, structure: details, boundary, focus };
+}
+function boundaryNote(block) {
+  if (block.boundary === "line-window" || block.boundary === "mixed") {
+    const fallback = block.prepared.find((prepared) => prepared.boundary === "line-window");
+    const status = fallback?.structure.status;
+    const provider = fallback?.structure.provider;
+    return "; syntax boundary unavailable" + (status ? " (" + status + (provider ? " via " + provider : "") + ")" : "") + "; bounded line window";
+  }
+  return block.boundary === "requested-range" ? "; requested range; syntax boundary not inferred" : "";
 }
 function blockDetails(block) {
   const starts = block.fragments.map((fragment) => fragment.start);
@@ -7436,17 +7469,23 @@ function blockDetails(block) {
     fragments: block.fragments,
     remainingRanges: block.remaining,
     complete: block.document.utf8 && block.remaining.length === 0,
+    ...block.boundary ? { boundary: block.boundary } : {},
     ...nextRequest ? { nextRequest } : {}
   };
 }
 function render(items, blocks, single) {
   const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
 Retry: ${JSON.stringify(item.retry)}` : ""}`);
-  const sourceRows = blocks.map((block, index) => `[Block #${index + 1}] ${block.document.path}; ${block.document.reference.origin.kind === "git" ? `commit ${block.document.reference.origin.commit}; blob ${block.document.reference.origin.blob}` : `source sha256 ${block.document.reference.origin.contentHash}`}
-${block.text.join(`
-`)}
-[source ${block.remaining.length ? `PARTIAL; missing byte ranges ${JSON.stringify(block.remaining)}` : "complete"}; shared 16384-byte output limit]${block.continuation ? `
-Next request: ${JSON.stringify({ mode: "inspect", sourceCursor: block.continuation })}` : ""}`);
+  const sourceRows = blocks.map((block, index) => {
+    const origin = block.document.reference.origin.kind === "git" ? "commit " + block.document.reference.origin.commit + "; blob " + block.document.reference.origin.blob : "source sha256 " + block.document.reference.origin.contentHash;
+    const completeness = block.remaining.length ? "PARTIAL; missing byte ranges " + JSON.stringify(block.remaining) : "complete for selected range";
+    const next = block.continuation ? `
+Next request: ` + JSON.stringify({ mode: "inspect", sourceCursor: block.continuation }) : "";
+    return "[Block #" + String(index + 1) + "] " + block.document.path + "; " + origin + `
+` + block.text.join(`
+`) + `
+[source ` + completeness + boundaryNote(block) + "; shared 16384-byte output limit]" + next;
+  });
   return [
     single ? "Source inspection" : `Batch inspection: ${items.filter((item) => item.status === "returned").length} of ${items.length} targets returned; overlapping ranges merged before the shared 16384-byte budget.`,
     ...rows,
@@ -7454,6 +7493,22 @@ Next request: ${JSON.stringify({ mode: "inspect", sourceCursor: block.continuati
   ].join(`
 
 `);
+}
+function blockBoundary(block) {
+  const boundaries = [...new Set(block.prepared.map((prepared) => prepared.boundary))];
+  if (boundaries.length === 1)
+    return boundaries[0];
+  return boundaries.length > 1 ? "mixed" : undefined;
+}
+function fallbackContinuationRange(document, ranges) {
+  const last = ranges.at(-1);
+  if (!last || last.end >= document.bytes.length)
+    return;
+  const nextStartLine = document.lineAt(last.end);
+  const nextFocusLine = Math.min(document.lineStarts.length, nextStartLine + 10);
+  if (nextFocusLine <= nextStartLine)
+    return;
+  return document.lineRange(nextStartLine, Math.min(document.lineStarts.length, nextFocusLine + 10));
 }
 async function inspectDocuments(targets, access2, continuations, structure) {
   const items = [];
@@ -7471,7 +7526,8 @@ async function inspectDocuments(targets, access2, continuations, structure) {
           prepared: [],
           fragments: [],
           remaining: [],
-          text: []
+          text: [],
+          boundary: undefined
         });
       }
       const block = blocks[blockIndex];
@@ -7508,6 +7564,7 @@ async function inspectDocuments(targets, access2, continuations, structure) {
   for (const block of blocks) {
     block.ranges = mergeByteRanges(block.ranges);
     block.remaining = block.ranges;
+    block.boundary = blockBoundary(block);
   }
   const baseBytes = Buffer.byteLength(render(items, blocks, targets.length === 1));
   let remainingResponseBytes = MAX_RESULT_BYTES - baseBytes - blocks.length * 400;
@@ -7546,6 +7603,7 @@ ${preview.text}`);
             omittedAfter: preview.omittedAfter,
             truncatedLines: preview.truncatedLines,
             complete: false,
+            ...block.boundary ? { boundary: block.boundary } : {},
             reference: block.document.reference
           };
       }
@@ -7574,8 +7632,11 @@ ${preview.text}`);
       allowance -= pageBytes;
       remainingResponseBytes -= pageBytes;
     }
-    if (block.remaining.length)
-      block.continuation = continuations.create(block.document.reference, block.ranges, block.remaining);
+    const fallback = block.boundary === "line-window" || block.boundary === "mixed" ? fallbackContinuationRange(block.document, block.ranges) : undefined;
+    const continuationTarget = fallback ? [...block.ranges, fallback] : block.ranges;
+    const continuationGaps = fallback ? [...block.remaining, fallback] : block.remaining;
+    if (continuationGaps.length)
+      block.continuation = continuations.create(block.document.reference, continuationTarget, continuationGaps, block.boundary);
     if (block.document.reference.origin.kind === "worktree") {
       const current = await getSourceRevision(resolve20(access2.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
@@ -7645,6 +7706,7 @@ async function continueSource(cursor, access2, continuations) {
     fragments: [page.fragment],
     remaining: page.remaining,
     text: [page.text],
+    boundary: state.boundary,
     ...next ? { continuation: next } : {}
   };
   const source = blockDetails(block);
@@ -8382,7 +8444,7 @@ class EvidenceService {
         "line",
         "symbol",
         "matchIndex"
-      ], "mode=concept");
+      ], "mode=concept", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact");
       return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access2)));
     }
     if (input.mode === "structure") {
@@ -10075,7 +10137,7 @@ function stringEnum(values, options) {
     ...options?.description ? { description: options.description } : {}
   });
 }
-var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
+var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, and exposes a same-query scoreProfile without deciding relevance thresholds. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
