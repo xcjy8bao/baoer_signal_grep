@@ -5,11 +5,17 @@ import {
   createSignalGrepMcpServer,
   type SignalGrepMcpService,
 } from "./mcp.js";
+import {
+  DEFAULT_MCP_OUTPUT_MODE,
+  parseSignalGrepMcpOutputMode,
+  type SignalGrepMcpOutputMode,
+} from "./mcp-output.js";
 
 export interface SignalGrepMcpStdioOptions {
   cwd?: string;
   input?: Readable;
   output?: Writable;
+  outputMode?: SignalGrepMcpOutputMode;
   createService?: () => SignalGrepMcpService;
 }
 
@@ -29,8 +35,9 @@ export async function startSignalGrepMcpStdioServer(
   const cwd = options.cwd ?? process.cwd();
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
+  const outputMode = parseSignalGrepMcpOutputMode(options.outputMode ?? DEFAULT_MCP_OUTPUT_MODE);
   const service = (options.createService ?? createDefaultSignalGrepMcpService)();
-  const protocol = createSignalGrepMcpServer(service, cwd);
+  const protocol = createSignalGrepMcpServer(service, cwd, outputMode);
 
   const lifecycle = Promise.withResolvers<void>();
   let closePromise: Promise<void> | undefined;

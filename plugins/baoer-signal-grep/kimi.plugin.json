@@ -1,6 +1,6 @@
 {
   "name": "baoer-signal-grep",
-  "version": "1.2.3-6",
+  "version": "1.2.3-7",
   "description": "Require baoer_signal_grep for conventional local searches while keeping development tools available.",
   "author": {
     "name": "宝儿"
@@ -19,7 +19,8 @@
       ],
       "env": {
         "npm_config_ignore_scripts": "true",
-        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip"
+        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip",
+        "BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE": "model"
       }
     }
   },

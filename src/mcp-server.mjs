@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.3-6",
+  version: "1.2.3-7",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -159,6 +159,92 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+
+// src/mcp-output.ts
+var DEFAULT_MCP_OUTPUT_MODE = "structured";
+function parseSignalGrepMcpOutputMode(value) {
+  if (value === undefined || value === DEFAULT_MCP_OUTPUT_MODE)
+    return DEFAULT_MCP_OUTPUT_MODE;
+  if (value === "text" || value === "model")
+    return value;
+  throw new Error('BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE must be "structured", "text", or "model"');
+}
+
+// src/mcp-model-output.ts
+function compactMetadata(details, analysis) {
+  return [
+    analysis.counts ? `Counts: ${JSON.stringify(analysis.counts)}` : undefined,
+    analysis.termCounts ? `Term counts: ${JSON.stringify(analysis.termCounts)}` : undefined,
+    analysis.termCountsNextRequest ? `More term counts: ${JSON.stringify(analysis.termCountsNextRequest)}` : undefined,
+    analysis.matchesRequest ? `Matches request: ${JSON.stringify(analysis.matchesRequest)}` : undefined,
+    analysis.changes ? `Changes: ${JSON.stringify(analysis.changes)}` : undefined,
+    analysis.scope ? `Scope: ${JSON.stringify(analysis.scope)}` : undefined,
+    analysis.chunks ? `Chunks: ${JSON.stringify(analysis.chunks)}` : undefined,
+    analysis.coverage ? `Coverage: ${JSON.stringify(analysis.coverage)}` : undefined,
+    analysis.stats ? `Stats: ${JSON.stringify(analysis.stats)}` : undefined,
+    analysis.kind === "outline" ? "[Outline signatures are deferred; inspect item #N for version-checked source.]" : undefined,
+    ...analysis.reasons.map((reason) => `[${reason}]`),
+    details.redactionApplied ? "[Display redaction applied.]" : undefined
+  ].filter((line) => line !== undefined);
+}
+function compactRows(analysis) {
+  const omitExcerpt = analysis.kind === "outline";
+  const rows = [];
+  let previousPath;
+  for (const item of analysis.items) {
+    if (item.path !== previousPath) {
+      rows.push(JSON.stringify(item.path));
+      previousPath = item.path;
+    }
+    const row = `#${String(item.index)} L${String(item.line)} ${item.label}`;
+    rows.push(omitExcerpt || !item.excerpt ? row : `${row}
+  ${item.excerpt.replaceAll(`
+`, `
+  `)}`);
+  }
+  return rows;
+}
+function compactInspectInstruction(analysis) {
+  const inspect = analysis.items.find((item) => item.inspect !== undefined)?.inspect;
+  if (!inspect || typeof inspect.cursor !== "string")
+    return;
+  return `Inspect item #N: mode="inspect", cursor=${JSON.stringify(inspect.cursor)}, matchIndex=N${inspect.redact ? ", redact=true" : ""}.`;
+}
+function compactHeader(details, analysis) {
+  if (analysis.termCounts && analysis.termCountsOffset !== undefined && analysis.totalTerms !== undefined) {
+    const start = analysis.termCountsOffset + 1;
+    const end = analysis.termCountsOffset + analysis.termCounts.length;
+    return `${analysis.kind} term inventory ${String(start)}–${String(end)} of ${String(analysis.totalTerms)} (${details.status}).`;
+  }
+  const first = analysis.items[0]?.index;
+  const last = analysis.items.at(-1)?.index;
+  const shown = first === undefined || last === undefined ? "showing none" : `showing #${String(first)}–#${String(last)}`;
+  return `${analysis.kind}: ${String(analysis.totalItems)} retained ${analysis.unit} (${details.status}); ${shown}.`;
+}
+function distinctNextRequest(details, analysis) {
+  if (!details.nextRequest)
+    return;
+  const serialized = JSON.stringify(details.nextRequest);
+  return serialized === JSON.stringify(analysis.termCountsNextRequest) ? undefined : serialized;
+}
+function compactMcpModelText(result) {
+  const analysis = result.details.analysis;
+  if (!analysis)
+    return result.text;
+  const header = compactHeader(result.details, analysis);
+  const inspect = compactInspectInstruction(analysis);
+  const nextRequest = distinctNextRequest(result.details, analysis);
+  const compact = [
+    header,
+    ...compactMetadata(result.details, analysis),
+    ...compactRows(analysis),
+    ...inspect ? [inspect] : [],
+    ...nextRequest ? [`Next request: ${nextRequest}`] : []
+  ].join(`
+`);
+  const standard = result.text.replace(" Structured output retains per-item evidence details.", "");
+  return Buffer.byteLength(compact) < Buffer.byteLength(standard) ? compact : standard;
+}
 
 // src/rg.ts
 import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve4 } from "node:path";
@@ -4795,6 +4881,7 @@ function analysisTermPage(result, id, offset) {
         termCountsOffset: offset,
         totalTerms: all.length,
         ...nextRequest ? { termCountsNextRequest: nextRequest } : {},
+        matchesRequest,
         ...result.coverage ? { coverage: result.coverage } : {}
       }
     }
@@ -10098,7 +10185,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
 }
 
 // src/prompt-guidelines.ts
-function signalGrepPromptGuidelines() {
+function signalGrepPromptGuidelines(structuredOutput = true) {
   return [
     `Use baoer_signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
     `An omitted path searches the project cwd. Use scope:"strict" for a question restricted to one path; otherwise, if an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
@@ -10116,14 +10203,15 @@ function signalGrepPromptGuidelines() {
     `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
-    `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
+    structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
-function signalGrepMcpInstructions() {
+function signalGrepMcpInstructions(outputMode = DEFAULT_MCP_OUTPUT_MODE) {
+  const outputInstruction = outputMode === "structured" ? "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence." : outputMode === "model" ? "Successful MCP results provide one model-facing text page. Compact analysis rows share their path and inspect cursor; use the numbered item with the visible inspect template, and copy continuation requests exactly." : "Successful MCP results provide one complete formatted text page, including counts, coverage and continuation selectors.";
   return [
     "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
-    "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence.",
-    ...signalGrepPromptGuidelines()
+    outputInstruction,
+    ...signalGrepPromptGuidelines(outputMode === "structured")
   ].join(`
 `);
 }
@@ -10314,30 +10402,35 @@ var DEFAULT_MCP_MAX_SESSIONS = 100;
 var DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 var MAX_MCP_BODY_BYTES = 16 * 1024 * 1024;
 var BAOER_SIGNAL_GREP_MCP_VERSION = package_default.version;
-var SIGNAL_GREP_TOOL = {
-  name: "baoer_signal_grep",
-  title: "baoer_signal_grep",
-  description: SIGNAL_GREP_DESCRIPTION,
-  inputSchema: signalGrepSchema,
-  outputSchema: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description: "Complete formatted result page, including source evidence, limits and continuation requests."
-      },
-      details: { type: "object" }
+var SIGNAL_GREP_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    text: {
+      type: "string",
+      description: "Complete formatted result page, including source evidence, limits and continuation requests."
     },
-    required: ["text", "details"]
+    details: { type: "object" }
   },
-  annotations: {
-    title: "baoer_signal_grep",
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false
-  }
+  required: ["text", "details"]
 };
+function signalGrepTool(outputMode) {
+  const tool = {
+    name: "baoer_signal_grep",
+    title: "baoer_signal_grep",
+    description: SIGNAL_GREP_DESCRIPTION,
+    inputSchema: signalGrepSchema,
+    annotations: {
+      title: "baoer_signal_grep",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  };
+  if (outputMode === "structured")
+    tool.outputSchema = SIGNAL_GREP_OUTPUT_SCHEMA;
+  return tool;
+}
 function createDefaultSignalGrepMcpService() {
   return new SignalGrepService({
     runRipgrep: createRipgrepRunner(),
@@ -10367,25 +10460,28 @@ function toolError(error) {
     isError: true
   };
 }
-function createSignalGrepMcpServer(service, cwd) {
+function createSignalGrepMcpServer(service, cwd, outputMode = DEFAULT_MCP_OUTPUT_MODE) {
+  const resolvedOutputMode = parseSignalGrepMcpOutputMode(outputMode);
+  const tool = signalGrepTool(resolvedOutputMode);
   const server = new McpServer({ name: "baoer_signal_grep", version: BAOER_SIGNAL_GREP_MCP_VERSION }, {
     capabilities: { tools: {} },
-    instructions: signalGrepMcpInstructions()
+    instructions: signalGrepMcpInstructions(resolvedOutputMode)
   });
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [SIGNAL_GREP_TOOL]
+    tools: [tool]
   }));
   server.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    if (request.params.name !== SIGNAL_GREP_TOOL.name) {
+    if (request.params.name !== tool.name) {
       return toolError(new Error(`Unknown tool: ${request.params.name}`));
     }
     try {
       const input = parseSignalGrepInput(request.params.arguments ?? {});
       const result = await service.search(input, cwd, extra.signal);
-      return {
-        content: [{ type: "text", text: result.text }],
-        structuredContent: { text: result.text, details: result.details }
-      };
+      const text = resolvedOutputMode === "model" ? compactMcpModelText(result) : result.text;
+      const content = [{ type: "text", text }];
+      if (resolvedOutputMode !== "structured")
+        return { content };
+      return { content, structuredContent: { text: result.text, details: result.details } };
     } catch (error) {
       return toolError(error);
     }
@@ -10578,7 +10674,7 @@ async function handleMcpRequest(request, response, state, createService, cwd) {
             }
           }
         });
-        const protocol = createSignalGrepMcpServer(service, cwd);
+        const protocol = createSignalGrepMcpServer(service, cwd, state.outputMode);
         pendingSession = {
           protocol,
           service,
@@ -10667,6 +10763,7 @@ async function startSignalGrepMcpServer(options = {}) {
     maxSessions,
     idleTimeoutMs,
     allowedOrigins: new Set(options.allowedOrigins ?? []),
+    outputMode: parseSignalGrepMcpOutputMode(options.outputMode),
     cleanupErrors: [],
     pendingInitializations: 0,
     closing: false
@@ -10763,8 +10860,9 @@ async function startSignalGrepMcpStdioServer(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
+  const outputMode = parseSignalGrepMcpOutputMode(options.outputMode ?? DEFAULT_MCP_OUTPUT_MODE);
   const service = (options.createService ?? createDefaultSignalGrepMcpService)();
-  const protocol = createSignalGrepMcpServer(service, cwd);
+  const protocol = createSignalGrepMcpServer(service, cwd, outputMode);
   const lifecycle = Promise.withResolvers();
   let closePromise;
   let transportFailure;
@@ -10841,14 +10939,15 @@ function environmentInteger(name, fallback, minimum, maximum) {
 function allowedOrigins() {
   return (process.env.BAOER_SIGNAL_GREP_MCP_ALLOWED_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0);
 }
-async function runHttpServer() {
+async function runHttpServer(outputMode) {
   const running = await startSignalGrepMcpServer({
     cwd: process.env.BAOER_SIGNAL_GREP_MCP_CWD ?? process.cwd(),
     host: process.env.BAOER_SIGNAL_GREP_MCP_HOST ?? DEFAULT_MCP_HOST,
     port: environmentInteger("BAOER_SIGNAL_GREP_MCP_PORT", DEFAULT_MCP_PORT, 0, 65535),
     maxSessions: environmentInteger("BAOER_SIGNAL_GREP_MCP_MAX_SESSIONS", DEFAULT_MCP_MAX_SESSIONS, 1, Number.MAX_SAFE_INTEGER),
     sessionIdleTimeoutMs: environmentInteger("BAOER_SIGNAL_GREP_MCP_SESSION_IDLE_MS", DEFAULT_MCP_SESSION_IDLE_TIMEOUT_MS, 1, Number.MAX_SAFE_INTEGER),
-    allowedOrigins: allowedOrigins()
+    allowedOrigins: allowedOrigins(),
+    outputMode
   });
   const address = running.httpServer.address();
   if (!address || !(address instanceof Object)) {
@@ -10878,9 +10977,10 @@ async function runHttpServer() {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 }
-async function runStdioServer() {
+async function runStdioServer(outputMode) {
   const running = await startSignalGrepMcpStdioServer({
-    cwd: process.env.BAOER_SIGNAL_GREP_MCP_CWD ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd()
+    cwd: process.env.BAOER_SIGNAL_GREP_MCP_CWD ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
+    outputMode
   });
   process.stderr.write(`baoer_signal_grep MCP serving one local client over stdio
 `);
@@ -10908,11 +11008,12 @@ async function main() {
     process.stdout.write(BAOER_SIGNAL_GREP_MCP_USAGE);
     return;
   }
+  const outputMode = parseSignalGrepMcpOutputMode(process.env.BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE);
   if (transport === "stdio") {
-    await runStdioServer();
+    await runStdioServer(outputMode);
     return;
   }
-  await runHttpServer();
+  await runHttpServer(outputMode);
 }
 try {
   await main();

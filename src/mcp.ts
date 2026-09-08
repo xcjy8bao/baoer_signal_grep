@@ -13,6 +13,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { SignalGrepResult } from "./types.js";
+import {
+  DEFAULT_MCP_OUTPUT_MODE,
+  parseSignalGrepMcpOutputMode,
+  type SignalGrepMcpOutputMode,
+} from "./mcp-output.js";
+import { compactMcpModelText } from "./mcp-model-output.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { SignalGrepService, type SignalGrepInput } from "./service.js";
@@ -28,34 +34,39 @@ export const MAX_MCP_BODY_BYTES = 16 * 1024 * 1024;
 
 const BAOER_SIGNAL_GREP_MCP_VERSION = packageMetadata.version;
 
-const SIGNAL_GREP_TOOL: Tool = {
-  name: "baoer_signal_grep",
-  title: "baoer_signal_grep",
-  description: SIGNAL_GREP_DESCRIPTION,
-  // TypeBox and MCP both consume JSON Schema, but their TypeScript declarations are intentionally unrelated.
-  // SAFETY: signalGrepSchema is runtime-validated TypeBox JSON Schema and matches MCP's input schema shape.
-  // oxlint-disable-next-line no-unsafe-type-assertion -- this is the checked JSON Schema adapter boundary
-  inputSchema: signalGrepSchema as unknown as Tool["inputSchema"],
-  outputSchema: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description:
-          "Complete formatted result page, including source evidence, limits and continuation requests.",
-      },
-      details: { type: "object" },
+const SIGNAL_GREP_OUTPUT_SCHEMA: Tool["outputSchema"] = {
+  type: "object",
+  properties: {
+    text: {
+      type: "string",
+      description:
+        "Complete formatted result page, including source evidence, limits and continuation requests.",
     },
-    required: ["text", "details"],
+    details: { type: "object" },
   },
-  annotations: {
-    title: "baoer_signal_grep",
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  required: ["text", "details"],
 };
+
+function signalGrepTool(outputMode: SignalGrepMcpOutputMode): Tool {
+  const tool: Tool = {
+    name: "baoer_signal_grep",
+    title: "baoer_signal_grep",
+    description: SIGNAL_GREP_DESCRIPTION,
+    // TypeBox and MCP both consume JSON Schema, but their TypeScript declarations are intentionally unrelated.
+    // SAFETY: signalGrepSchema is runtime-validated TypeBox JSON Schema and matches MCP's input schema shape.
+    // oxlint-disable-next-line no-unsafe-type-assertion -- this is the checked JSON Schema adapter boundary
+    inputSchema: signalGrepSchema as unknown as Tool["inputSchema"],
+    annotations: {
+      title: "baoer_signal_grep",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  };
+  if (outputMode === "structured") tool.outputSchema = SIGNAL_GREP_OUTPUT_SCHEMA;
+  return tool;
+}
 
 export interface SignalGrepMcpService {
   search(input: SignalGrepInput, cwd: string, signal?: AbortSignal): Promise<SignalGrepResult>;
@@ -95,32 +106,38 @@ function toolError(error: unknown) {
   };
 }
 
-export function createSignalGrepMcpServer(service: SignalGrepMcpService, cwd: string): McpServer {
+export function createSignalGrepMcpServer(
+  service: SignalGrepMcpService,
+  cwd: string,
+  outputMode: SignalGrepMcpOutputMode = DEFAULT_MCP_OUTPUT_MODE,
+): McpServer {
+  const resolvedOutputMode = parseSignalGrepMcpOutputMode(outputMode);
+  const tool = signalGrepTool(resolvedOutputMode);
   const server = new McpServer(
     { name: "baoer_signal_grep", version: BAOER_SIGNAL_GREP_MCP_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: signalGrepMcpInstructions(),
+      instructions: signalGrepMcpInstructions(resolvedOutputMode),
     },
   );
 
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [SIGNAL_GREP_TOOL],
+    tools: [tool],
   }));
 
   server.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    if (request.params.name !== SIGNAL_GREP_TOOL.name) {
+    if (request.params.name !== tool.name) {
       return toolError(new Error(`Unknown tool: ${request.params.name}`));
     }
     try {
       const input = parseSignalGrepInput(request.params.arguments ?? {});
       const result = await service.search(input, cwd, extra.signal);
-      return {
-        content: [{ type: "text" as const, text: result.text }],
-        // Clients may expose only structuredContent to their model. Both representations
-        // must use the same final page, after service-level formatting and redaction.
-        structuredContent: { text: result.text, details: result.details },
-      };
+      const text = resolvedOutputMode === "model" ? compactMcpModelText(result) : result.text;
+      const content = [{ type: "text" as const, text }];
+      if (resolvedOutputMode !== "structured") return { content };
+      // Clients may expose only structuredContent to their model. Both representations
+      // must use the same final page, after service-level formatting and redaction.
+      return { content, structuredContent: { text: result.text, details: result.details } };
     } catch (error) {
       return toolError(error);
     }
@@ -162,6 +179,7 @@ interface McpSessionState {
   readonly maxSessions: number;
   readonly idleTimeoutMs: number;
   readonly allowedOrigins: ReadonlySet<string>;
+  readonly outputMode: SignalGrepMcpOutputMode;
   readonly cleanupErrors: unknown[];
   pendingInitializations: number;
   closing: boolean;
@@ -206,6 +224,7 @@ export interface SignalGrepMcpHttpOptions {
   allowedOrigins?: readonly string[];
   maxSessions?: number;
   sessionIdleTimeoutMs?: number;
+  outputMode?: SignalGrepMcpOutputMode;
   createService?: () => SignalGrepMcpService;
 }
 
@@ -384,7 +403,7 @@ async function handleMcpRequest(
             }
           },
         });
-        const protocol = createSignalGrepMcpServer(service, cwd);
+        const protocol = createSignalGrepMcpServer(service, cwd, state.outputMode);
         pendingSession = {
           protocol,
           service,
@@ -486,6 +505,7 @@ export async function startSignalGrepMcpServer(
     maxSessions,
     idleTimeoutMs,
     allowedOrigins: new Set(options.allowedOrigins ?? []),
+    outputMode: parseSignalGrepMcpOutputMode(options.outputMode),
     cleanupErrors: [],
     pendingInitializations: 0,
     closing: false,

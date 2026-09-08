@@ -64,6 +64,7 @@ export function analysisTermPage(
         termCountsOffset: offset,
         totalTerms: all.length,
         ...(nextRequest ? { termCountsNextRequest: nextRequest } : {}),
+        matchesRequest,
         ...(result.coverage ? { coverage: result.coverage } : {}),
       },
     },

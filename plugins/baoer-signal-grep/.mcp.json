@@ -11,7 +11,8 @@
       ],
       "env": {
         "npm_config_ignore_scripts": "true",
-        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip"
+        "ONNXRUNTIME_NODE_INSTALL_CUDA": "skip",
+        "BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE": "model"
       }
     }
   }
