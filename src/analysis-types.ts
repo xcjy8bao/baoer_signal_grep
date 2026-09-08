@@ -27,6 +27,7 @@ export interface AnalysisItem {
 export interface AnalysisDetails {
   kind:
     | "concept"
+    | "hybrid"
     | "structure"
     | "definitions"
     | "references"
@@ -56,7 +57,9 @@ export interface AnalysisDetails {
     | "impact-candidates";
   totalItems: number;
   returnedItems: number;
-  items: (AnalysisItem & { index: number; inspect?: SignalGrepInput })[];
+  items: (AnalysisItem & { index: number; sourceId?: number; inspect?: SignalGrepInput })[];
+  sources?: SourceReference[];
+  inspectCursor?: string;
   reasons: string[];
   filesRead?: number;
   bytesRead?: number;

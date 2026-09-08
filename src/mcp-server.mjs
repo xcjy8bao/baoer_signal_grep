@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.2.3-7",
+  version: "1.3.0",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -205,6 +205,8 @@ function compactRows(analysis) {
   return rows;
 }
 function compactInspectInstruction(analysis) {
+  if (analysis.inspectCursor)
+    return `Inspect item #N: mode="inspect", cursor=${JSON.stringify(analysis.inspectCursor)}, matchIndex=N.`;
   const inspect = analysis.items.find((item) => item.inspect !== undefined)?.inspect;
   if (!inspect || typeof inspect.cursor !== "string")
     return;
@@ -225,7 +227,7 @@ function distinctNextRequest(details, analysis) {
   if (!details.nextRequest)
     return;
   const serialized = JSON.stringify(details.nextRequest);
-  return serialized === JSON.stringify(analysis.termCountsNextRequest) ? undefined : serialized;
+  return serialized === JSON.stringify(analysis.termCountsNextRequest) || serialized === JSON.stringify(analysis.matchesRequest) ? undefined : serialized;
 }
 function compactMcpModelText(result) {
   const analysis = result.details.analysis;
@@ -2017,6 +2019,8 @@ var MAX_SOURCE_CONTINUATIONS = 20;
 var MAX_SOURCE_CONTINUATION_BYTES = 1024 * 1024;
 var MAX_IMPORT_HOPS = 8;
 var MAX_IMPORT_FILES = 20;
+var DEFAULT_HYBRID_CONCEPT_LIMIT = 3;
+var MAX_HYBRID_CONCEPT_LIMIT = 20;
 
 // src/syntax-tree.ts
 function syntaxField(analysis, node, field) {
@@ -4234,10 +4238,13 @@ async function similarities(query, passages, parent) {
     clearTimeout(timer);
   }
 }
-async function runConceptSearch(input, access2) {
-  const query = input.query;
+function validateConceptQuery(query) {
   if (!query?.trim() || query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
     throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
+  return query;
+}
+async function runConceptSearch(input, access2) {
+  const query = validateConceptQuery(input.query);
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
   const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
@@ -4924,6 +4931,17 @@ function boundedReasons(reasons) {
   retained.push(notice);
   return retained;
 }
+function hybridPreviewIndices(items) {
+  const literal = [];
+  const concept = [];
+  for (const [index, item] of items.entries()) {
+    if (item.details?.source === "literal" && literal.length < 3)
+      literal.push(index);
+    if (item.details?.source === "concept")
+      concept.push(index);
+  }
+  return [...literal, ...concept];
+}
 
 class AnalysisStore {
   #items = new Map;
@@ -4994,17 +5012,17 @@ class AnalysisStore {
     }
     const id = randomUUID();
     this.#items.set(id, { id, result: bounded, bytes, touched: this.#now() });
-    return `${id}.analysis.0`;
+    return `${id}.${result.kind === "hybrid" ? "analysis-hybrid" : "analysis"}.0`;
   }
   resolve(cursor) {
     this.#expire();
-    const match = /^([a-f0-9-]+)\.(analysis|analysis-terms)\.([0-9a-z]+)$/.exec(cursor);
+    const match = /^([a-f0-9-]+)\.(analysis|analysis-hybrid|analysis-terms)\.([0-9a-z]+)$/.exec(cursor);
     if (!match)
       throw new CursorError("Invalid analysis cursor");
     const id = match[1];
     const kind = match[2];
     const rawOffset = match[3];
-    if (kind !== "analysis" && kind !== "analysis-terms")
+    if (kind !== "analysis" && kind !== "analysis-hybrid" && kind !== "analysis-terms")
       throw new CursorError("Invalid analysis cursor");
     if (!id || !rawOffset)
       throw new CursorError("Invalid analysis cursor");
@@ -5012,7 +5030,7 @@ class AnalysisStore {
     const stored = this.#items.get(id);
     if (!stored)
       throw new CursorError(this.#expired.has(id) ? "Analysis cursor expired or was evicted; run the query again" : "Analysis cursor was not found; run the query again", this.#expired.has(id) ? "E_CURSOR_EXPIRED" : "E_CURSOR_NOT_FOUND");
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset.toString(36) !== rawOffset || (kind === "analysis" ? offset > stored.result.items.length : offset >= (stored.result.termCounts?.length ?? 0)))
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset.toString(36) !== rawOffset || (kind === "analysis" ? offset > stored.result.items.length : kind === "analysis-hybrid" ? offset !== 0 || stored.result.kind !== "hybrid" : offset >= (stored.result.termCounts?.length ?? 0)))
       throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
     stored.touched = this.#now();
     return { stored, offset, kind };
@@ -5033,10 +5051,15 @@ class AnalysisStore {
     const { result } = stored;
     if (kind === "analysis-terms")
       return analysisTermPage(result, stored.id, offset);
+    const hybridPreview = kind === "analysis-hybrid";
+    const hybridMatchesRequest = hybridPreview ? { cursor: `${stored.id}.analysis.0`, ...result.redact ? { redact: true } : {} } : undefined;
     const pagedTerms = result.termCounts && Buffer.byteLength(JSON.stringify(result.termCounts)) > MAX_INLINE_TERM_COUNT_BYTES;
     const inlineTerms = pagedTerms ? undefined : result.termCounts;
     const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
     const items = [];
+    const sources = [];
+    const sourceIds = new Map;
+    const hybridInspectCursor = result.kind === "hybrid" ? `${stored.id}.analysis.0` : undefined;
     const scope = result.scope ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.${modificationTimeBoundsText(result.scope.modifiedAfterMs, result.scope.modifiedBeforeMs)}` : "";
     const coverage = result.coverage ? ` Coverage: ${JSON.stringify(result.coverage)}.` : "";
     const stats = result.stats ? ` Stats: ${JSON.stringify(result.stats)}.` : "";
@@ -5048,7 +5071,7 @@ ${result.reasons.map((reason) => `[${reason}]`).join(`
     const rows = [];
     let bytes = Buffer.byteLength(header + notice) + 1200;
     let next = offset;
-    for (let index = offset;index < result.items.length && items.length < 30; index += 1) {
+    const appendItem = (index) => {
       const item = result.items[index];
       if (!item)
         throw new Error("Analysis item unavailable");
@@ -5059,26 +5082,54 @@ ${result.reasons.map((reason) => `[${reason}]`).join(`
         ...result.redact ? { redact: true } : {}
       } : undefined;
       const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `
-${item.excerpt}` : ""}${inspect ? `
+${item.excerpt}` : ""}${inspect && !hybridInspectCursor ? `
 Inspect: ${JSON.stringify(inspect)}` : ""}`;
       const rowBytes = Buffer.byteLength(row) + 2;
       if (bytes + rowBytes > MAX_RESULT_BYTES) {
         if (items.length === 0)
           throw new SignalGrepError("Analysis item exceeds the response limit; narrow its source");
-        break;
+        return false;
       }
       rows.push(row);
       bytes += rowBytes;
-      next = index + 1;
-      items.push({ ...item, index: index + 1, ...inspect ? { inspect } : {} });
+      if (!hybridPreview)
+        next = index + 1;
+      if (hybridInspectCursor && item.source) {
+        const sourceKey = JSON.stringify(item.source);
+        let sourceId = sourceIds.get(sourceKey);
+        if (sourceId === undefined) {
+          sourceId = sources.length;
+          sources.push(item.source);
+          sourceIds.set(sourceKey, sourceId);
+        }
+        const { source: _source, ...sharedItem } = item;
+        items.push({ ...sharedItem, index: index + 1, sourceId });
+      } else {
+        items.push({ ...item, index: index + 1, ...inspect ? { inspect } : {} });
+      }
+      return true;
+    };
+    if (hybridPreview) {
+      for (const index of hybridPreviewIndices(result.items)) {
+        if (items.length >= 30 || !appendItem(index))
+          break;
+      }
+    } else {
+      for (let index = offset;index < result.items.length && items.length < 30; index += 1) {
+        if (!appendItem(index))
+          break;
+      }
     }
-    const nextRequest = next < result.items.length ? {
+    const nextRequest = hybridMatchesRequest ?? (next < result.items.length ? {
       cursor: `${stored.id}.analysis.${next.toString(36)}`,
       ...result.redact ? { redact: true } : {}
-    } : undefined;
+    } : undefined);
     const text = [
       header + notice,
       ...rows,
+      ...hybridInspectCursor ? [
+        `Inspect item #N: ${JSON.stringify({ mode: "inspect", cursor: hybridInspectCursor, matchIndex: "N" })}`
+      ] : [],
       ...nextRequest ? [`Next request: ${JSON.stringify(nextRequest)}`] : []
     ].join(`
 
@@ -5089,7 +5140,7 @@ Inspect: ${JSON.stringify(inspect)}` : ""}`;
       text,
       details: {
         version: 1,
-        mode: isSemanticMode(result.kind) || result.kind === "concept" || result.kind === "structure" || result.kind === "files" || result.kind === "outline" || result.kind === "imports" || result.kind === "tests" || result.kind === "impact" ? result.kind : "matches",
+        mode: isSemanticMode(result.kind) || result.kind === "concept" || result.kind === "hybrid" || result.kind === "structure" || result.kind === "files" || result.kind === "outline" || result.kind === "imports" || result.kind === "tests" || result.kind === "impact" ? result.kind : "matches",
         status: result.partial ? "partial" : "complete",
         snapshotComplete: !result.partial,
         totalMatches: result.items.length,
@@ -5104,6 +5155,8 @@ Inspect: ${JSON.stringify(inspect)}` : ""}`;
           totalItems: result.items.length,
           returnedItems: items.length,
           items,
+          ...sources.length ? { sources } : {},
+          ...hybridInspectCursor ? { inspectCursor: hybridInspectCursor } : {},
           reasons: result.reasons,
           ...result.filesRead !== undefined ? { filesRead: result.filesRead } : {},
           ...result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {},
@@ -5114,7 +5167,8 @@ Inspect: ${JSON.stringify(inspect)}` : ""}`;
           ...result.scope ? { scope: result.scope } : {},
           ...result.chunks !== undefined ? { chunks: result.chunks } : {},
           ...result.coverage ? { coverage: result.coverage } : {},
-          ...result.stats ? { stats: result.stats } : {}
+          ...result.stats ? { stats: result.stats } : {},
+          ...hybridMatchesRequest ? { matchesRequest: hybridMatchesRequest } : {}
         },
         ...result.scope ? { scope: result.scope } : {},
         ...result.redact ? { redactionRequested: true } : {}
@@ -8297,9 +8351,160 @@ function parsePythonOutline(document) {
   });
 }
 
+// src/hybrid-search.ts
+function rangesOverlap(left, right) {
+  return left.start < right.end && right.start < left.end;
+}
+function hybridConceptLimit(value) {
+  const candidate = value ?? DEFAULT_HYBRID_CONCEPT_LIMIT;
+  if (!Number.isSafeInteger(candidate) || candidate < 1 || candidate > MAX_HYBRID_CONCEPT_LIMIT) {
+    throw new SignalGrepError(`conceptLimit must be an integer from 1 through ${String(MAX_HYBRID_CONCEPT_LIMIT)}`);
+  }
+  return candidate;
+}
+function absoluteOccurrenceRanges(document, line, match) {
+  const lineRange = document.lineRange(line);
+  return match.occurrences.map((occurrence) => ({
+    start: lineRange.start + occurrence.byteStart,
+    end: lineRange.start + occurrence.byteEnd
+  }));
+}
+async function literalEvidence(scan, access2) {
+  const documents = new Map;
+  const unavailable2 = new Map;
+  for (const match of scan.matches) {
+    if (documents.has(match.absolutePath) || unavailable2.has(match.absolutePath))
+      continue;
+    try {
+      const document = await access2.load(match.absolutePath);
+      const expected = scan.sourceRevisions.get(match.absolutePath);
+      if (!expected || document.reference.origin.kind !== "worktree" || !sameSourceRevision(expected, document.reference.origin.revision)) {
+        unavailable2.set(match.absolutePath, "source revision was not stable across hybrid search");
+        continue;
+      }
+      documents.set(match.absolutePath, document);
+    } catch (error) {
+      if (error instanceof SourceBudgetError || error instanceof SourceDocumentError) {
+        unavailable2.set(match.absolutePath, error.message);
+        continue;
+      }
+      throw error;
+    }
+  }
+  const rangesByPath = new Map;
+  const items = scan.matches.map((match) => {
+    const document = documents.get(match.absolutePath);
+    const path = document?.path ?? match.displayPath;
+    const ranges = document ? absoluteOccurrenceRanges(document, match.lineNumber, match) : [];
+    if (ranges.length) {
+      const existing = rangesByPath.get(path) ?? [];
+      existing.push(...ranges);
+      rangesByPath.set(path, existing);
+    }
+    const primary = ranges[0];
+    return {
+      path,
+      line: match.lineNumber,
+      label: `Literal exact match (${String(match.occurrences.length)} occurrence${match.occurrences.length === 1 ? "" : "s"})${document && primary ? "" : "; source inspection unavailable"}`,
+      excerpt: match.lineContent,
+      ...document && primary ? { source: document.reference, range: primary } : {},
+      details: {
+        kind: "literal-match",
+        source: "literal",
+        certainty: "exact",
+        sourceVerified: Boolean(document && primary),
+        occurrenceCount: match.occurrences.length,
+        ranges,
+        lineContentTruncated: match.lineTruncated
+      }
+    };
+  });
+  const reasons = [...new Set(unavailable2.values())].map((reason) => `Literal source inspection is unavailable for retained evidence: ${reason}`);
+  return {
+    items,
+    rangesByPath,
+    sourceCoverage: unavailable2.size ? "partial" : "complete",
+    reasons
+  };
+}
+function isLiteralOverlap(item, rangesByPath) {
+  const itemRange = item.range;
+  if (!itemRange)
+    return false;
+  return (rangesByPath.get(item.path) ?? []).some((range) => rangesOverlap(range, itemRange));
+}
+async function combineHybridSearch(scan, concept, access2, conceptLimit) {
+  if (concept.kind !== "concept")
+    throw new Error("Hybrid search requires concept evidence");
+  const literal = await literalEvidence(scan, access2);
+  const eligibleConcept = concept.items.filter((item) => !isLiteralOverlap(item, literal.rangesByPath));
+  const duplicateConceptCandidates = concept.items.length - eligibleConcept.length;
+  const selectedConcept = [];
+  for (const item of eligibleConcept.slice(0, conceptLimit)) {
+    selectedConcept.push({
+      ...item,
+      details: { ...item.details, source: "concept" }
+    });
+  }
+  const conceptCandidatesOmitted = Math.max(0, eligibleConcept.length - selectedConcept.length);
+  const literalOccurrencesRetained = scan.matches.reduce((total, match) => total + match.occurrences.length, 0);
+  const literalCoverage = scan.snapshotComplete ? "complete" : "partial";
+  const conceptCoverage = concept.coverage?.conceptCandidates ?? (concept.partial ? "partial" : "complete");
+  const deduplicationCoverage = scan.snapshotComplete && literal.sourceCoverage === "complete" ? "complete" : "partial";
+  const partial = !scan.snapshotComplete || concept.partial || literal.sourceCoverage === "partial" || deduplicationCoverage === "partial";
+  const selectionReason = conceptCandidatesOmitted ? `Hybrid concept limit retained the top ${String(selectedConcept.length)} of ${String(eligibleConcept.length)} non-overlapping semantic candidates` : undefined;
+  return {
+    kind: "hybrid",
+    unit: "evidence-items",
+    items: [...literal.items, ...selectedConcept],
+    partial,
+    reasons: [
+      ...scan.retention?.reasons ?? [],
+      ...concept.reasons,
+      ...literal.reasons,
+      ...selectionReason ? [selectionReason] : []
+    ],
+    filesRead: (concept.filesRead ?? 0) + access2.filesRead,
+    bytesRead: (concept.bytesRead ?? 0) + access2.bytesRead,
+    counts: {
+      literalMatchingLinesFound: scan.totalMatches,
+      literalMatchingLinesPrepared: literal.items.length,
+      literalOccurrencesRetained,
+      conceptCandidatesRanked: concept.items.length,
+      conceptCandidatesDeduplicated: duplicateConceptCandidates,
+      conceptCandidatesEligible: eligibleConcept.length,
+      conceptCandidatesSelected: selectedConcept.length,
+      conceptCandidatesOmitted,
+      literalItemsRetained: literal.items.length,
+      conceptItemsRetained: selectedConcept.length
+    },
+    ...concept.scope ? { scope: concept.scope } : {},
+    coverage: {
+      literalMatches: literalCoverage,
+      conceptCandidates: conceptCoverage,
+      crossSourceDeduplication: deduplicationCoverage,
+      sourceInspection: literal.sourceCoverage,
+      retention: "complete"
+    },
+    ...concept.stats ? { stats: concept.stats } : {},
+    ...concept.redact !== undefined ? { redact: concept.redact } : {}
+  };
+}
+function retainedHybridCounts(original, items) {
+  let literalItemsRetained = 0;
+  let conceptItemsRetained = 0;
+  for (const item of items) {
+    if (item.details?.source === "literal")
+      literalItemsRetained += 1;
+    if (item.details?.source === "concept")
+      conceptItemsRetained += 1;
+  }
+  return { ...original, literalItemsRetained, conceptItemsRetained };
+}
+
 // src/evidence-service.ts
 function isEvidenceRequest(input) {
-  return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || (input.cursor?.includes(".analysis") ?? false);
+  return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "hybrid" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || input.conceptLimit !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
 function rejectFields(input, fields, operation, cursor = false, hint = "copy the complete returned request") {
   const present = fields.filter((field) => input[field] !== undefined);
@@ -8324,7 +8529,8 @@ var searchFields = [
   "context",
   "limit",
   "modifiedAfter",
-  "modifiedBefore"
+  "modifiedBefore",
+  "conceptLimit"
 ];
 var navigationFilterFields = new Set(["glob", "exclude", "hidden"]);
 var inspectFields = [
@@ -8436,13 +8642,15 @@ class EvidenceService {
   #runner;
   #snapshots;
   #structure;
+  #conceptSearch;
   #queue = new SyntaxQueue;
   #analyses = new AnalysisStore;
   #continuations = new SourceContinuations;
-  constructor(runner, snapshots, structure) {
+  constructor(runner, snapshots, structure, runConceptSearch2 = conceptSearch) {
     this.#runner = runner;
     this.#snapshots = snapshots;
     this.#structure = structure;
+    this.#conceptSearch = runConceptSearch2;
   }
   clear() {
     this.#analyses.clear();
@@ -8532,7 +8740,55 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=concept", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact");
-      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
+    }
+    if (input.mode === "hybrid") {
+      rejectFields(input, [
+        ...searchFields.filter((field) => !["query", "glob", "exclude", "hidden", "conceptLimit"].includes(field)),
+        ...inspectFields,
+        "cursor",
+        "line",
+        "symbol",
+        "matchIndex",
+        "maxFilesToParse"
+      ], "mode=hybrid", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact");
+      const query = validateConceptQuery(input.query);
+      const limit = hybridConceptLimit(input.conceptLimit);
+      const literalRequest = normalizeRequest({
+        pattern: query,
+        ...input.path !== undefined ? { path: input.path } : {},
+        ...input.glob !== undefined ? { glob: input.glob } : {},
+        ...input.exclude !== undefined ? { exclude: input.exclude } : {},
+        ...input.hidden !== undefined ? { hidden: input.hidden } : {},
+        literal: true,
+        scope: "strict",
+        redact: input.redact ?? false
+      });
+      let literalResult;
+      let conceptResult;
+      let conceptAccess;
+      await runOwnedParallel((groupSignal) => {
+        conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
+        return [
+          this.#runner(literalRequest, cwd, groupSignal).then((result2) => {
+            literalResult = result2;
+            return;
+          }),
+          this.#conceptSearch(input, conceptAccess).then((result2) => {
+            conceptResult = result2;
+            return;
+          })
+        ];
+      }, signal);
+      if (!literalResult || !conceptResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle both owned operations");
+      const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+      const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
+      const originalCounts = hybrid.counts ?? {};
+      const cursor = this.#analyses.create(hybrid, (items) => ({
+        counts: retainedHybridCounts(originalCounts, items)
+      }));
+      return this.#analyses.page(cursor);
     }
     if (input.mode === "structure") {
       rejectFields(input, [
@@ -8564,6 +8820,7 @@ class EvidenceService {
         "within",
         "roles",
         "changes",
+        "conceptLimit",
         ...inspectFields
       ], "mode=files", false, fileDiscoveryQueryHint(input.query ?? input.pattern));
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
@@ -8587,7 +8844,7 @@ class EvidenceService {
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
       return this.#navigate(input, access2);
-    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor"], "Evidence search");
+    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
       if (input.pattern !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined || input.wholeWord !== undefined)
@@ -9905,7 +10162,7 @@ class SignalGrepService {
     this.#runRipgrep = options.runRipgrep;
     this.#snapshots = options.snapshots ?? new SnapshotStore;
     this.#summaryFileLimit = options.summaryFileLimit ?? DEFAULT_SUMMARY_FILE_LIMIT;
-    this.#evidence = new EvidenceService(this.#runRipgrep, this.#snapshots, options.structure);
+    this.#evidence = new EvidenceService(this.#runRipgrep, this.#snapshots, options.structure, options.conceptSearch);
   }
   async search(input, cwd, signal, options = {}) {
     validateRawSearchInput(input);
@@ -10202,6 +10459,7 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     `Use JS/TS modes definitions, references, implementations, callers or callees with path+line+column (1-based UTF-16), or an unambiguous symbol. Returned evidence includes exact positions and executable next requests. The compiler resolves project aliases, package exports and workspace packages; static relationships do not prove runtime dispatch. dependencies/dependents take only a workspace file path.`,
     `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
+    `Use mode:"hybrid" plus query when wording may differ from the source. It always runs exact literal and local concept retrieval, keeps exact evidence first, removes semantic passages that overlap exact evidence, and retains the top three non-overlapping semantic candidates by default. conceptLimit changes only that semantic supplement. Hybrid uses one pageable snapshot and never treats similarity as exact evidence.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
@@ -10225,7 +10483,7 @@ function stringEnum(values, options) {
     ...options?.description ? { description: options.description } : {}
   });
 }
-var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, and exposes a same-query scoreProfile without deciding relevance thresholds. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
+var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, and exposes a same-query scoreProfile without deciding relevance thresholds. mode=hybrid always runs exact literal and local concept retrieval once, ranks exact evidence first, deduplicates overlapping semantic passages, and retains a bounded semantic supplement in one pageable snapshot. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
@@ -10233,7 +10491,7 @@ var signalGrepSchema = Type.Object({
   })),
   query: Type.Optional(Type.String({
     maxLength: 256,
-    description: "With mode=files, a filename/path/fuzzy query (optional); with mode=concept, a required natural-language question. Both preserve their requested path. Concept requires an explicitly installed local model."
+    description: "With mode=files, a filename/path/fuzzy query (optional); with mode=concept or hybrid, a required natural-language question. Hybrid uses the same query as exact literal text and as the local concept query. Discovery modes preserve their requested path. Concept and hybrid require an explicitly installed local model."
   })),
   scope: Type.Optional(stringEnum(["strict", "expand"], {
     description: "Content search scope: strict never expands a zero-result path; expand (default) retries from project cwd. Applies to ordinary, multi-term and role searches."
@@ -10340,6 +10598,11 @@ var signalGrepSchema = Type.Object({
     maximum: MAX_CONFIGURABLE_STRUCTURE_FILES,
     description: `Maximum source files parsed by one structural analysis request (default 200, max ${String(MAX_CONFIGURABLE_STRUCTURE_FILES)}). Candidate discovery still searches the full requested scope.`
   })),
+  conceptLimit: Type.Optional(Type.Integer({
+    minimum: 1,
+    maximum: MAX_HYBRID_CONCEPT_LIMIT,
+    description: `mode=hybrid only: retain the top semantic candidates after overlap deduplication (default ${String(DEFAULT_HYBRID_CONCEPT_LIMIT)}, max ${String(MAX_HYBRID_CONCEPT_LIMIT)}). Literal evidence has an independent retention budget and is never displaced by this limit.`
+  })),
   context: Type.Optional(Type.Integer({
     minimum: 0,
     maximum: MAX_CONTEXT_LINES,
@@ -10362,6 +10625,7 @@ var signalGrepSchema = Type.Object({
     "files",
     "structure",
     "concept",
+    "hybrid",
     "definitions",
     "references",
     "implementations",
@@ -10370,7 +10634,7 @@ var signalGrepSchema = Type.Object({
     "dependencies",
     "dependents"
   ], {
-    description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. tests supports JS/TS/TSX sources; Python supports outline, not related-test navigation. Compiler results are static evidence; concept and related-test results remain candidates."
+    description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query, and hybrid uses one query for exact literal plus concept evidence in a single snapshot. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. tests supports JS/TS/TSX sources; Python supports outline, not related-test navigation. Compiler results are static evidence; concept and related-test results remain candidates."
   })),
   line: Type.Optional(Type.Number({
     description: "1-indexed source line for path inspection/navigation/impact. Omit with matchIndex, matchIndices or targets."

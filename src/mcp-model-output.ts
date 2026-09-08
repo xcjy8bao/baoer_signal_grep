@@ -42,6 +42,8 @@ function compactRows(analysis: AnalysisDetails): string[] {
 }
 
 function compactInspectInstruction(analysis: AnalysisDetails): string | undefined {
+  if (analysis.inspectCursor)
+    return `Inspect item #N: mode="inspect", cursor=${JSON.stringify(analysis.inspectCursor)}, matchIndex=N.`;
   const inspect = analysis.items.find((item) => item.inspect !== undefined)?.inspect;
   if (!inspect || typeof inspect.cursor !== "string") return undefined;
   return `Inspect item #N: mode="inspect", cursor=${JSON.stringify(inspect.cursor)}, matchIndex=N${inspect.redact ? ", redact=true" : ""}.`;
@@ -72,7 +74,10 @@ function distinctNextRequest(
 ): string | undefined {
   if (!details.nextRequest) return undefined;
   const serialized = JSON.stringify(details.nextRequest);
-  return serialized === JSON.stringify(analysis.termCountsNextRequest) ? undefined : serialized;
+  return serialized === JSON.stringify(analysis.termCountsNextRequest) ||
+    serialized === JSON.stringify(analysis.matchesRequest)
+    ? undefined
+    : serialized;
 }
 
 export function compactMcpModelText(result: SignalGrepResult): string {

@@ -36,6 +36,7 @@ export const MAX_SOURCE_REVISION_FILES = 50_000;
 
 export type SearchMode =
   | "concept"
+  | "hybrid"
   | "structure"
   | "definitions"
   | "references"

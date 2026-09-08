@@ -76,6 +76,16 @@ function boundedReasons(reasons: readonly string[]): string[] {
   return retained;
 }
 
+function hybridPreviewIndices(items: readonly AnalysisItem[]): number[] {
+  const literal: number[] = [];
+  const concept: number[] = [];
+  for (const [index, item] of items.entries()) {
+    if (item.details?.source === "literal" && literal.length < 3) literal.push(index);
+    if (item.details?.source === "concept") concept.push(index);
+  }
+  return [...literal, ...concept];
+}
+
 /** Stores only bounded display evidence and version references, never syntax trees. */
 export class AnalysisStore {
   readonly #items = new Map<string, StoredAnalysis>();
@@ -162,21 +172,23 @@ export class AnalysisStore {
     }
     const id = randomUUID();
     this.#items.set(id, { id, result: bounded, bytes, touched: this.#now() });
-    return `${id}.analysis.0`;
+    return `${id}.${result.kind === "hybrid" ? "analysis-hybrid" : "analysis"}.0`;
   }
 
   resolve(cursor: string): {
     stored: StoredAnalysis;
     offset: number;
-    kind: "analysis" | "analysis-terms";
+    kind: "analysis" | "analysis-hybrid" | "analysis-terms";
   } {
     this.#expire();
-    const match = /^([a-f0-9-]+)\.(analysis|analysis-terms)\.([0-9a-z]+)$/.exec(cursor);
+    const match = /^([a-f0-9-]+)\.(analysis|analysis-hybrid|analysis-terms)\.([0-9a-z]+)$/.exec(
+      cursor,
+    );
     if (!match) throw new CursorError("Invalid analysis cursor");
     const id = match[1];
     const kind = match[2];
     const rawOffset = match[3];
-    if (kind !== "analysis" && kind !== "analysis-terms")
+    if (kind !== "analysis" && kind !== "analysis-hybrid" && kind !== "analysis-terms")
       throw new CursorError("Invalid analysis cursor");
     if (!id || !rawOffset) throw new CursorError("Invalid analysis cursor");
     const offset = Number.parseInt(rawOffset, 36);
@@ -194,7 +206,9 @@ export class AnalysisStore {
       offset.toString(36) !== rawOffset ||
       (kind === "analysis"
         ? offset > stored.result.items.length
-        : offset >= (stored.result.termCounts?.length ?? 0))
+        : kind === "analysis-hybrid"
+          ? offset !== 0 || stored.result.kind !== "hybrid"
+          : offset >= (stored.result.termCounts?.length ?? 0))
     )
       throw new CursorError("Invalid analysis offset", "E_CURSOR_OFFSET_INVALID");
     stored.touched = this.#now();
@@ -216,12 +230,19 @@ export class AnalysisStore {
     const { stored, offset, kind } = this.resolve(cursor);
     const { result } = stored;
     if (kind === "analysis-terms") return analysisTermPage(result, stored.id, offset);
+    const hybridPreview = kind === "analysis-hybrid";
+    const hybridMatchesRequest = hybridPreview
+      ? { cursor: `${stored.id}.analysis.0`, ...(result.redact ? { redact: true } : {}) }
+      : undefined;
     const pagedTerms =
       result.termCounts &&
       Buffer.byteLength(JSON.stringify(result.termCounts)) > MAX_INLINE_TERM_COUNT_BYTES;
     const inlineTerms = pagedTerms ? undefined : result.termCounts;
     const termsRequest = pagedTerms ? termCountRequest(stored.id, 0, result.redact) : undefined;
     const items: NonNullable<SignalGrepResult["details"]["analysis"]>["items"] = [];
+    const sources: NonNullable<SignalGrepResult["details"]["analysis"]>["sources"] = [];
+    const sourceIds = new Map<string, number>();
+    const hybridInspectCursor = result.kind === "hybrid" ? `${stored.id}.analysis.0` : undefined;
     const scope = result.scope
       ? ` Scope: ${result.scope.assertion === "project-wide" ? "project root" : "requested path"} ${JSON.stringify(result.scope.path)}${result.scope.expandedToProjectRoot ? `, expanded after ${JSON.stringify(result.scope.requestedPath)} had no matches` : ""}.${modificationTimeBoundsText(result.scope.modifiedAfterMs, result.scope.modifiedBeforeMs)}`
       : "";
@@ -235,7 +256,7 @@ export class AnalysisStore {
     const rows: string[] = [];
     let bytes = Buffer.byteLength(header + notice) + 1200;
     let next = offset;
-    for (let index = offset; index < result.items.length && items.length < 30; index += 1) {
+    const appendItem = (index: number): boolean => {
       const item = result.items[index];
       if (!item) throw new Error("Analysis item unavailable");
       const inspect =
@@ -247,28 +268,56 @@ export class AnalysisStore {
               ...(result.redact ? { redact: true } : {}),
             }
           : undefined;
-      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `\n${item.excerpt}` : ""}${inspect ? `\nInspect: ${JSON.stringify(inspect)}` : ""}`;
+      const row = `#${index + 1} ${item.path}:${item.line} ${item.label}${item.excerpt ? `\n${item.excerpt}` : ""}${inspect && !hybridInspectCursor ? `\nInspect: ${JSON.stringify(inspect)}` : ""}`;
       const rowBytes = Buffer.byteLength(row) + 2;
       if (bytes + rowBytes > MAX_RESULT_BYTES) {
         if (items.length === 0)
           throw new SignalGrepError("Analysis item exceeds the response limit; narrow its source");
-        break;
+        return false;
       }
       rows.push(row);
       bytes += rowBytes;
-      next = index + 1;
-      items.push({ ...item, index: index + 1, ...(inspect ? { inspect } : {}) });
+      if (!hybridPreview) next = index + 1;
+      if (hybridInspectCursor && item.source) {
+        const sourceKey = JSON.stringify(item.source);
+        let sourceId = sourceIds.get(sourceKey);
+        if (sourceId === undefined) {
+          sourceId = sources.length;
+          sources.push(item.source);
+          sourceIds.set(sourceKey, sourceId);
+        }
+        const { source: _source, ...sharedItem } = item;
+        items.push({ ...sharedItem, index: index + 1, sourceId });
+      } else {
+        items.push({ ...item, index: index + 1, ...(inspect ? { inspect } : {}) });
+      }
+      return true;
+    };
+    if (hybridPreview) {
+      for (const index of hybridPreviewIndices(result.items)) {
+        if (items.length >= 30 || !appendItem(index)) break;
+      }
+    } else {
+      for (let index = offset; index < result.items.length && items.length < 30; index += 1) {
+        if (!appendItem(index)) break;
+      }
     }
     const nextRequest =
-      next < result.items.length
+      hybridMatchesRequest ??
+      (next < result.items.length
         ? {
             cursor: `${stored.id}.analysis.${next.toString(36)}`,
             ...(result.redact ? { redact: true } : {}),
           }
-        : undefined;
+        : undefined);
     const text = [
       header + notice,
       ...rows,
+      ...(hybridInspectCursor
+        ? [
+            `Inspect item #N: ${JSON.stringify({ mode: "inspect", cursor: hybridInspectCursor, matchIndex: "N" })}`,
+          ]
+        : []),
       ...(nextRequest ? [`Next request: ${JSON.stringify(nextRequest)}`] : []),
     ].join("\n\n");
     if (Buffer.byteLength(text) > MAX_RESULT_BYTES)
@@ -280,6 +329,7 @@ export class AnalysisStore {
         mode:
           isSemanticMode(result.kind) ||
           result.kind === "concept" ||
+          result.kind === "hybrid" ||
           result.kind === "structure" ||
           result.kind === "files" ||
           result.kind === "outline" ||
@@ -302,6 +352,8 @@ export class AnalysisStore {
           totalItems: result.items.length,
           returnedItems: items.length,
           items,
+          ...(sources.length ? { sources } : {}),
+          ...(hybridInspectCursor ? { inspectCursor: hybridInspectCursor } : {}),
           reasons: result.reasons,
           ...(result.filesRead !== undefined ? { filesRead: result.filesRead } : {}),
           ...(result.bytesRead !== undefined ? { bytesRead: result.bytesRead } : {}),
@@ -315,6 +367,7 @@ export class AnalysisStore {
           ...(result.chunks !== undefined ? { chunks: result.chunks } : {}),
           ...(result.coverage ? { coverage: result.coverage } : {}),
           ...(result.stats ? { stats: result.stats } : {}),
+          ...(hybridMatchesRequest ? { matchesRequest: hybridMatchesRequest } : {}),
         },
         ...(result.scope ? { scope: result.scope } : {}),
         ...(result.redact ? { redactionRequested: true } : {}),

@@ -23,3 +23,5 @@ export const MAX_SOURCE_CONTINUATIONS = 20;
 export const MAX_SOURCE_CONTINUATION_BYTES = 1024 * 1024;
 export const MAX_IMPORT_HOPS = 8;
 export const MAX_IMPORT_FILES = 20;
+export const DEFAULT_HYBRID_CONCEPT_LIMIT = 3;
+export const MAX_HYBRID_CONCEPT_LIMIT = 20;
