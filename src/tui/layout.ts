@@ -571,6 +571,7 @@ function callView(input: SignalGrepInput, copy: TuiCopy, theme: Theme): CallView
     isSemanticMode(input.mode) ||
     input.mode === "files" ||
     input.mode === "concept" ||
+    input.mode === "hybrid" ||
     input.mode === "structure"
   ) {
     return {

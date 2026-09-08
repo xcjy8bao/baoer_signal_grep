@@ -153,15 +153,19 @@ async function similarities(query: string, passages: Passage[], parent?: AbortSi
   }
 }
 
-async function runConceptSearch(
-  input: SignalGrepInput,
-  access: SourceAccess,
-): Promise<AnalysisResultSet> {
-  const query = input.query;
+export function validateConceptQuery(query: string | undefined): string {
   if (!query?.trim() || query.length > 256 || !query.isWellFormed() || /[\r\n\0]/.test(query))
     throw new SignalGrepError(
       "Concept query requires nonempty, single-line well-formed text of at most 256 characters",
     );
+  return query;
+}
+
+async function runConceptSearch(
+  input: SignalGrepInput,
+  access: SourceAccess,
+): Promise<AnalysisResultSet> {
+  const query = validateConceptQuery(input.query);
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
   const files = await listWorkspaceFiles(access.cwd, access.signal, {
@@ -289,3 +293,5 @@ export function conceptSearch(
 ): Promise<AnalysisResultSet> {
   return inferenceQueue.run(() => runConceptSearch(input, access), access.signal);
 }
+
+export type ConceptSearchRunner = typeof conceptSearch;

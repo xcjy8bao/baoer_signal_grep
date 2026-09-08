@@ -17,6 +17,7 @@ import {
 import { redactSignalGrepResult } from "./redaction.js";
 import type { RipgrepRunner } from "./rg.js";
 import type { CodeStructureProvider } from "./structure.js";
+import type { ConceptSearchRunner } from "./concept-search.js";
 import { SearchPathPolicy } from "./path-policy.js";
 import { SnapshotStore } from "./snapshot-store.js";
 import { modificationTimeBoundsText } from "./source.js";
@@ -51,6 +52,7 @@ export interface SignalGrepInput extends RawSearchInput {
   changes?: GitChangeRequest;
   symbol?: string;
   maxFilesToParse?: number;
+  conceptLimit?: number;
 }
 
 export interface SignalGrepServiceOptions {
@@ -58,6 +60,7 @@ export interface SignalGrepServiceOptions {
   snapshots?: SnapshotStore;
   summaryFileLimit?: number;
   structure?: CodeStructureProvider;
+  conceptSearch?: ConceptSearchRunner;
 }
 
 export interface SignalGrepSearchOptions {
@@ -257,7 +260,12 @@ export class SignalGrepService {
     this.#runRipgrep = options.runRipgrep;
     this.#snapshots = options.snapshots ?? new SnapshotStore();
     this.#summaryFileLimit = options.summaryFileLimit ?? DEFAULT_SUMMARY_FILE_LIMIT;
-    this.#evidence = new EvidenceService(this.#runRipgrep, this.#snapshots, options.structure);
+    this.#evidence = new EvidenceService(
+      this.#runRipgrep,
+      this.#snapshots,
+      options.structure,
+      options.conceptSearch,
+    );
   }
 
   async search(

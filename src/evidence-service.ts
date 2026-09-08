@@ -1,6 +1,6 @@
 import { bindImpactCandidates } from "./impact-bindings.js";
 import { fileDiscoveryQueryHint } from "./discovery-errors.js";
-import { conceptSearch } from "./concept-search.js";
+import { conceptSearch, type ConceptSearchRunner, validateConceptQuery } from "./concept-search.js";
 import { structuralSearch } from "./structural-search.js";
 import { isSemanticMode } from "./semantic-protocol.js";
 import { navigateSemantics } from "./semantic-navigation.js";
@@ -53,6 +53,7 @@ import type { CodeStructureProvider } from "./structure.js";
 import { filterRoleOccurrences, findFunctionConjunctions } from "./syntax-search.js";
 import { syntaxLanguage } from "./syntax.js";
 import { parsePythonOutline } from "./python-outline.js";
+import { combineHybridSearch, hybridConceptLimit, retainedHybridCounts } from "./hybrid-search.js";
 import {
   MAX_ANY_OF_TERMS,
   MAX_CONFIGURABLE_STRUCTURE_FILES,
@@ -69,6 +70,7 @@ export function isEvidenceRequest(input: SignalGrepInput): boolean {
   return (
     isSemanticMode(input.mode) ||
     input.mode === "concept" ||
+    input.mode === "hybrid" ||
     input.mode === "structure" ||
     input.mode === "files" ||
     input.mode === "inspect" ||
@@ -83,6 +85,7 @@ export function isEvidenceRequest(input: SignalGrepInput): boolean {
     input.roles !== undefined ||
     input.changes !== undefined ||
     input.symbol !== undefined ||
+    input.conceptLimit !== undefined ||
     (input.cursor?.includes(".analysis") ?? false)
   );
 }
@@ -122,6 +125,7 @@ const searchFields = [
   "limit",
   "modifiedAfter",
   "modifiedBefore",
+  "conceptLimit",
 ] satisfies (keyof SignalGrepInput)[];
 const navigationFilterFields = new Set<keyof SignalGrepInput>(["glob", "exclude", "hidden"]);
 const inspectFields = [
@@ -271,13 +275,20 @@ export class EvidenceService {
   readonly #runner: RipgrepRunner;
   readonly #snapshots: SnapshotStore;
   readonly #structure: CodeStructureProvider | undefined;
+  readonly #conceptSearch: ConceptSearchRunner;
   readonly #queue = new SyntaxQueue();
   readonly #analyses = new AnalysisStore();
   readonly #continuations = new SourceContinuations();
-  constructor(runner: RipgrepRunner, snapshots: SnapshotStore, structure?: CodeStructureProvider) {
+  constructor(
+    runner: RipgrepRunner,
+    snapshots: SnapshotStore,
+    structure?: CodeStructureProvider,
+    runConceptSearch: ConceptSearchRunner = conceptSearch,
+  ) {
     this.#runner = runner;
     this.#snapshots = snapshots;
     this.#structure = structure;
+    this.#conceptSearch = runConceptSearch;
   }
   clear(): void {
     this.#analyses.clear();
@@ -410,7 +421,63 @@ export class EvidenceService {
         false,
         "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact",
       );
-      return this.#analyses.page(this.#analyses.create(await conceptSearch(input, access)));
+      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access)));
+    }
+    if (input.mode === "hybrid") {
+      rejectFields(
+        input,
+        [
+          ...searchFields.filter(
+            (field) => !["query", "glob", "exclude", "hidden", "conceptLimit"].includes(field),
+          ),
+          ...inspectFields,
+          "cursor",
+          "line",
+          "symbol",
+          "matchIndex",
+          "maxFilesToParse",
+        ],
+        "mode=hybrid",
+        false,
+        "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact",
+      );
+      const query = validateConceptQuery(input.query);
+      const limit = hybridConceptLimit(input.conceptLimit);
+      const literalRequest = normalizeRequest({
+        pattern: query,
+        ...(input.path !== undefined ? { path: input.path } : {}),
+        ...(input.glob !== undefined ? { glob: input.glob } : {}),
+        ...(input.exclude !== undefined ? { exclude: input.exclude } : {}),
+        ...(input.hidden !== undefined ? { hidden: input.hidden } : {}),
+        literal: true,
+        scope: "strict",
+        redact: input.redact ?? false,
+      });
+      let literalResult: Awaited<ReturnType<RipgrepRunner>> | undefined;
+      let conceptResult: AnalysisResultSet | undefined;
+      let conceptAccess: SourceAccess | undefined;
+      await runOwnedParallel<void>((groupSignal) => {
+        conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
+        return [
+          this.#runner(literalRequest, cwd, groupSignal).then((result) => {
+            literalResult = result;
+            return undefined;
+          }),
+          this.#conceptSearch(input, conceptAccess).then((result) => {
+            conceptResult = result;
+            return undefined;
+          }),
+        ];
+      }, signal);
+      if (!literalResult || !conceptResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle both owned operations");
+      const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+      const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
+      const originalCounts = hybrid.counts ?? {};
+      const cursor = this.#analyses.create(hybrid, (items) => ({
+        counts: retainedHybridCounts(originalCounts, items),
+      }));
+      return this.#analyses.page(cursor);
     }
     if (input.mode === "structure") {
       rejectFields(
@@ -450,6 +517,7 @@ export class EvidenceService {
           "within",
           "roles",
           "changes",
+          "conceptLimit",
           ...inspectFields,
         ],
         "mode=files",
@@ -486,7 +554,7 @@ export class EvidenceService {
       return this.#navigate(input, access);
     rejectFields(
       input,
-      [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor"],
+      [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"],
       "Evidence search",
     );
     const anyOf = validateAnyOf(input.anyOf);

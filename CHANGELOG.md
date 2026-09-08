@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] - 2026-09-08
+
+- Add fixed `mode=hybrid` retrieval that always runs exact literal and local Concept searches under one cancellation owner, ranks exact evidence first, removes overlapping semantic passages and retains a configurable top semantic supplement (default 3, maximum 20).
+- Store hybrid evidence in one version-checked pageable snapshot with an exact-plus-semantic preview, shared source references and one inspection cursor. Counts distinguish ranked, deduplicated, selected and omitted semantic candidates, while literal, Concept, deduplication, inspection and retention coverage remain independently observable.
+- Keep hybrid model output below equivalent separate literal and Concept responses by sharing metadata and continuation instructions, limiting the initial preview and deferring exhaustive exact-first evidence to the same snapshot's match pages.
+
 ## [1.2.3-7] - 2026-09-08
 
 - Add opt-in MCP text and model output modes for hosts that serialize both readable and structured results into model context. Model mode selects the smaller of the standard page and a compact analysis view without repeated paths, inspect requests or outline excerpts while preserving counts, coverage, partial state and continuations; the existing structured result remains the default.

@@ -20,6 +20,10 @@ Looking for an error message, a sentence or a name is like giving a librarian a 
 
 “Continue from where we stopped” can follow the existing result to its next page. The agent can also open the surrounding text of a match, like returning to a bookmarked passage to read what came before and after it.
 
+### Recover when the remembered wording is not exact
+
+Use `mode: "hybrid"` with one natural-language `query` when a sentence may have been remembered with different wording. Hybrid always runs an exact literal search and the installed local Concept model under one owned request. Exact evidence appears first; semantic candidates are clearly labeled, ranked only by similarity and removed when they overlap an exact match. The initial page shares counts, coverage, source references, one inspection cursor and a compact preview instead of concatenating two complete responses. `conceptLimit` changes only the non-overlapping semantic supplement (default 3, maximum 20); it never displaces literal evidence. The returned matches request opens the same snapshot's complete exact-first pagination without rerunning either search.
+
 ### Give several search conditions together
 
 “Find files mentioning both the customer and a refund” works like selecting documents with two labels. “Any of these words will do” works like handing over a shortlist. Multiple conditions can be expressed together to reduce repeated searches.
@@ -53,6 +57,7 @@ Tell your agent what you need, for example:
 - “Show me which files contain relevant text, then open two of them.”
 - “Continue from the previous page and show the remaining passages.”
 - “Search files modified since this Unix millisecond timestamp.”
+- “I may remember this sentence incorrectly; search exact and semantic evidence together.”
 - “Show the Python classes and functions in this file, then inspect the method that matters.”
 
 The plugin provides file locations and actual text so the agent can answer from the material and you can check the original yourself.
@@ -91,7 +96,7 @@ codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest bao
 
 `@latest` follows the newest published version when MCP starts. Restart the host to load updates. The server searches the active project; `BAOER_SIGNAL_GREP_MCP_CWD` can select a different root. An MCP-only connection adds the tool without disabling other search tools.
 
-MCP returns readable text plus structured evidence by default. If a host serializes both forms into the model context, set `BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE=model` in that MCP server's environment and restart it. Model mode omits `structuredContent` and its advertised output schema. It selects the smaller of the standard page and a compact view of the same retained analysis snapshot: repeated paths and inspect requests are shared, and outline excerpts are deferred to version-checked inspection. Counts, coverage, partial status, reasons and continuation requests remain visible. Use `text` to omit structured output while preserving the complete standard text, or retain the default `structured` mode for programmatic consumers and clients that expose only structured results. Any other value fails at startup. The bundled Claude Code, Codex and Kimi native plugins select `model`; direct MCP connections retain the compatible default unless configured explicitly.
+MCP returns readable text plus structured evidence by default. If a host serializes both forms into the model context, set `BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE=model` in that MCP server's environment and restart it. Model mode omits `structuredContent` and its advertised output schema. It selects the smaller of the standard page and a compact view of the same retained analysis snapshot: repeated paths and inspect requests are shared, hybrid does not concatenate separate literal and Concept bodies, and outline excerpts are deferred to version-checked inspection. Counts, coverage, partial status, reasons and continuation requests remain visible. Use `text` to omit structured output while preserving the complete standard text, or retain the default `structured` mode for programmatic consumers and clients that expose only structured results. Any other value fails at startup. The bundled Claude Code, Codex and Kimi native plugins select `model`; direct MCP connections retain the compatible default unless configured explicitly.
 
 ### Native plugins
 
