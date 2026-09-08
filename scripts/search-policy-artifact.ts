@@ -83,7 +83,11 @@ export async function buildSearchPlugin(root: string): Promise<void> {
         "baoer_signal_grep_mcp",
         "--stdio",
       ],
-      env: { npm_config_ignore_scripts: "true", ONNXRUNTIME_NODE_INSTALL_CUDA: "skip" },
+      env: {
+        npm_config_ignore_scripts: "true",
+        ONNXRUNTIME_NODE_INSTALL_CUDA: "skip",
+        BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE: "model",
+      },
     },
   };
   const files: Record<string, unknown> = {

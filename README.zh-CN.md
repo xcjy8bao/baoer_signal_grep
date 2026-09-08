@@ -91,6 +91,8 @@ codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest bao
 
 `@latest` 会在 MCP 启动时跟随最新发布版本，更新后重启宿主即可加载。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
 
+MCP 默认同时返回可读文本和结构化证据。如果宿主会把两种形式一起序列化进模型上下文，请在该 MCP 服务的环境中设置 `BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE=model`，然后重启。模型模式不返回 `structuredContent`，也不声明结构化输出 schema；它会在标准页和同一个已保留分析快照的紧凑视图中选择较小者。紧凑视图共享重复路径和 inspect 请求，并把 outline 签名延后到版本校验过的源码检查。计数、覆盖范围、部分状态、原因和续读请求仍然可见。`text` 模式只省略结构化输出，逐字保留标准文本；程序消费者或只展示结构化结果的客户端应继续使用默认的 `structured` 模式。其他取值会在启动时明确失败。捆绑的 Claude Code、Codex 和 Kimi 原生插件会选择 `model`；直接 MCP 连接仍保留兼容默认值，除非显式配置。
+
 ### 原生插件
 
 如果希望在其他宿主中也强制常规搜索使用本插件：

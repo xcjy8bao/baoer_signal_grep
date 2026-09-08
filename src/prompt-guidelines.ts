@@ -1,6 +1,7 @@
 import { MAX_INSPECT_TARGETS } from "./types.js";
+import { DEFAULT_MCP_OUTPUT_MODE, type SignalGrepMcpOutputMode } from "./mcp-output.js";
 
-export function signalGrepPromptGuidelines(): string[] {
+export function signalGrepPromptGuidelines(structuredOutput = true): string[] {
   return [
     `Use baoer_signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
     `An omitted path searches the project cwd. Use scope:"strict" for a question restricted to one path; otherwise, if an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
@@ -18,14 +19,24 @@ export function signalGrepPromptGuidelines(): string[] {
     `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
-    `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`,
+    structuredOutput
+      ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
+      : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`,
   ];
 }
 
-export function signalGrepMcpInstructions(): string {
+export function signalGrepMcpInstructions(
+  outputMode: SignalGrepMcpOutputMode = DEFAULT_MCP_OUTPUT_MODE,
+): string {
+  const outputInstruction =
+    outputMode === "structured"
+      ? "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence."
+      : outputMode === "model"
+        ? "Successful MCP results provide one model-facing text page. Compact analysis rows share their path and inspect cursor; use the numbered item with the visible inspect template, and copy continuation requests exactly."
+        : "Successful MCP results provide one complete formatted text page, including counts, coverage and continuation selectors.";
   return [
     "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
-    "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence.",
-    ...signalGrepPromptGuidelines(),
+    outputInstruction,
+    ...signalGrepPromptGuidelines(outputMode === "structured"),
   ].join("\n");
 }

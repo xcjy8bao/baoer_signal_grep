@@ -65,6 +65,7 @@ export interface AnalysisDetails {
   termCountsOffset?: number;
   totalTerms?: number;
   termCountsNextRequest?: SignalGrepInput;
+  matchesRequest?: SignalGrepInput;
   changes?: { base: string; target: string; scope: string; side: string };
   scope?: SearchScopeDetails;
   chunks?: {

@@ -4834,6 +4834,7 @@ function analysisTermPage(result, id, offset) {
         termCountsOffset: offset,
         totalTerms: all.length,
         ...nextRequest ? { termCountsNextRequest: nextRequest } : {},
+        matchesRequest,
         ...result.coverage ? { coverage: result.coverage } : {}
       }
     }
@@ -10137,7 +10138,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
 }
 
 // src/prompt-guidelines.ts
-function signalGrepPromptGuidelines() {
+function signalGrepPromptGuidelines(structuredOutput = true) {
   return [
     `Use baoer_signal_grep for content search. Start with pattern and optional path; omit mode and limit to let auto choose a complete small result or a broad summary. Use literal=true for literal code fragments rather than escaping them as regex.`,
     `An omitted path searches the project cwd. Use scope:"strict" for a question restricted to one path; otherwise, if an explicit subpath has zero matches, ordinary and content-analysis searches retry from cwd and return project-wide matches with an expansion notice. Explicit absolute paths and .. traversal can search outside cwd, except protected external system areas and .git internals. Git changes mode remains cwd-scoped.`,
@@ -10155,7 +10156,7 @@ function signalGrepPromptGuidelines() {
     `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
-    `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
+    structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
 

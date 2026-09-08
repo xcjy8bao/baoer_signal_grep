@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.3-7] - 2026-09-08
+
+- Add opt-in MCP text and model output modes for hosts that serialize both readable and structured results into model context. Model mode selects the smaller of the standard page and a compact analysis view without repeated paths, inspect requests or outline excerpts while preserving counts, coverage, partial state and continuations; the existing structured result remains the default.
+
 ## [1.2.3-6] - 2026-09-08
 
 - Expose bounded Concept score profiles so broad candidate results remain distinguishable without treating similarity as a relevance threshold.
