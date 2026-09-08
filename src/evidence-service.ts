@@ -148,7 +148,11 @@ function maxFilesToParse(value: number | undefined): number {
 function validateTerms(input: SignalGrepInput): string[] | undefined {
   const terms = input.allOf;
   if (terms === undefined) {
-    if (input.within !== undefined) throw new SignalGrepError("within requires allOf");
+    if (input.within !== undefined) {
+      throw new SignalGrepError(
+        "within is only valid with allOf; omit within for ordinary single-pattern searches",
+      );
+    }
     return undefined;
   }
   if (

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.3-5] - 2026-09-08
+
+- Clarify that `within` is only valid with `allOf`, so ordinary single-pattern MCP calls omit it and receive an actionable repair message when a host re-injects it.
+- Document the project-local Kimi Code MCP `cwd` workaround for web sessions that launch servers from the CLI installation directory.
+
 ## [1.2.3-4] - 2026-09-07
 
 - Keep impact and related-test navigation inside the target's containing Git repository instead of a broad MCP cwd.

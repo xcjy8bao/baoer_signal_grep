@@ -99,6 +99,8 @@ codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest bao
 - **Codex：** 先运行 `codex plugin marketplace add xcjy8bao/baoer_signal_grep`，再运行 `codex plugin add baoer-signal-grep@baoer-signal-grep`，通过 `/hooks` 查看并信任钩子。
 - **Kimi Code：** 使用本仓库或安装包中的插件目录，运行 `/plugins install /absolute/path/plugins/baoer-signal-grep`，确认信任后执行 `/reload`。
 
+Kimi Code 的 web 模式可能从安装目录启动插件 MCP 服务。如果相对路径搜索解析到了错误项目，请继续使用原生插件强制搜索，并在项目内的 `.kimi-code/mcp.json` 中配置同名 `baoer_signal_grep` 服务，显式填写该项目的绝对 `cwd`。
+
 安装后重启。关闭方式：Claude Code 使用 `/plugin`，Codex 使用 `/hooks`，Kimi 使用 `/plugins disable baoer-signal-grep` 后执行 `/reload`。
 
 本地搜索在你的机器上进行。请只允许 Agent 读取已获授权的文件。HTTP 服务对外开放前需要认证网关，详见[安全说明](SECURITY.md)。
