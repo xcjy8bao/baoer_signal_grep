@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.3-6] - 2026-09-08
+
+- Expose bounded Concept score profiles so broad candidate results remain distinguishable without treating similarity as a relevance threshold.
+- Label syntax-fallback source windows explicitly and provide executable continuation requests after parser errors so large TSX inspections do not imply semantic completeness.
+- Make Concept field-validation errors list the accepted request fields.
+
 ## [1.2.3-5] - 2026-09-08
 
 - Clarify that `within` is only valid with `allOf`, so ordinary single-pattern MCP calls omit it and receive an actionable repair message when a host re-injects it.

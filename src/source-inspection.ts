@@ -18,6 +18,7 @@ import {
   MAX_RESULT_BYTES,
   type InspectBatchItemDetails,
   type SignalGrepResult,
+  type SourceBoundary,
   type SourceExcerptDetails,
   type SourceRevision,
   type StructureDetails,
@@ -41,6 +42,7 @@ interface PreparedTarget {
   document: SourceDocument;
   range: ByteRange;
   structure: StructureDetails;
+  boundary: Exclude<SourceBoundary, "mixed">;
   focus: number;
 }
 interface SourceBlock {
@@ -51,6 +53,7 @@ interface SourceBlock {
   fragments: SourceFragment[];
   remaining: ByteRange[];
   text: string[];
+  boundary: SourceBoundary | undefined;
   continuation?: string;
 }
 
@@ -188,8 +191,29 @@ async function prepare(
     Math.max(1, target.line - 10),
     Math.min(document.lineStarts.length, target.line + 10),
   );
+  const boundary: Exclude<SourceBoundary, "mixed"> = target.range
+    ? "requested-range"
+    : details.status === "available" && details.range
+      ? "syntax"
+      : "line-window";
   document.checkRange(range);
-  return { target, document, range, structure: details, focus };
+  return { target, document, range, structure: details, boundary, focus };
+}
+
+function boundaryNote(block: SourceBlock): string {
+  if (block.boundary === "line-window" || block.boundary === "mixed") {
+    const fallback = block.prepared.find((prepared) => prepared.boundary === "line-window");
+    const status = fallback?.structure.status;
+    const provider = fallback?.structure.provider;
+    return (
+      "; syntax boundary unavailable" +
+      (status ? " (" + status + (provider ? " via " + provider : "") + ")" : "") +
+      "; bounded line window"
+    );
+  }
+  return block.boundary === "requested-range"
+    ? "; requested range; syntax boundary not inferred"
+    : "";
 }
 
 function blockDetails(block: SourceBlock): SourceExcerptDetails {
@@ -223,6 +247,7 @@ function blockDetails(block: SourceBlock): SourceExcerptDetails {
     fragments: block.fragments,
     remainingRanges: block.remaining,
     complete: block.document.utf8 && block.remaining.length === 0,
+    ...(block.boundary ? { boundary: block.boundary } : {}),
     ...(nextRequest ? { nextRequest } : {}),
   };
 }
@@ -232,10 +257,36 @@ function render(items: InspectBatchItemDetails[], blocks: SourceBlock[], single:
     (item) =>
       `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `\nRetry: ${JSON.stringify(item.retry)}` : ""}`,
   );
-  const sourceRows = blocks.map(
-    (block, index) =>
-      `[Block #${index + 1}] ${block.document.path}; ${block.document.reference.origin.kind === "git" ? `commit ${block.document.reference.origin.commit}; blob ${block.document.reference.origin.blob}` : `source sha256 ${block.document.reference.origin.contentHash}`}\n${block.text.join("\n")}\n[source ${block.remaining.length ? `PARTIAL; missing byte ranges ${JSON.stringify(block.remaining)}` : "complete"}; shared 16384-byte output limit]${block.continuation ? `\nNext request: ${JSON.stringify({ mode: "inspect", sourceCursor: block.continuation })}` : ""}`,
-  );
+  const sourceRows = blocks.map((block, index) => {
+    const origin =
+      block.document.reference.origin.kind === "git"
+        ? "commit " +
+          block.document.reference.origin.commit +
+          "; blob " +
+          block.document.reference.origin.blob
+        : "source sha256 " + block.document.reference.origin.contentHash;
+    const completeness = block.remaining.length
+      ? "PARTIAL; missing byte ranges " + JSON.stringify(block.remaining)
+      : "complete for selected range";
+    const next = block.continuation
+      ? "\nNext request: " + JSON.stringify({ mode: "inspect", sourceCursor: block.continuation })
+      : "";
+    return (
+      "[Block #" +
+      String(index + 1) +
+      "] " +
+      block.document.path +
+      "; " +
+      origin +
+      "\n" +
+      block.text.join("\n") +
+      "\n[source " +
+      completeness +
+      boundaryNote(block) +
+      "; shared 16384-byte output limit]" +
+      next
+    );
+  });
   return [
     single
       ? "Source inspection"
@@ -243,6 +294,26 @@ function render(items: InspectBatchItemDetails[], blocks: SourceBlock[], single:
     ...rows,
     ...sourceRows,
   ].join("\n\n");
+}
+function blockBoundary(block: SourceBlock): SourceBoundary | undefined {
+  const boundaries = [...new Set(block.prepared.map((prepared) => prepared.boundary))];
+  if (boundaries.length === 1) return boundaries[0];
+  return boundaries.length > 1 ? "mixed" : undefined;
+}
+
+function fallbackContinuationRange(
+  document: SourceDocument,
+  ranges: readonly ByteRange[],
+): ByteRange | undefined {
+  const last = ranges.at(-1);
+  if (!last || last.end >= document.bytes.length) return undefined;
+  const nextStartLine = document.lineAt(last.end);
+  const nextFocusLine = Math.min(document.lineStarts.length, nextStartLine + 10);
+  if (nextFocusLine <= nextStartLine) return undefined;
+  return document.lineRange(
+    nextStartLine,
+    Math.min(document.lineStarts.length, nextFocusLine + 10),
+  );
 }
 
 export async function inspectDocuments(
@@ -268,6 +339,7 @@ export async function inspectDocuments(
           fragments: [],
           remaining: [],
           text: [],
+          boundary: undefined,
         });
       }
       const block = blocks[blockIndex];
@@ -302,6 +374,7 @@ export async function inspectDocuments(
   for (const block of blocks) {
     block.ranges = mergeByteRanges(block.ranges);
     block.remaining = block.ranges;
+    block.boundary = blockBoundary(block);
   }
   const baseBytes = Buffer.byteLength(render(items, blocks, targets.length === 1));
   let remainingResponseBytes = MAX_RESULT_BYTES - baseBytes - blocks.length * 400;
@@ -348,6 +421,7 @@ export async function inspectDocuments(
             omittedAfter: preview.omittedAfter,
             truncatedLines: preview.truncatedLines,
             complete: false,
+            ...(block.boundary ? { boundary: block.boundary } : {}),
             reference: block.document.reference,
           };
       }
@@ -387,11 +461,18 @@ export async function inspectDocuments(
       allowance -= pageBytes;
       remainingResponseBytes -= pageBytes;
     }
-    if (block.remaining.length)
+    const fallback =
+      block.boundary === "line-window" || block.boundary === "mixed"
+        ? fallbackContinuationRange(block.document, block.ranges)
+        : undefined;
+    const continuationTarget = fallback ? [...block.ranges, fallback] : block.ranges;
+    const continuationGaps = fallback ? [...block.remaining, fallback] : block.remaining;
+    if (continuationGaps.length)
       block.continuation = continuations.create(
         block.document.reference,
-        block.ranges,
-        block.remaining,
+        continuationTarget,
+        continuationGaps,
+        block.boundary,
       );
     if (block.document.reference.origin.kind === "worktree") {
       // oxlint-disable-next-line no-await-in-loop -- each block's revision check follows its own completed read and shared output allocation.
@@ -469,6 +550,7 @@ export async function continueSource(
     fragments: [page.fragment],
     remaining: page.remaining,
     text: [page.text],
+    boundary: state.boundary,
     ...(next ? { continuation: next } : {}),
   };
   const source = blockDetails(block);

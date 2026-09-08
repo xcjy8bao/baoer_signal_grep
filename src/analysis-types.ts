@@ -4,6 +4,16 @@ import type { SearchScopeDetails } from "./types.js";
 
 export type CoverageStatus = "complete" | "partial" | "skipped" | "not-applicable";
 
+export interface ConceptScoreProfile {
+  count: number;
+  top: number;
+  second?: number;
+  median: number;
+  min: number;
+  spread: number;
+  topMargin?: number;
+}
+
 export interface AnalysisItem {
   path: string;
   line: number;
@@ -74,6 +84,7 @@ export interface AnalysisDetails {
     cacheHits?: number;
     parseMs?: number;
     budgetExhausted?: boolean;
+    scoreProfile?: ConceptScoreProfile;
   };
 }
 

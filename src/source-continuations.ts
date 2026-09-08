@@ -7,12 +7,14 @@ import {
 import { CursorError } from "./errors.js";
 import type { ByteRange, SourceReference } from "./source-document.js";
 import { mergeByteRanges, subtractByteRange } from "./source-pages.js";
+import type { SourceBoundary } from "./types.js";
 
 interface Continuation {
   id: string;
   source: SourceReference;
   target: ByteRange[];
   gaps: ByteRange[];
+  boundary?: SourceBoundary;
   accessed: number;
   /** Only cursors issued by this chain are valid; offsets are not a public seek API. */
   issued: Set<number>;
@@ -22,6 +24,7 @@ export interface ResolvedSourceContinuation {
   source: SourceReference;
   target: ByteRange[];
   remaining: ByteRange[];
+  boundary?: SourceBoundary;
 }
 
 /** Cursor offsets encode progress, not mutable per-page state; retries can replay. */
@@ -37,6 +40,7 @@ export class SourceContinuations {
     source: SourceReference,
     target: readonly ByteRange[],
     gaps: readonly ByteRange[],
+    boundary?: SourceBoundary,
   ): string {
     this.#sweep();
     const item: Continuation = {
@@ -44,6 +48,7 @@ export class SourceContinuations {
       source: structuredClone(source),
       target: mergeByteRanges(target),
       gaps: mergeByteRanges(gaps),
+      ...(boundary ? { boundary } : {}),
       accessed: this.#now(),
       issued: new Set([0]),
     };
@@ -62,14 +67,19 @@ export class SourceContinuations {
       this.#items.size > MAX_SOURCE_CONTINUATIONS ||
       Buffer.byteLength(
         JSON.stringify(
-          [...this.#items.values()].map((continuation) => ({
-            id: continuation.id,
-            source: continuation.source,
-            target: continuation.target,
-            gaps: continuation.gaps,
-            accessed: continuation.accessed,
-            issued: [...continuation.issued],
-          })),
+          [...this.#items.values()].map((continuation) =>
+            Object.assign(
+              {
+                id: continuation.id,
+                source: continuation.source,
+                target: continuation.target,
+                gaps: continuation.gaps,
+                accessed: continuation.accessed,
+                issued: [...continuation.issued],
+              },
+              continuation.boundary ? { boundary: continuation.boundary } : {},
+            ),
+          ),
         ),
       ) > MAX_SOURCE_CONTINUATION_BYTES
     ) {
@@ -91,6 +101,7 @@ export class SourceContinuations {
       source: structuredClone(item.source),
       target: item.target.map((range) => ({ ...range })),
       remaining: this.#remaining(item, consumed),
+      ...(item.boundary ? { boundary: item.boundary } : {}),
     };
   }
 

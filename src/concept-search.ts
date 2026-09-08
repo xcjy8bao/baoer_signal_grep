@@ -3,7 +3,7 @@ import { OwnedTaskQueue } from "./owned-task-queue.js";
 const inferenceQueue = new OwnedTaskQueue();
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AnalysisResultSet } from "./analysis-types.js";
+import type { AnalysisResultSet, ConceptScoreProfile } from "./analysis-types.js";
 import {
   CONCEPT_MODEL,
   CONCEPT_REVISION,
@@ -33,6 +33,27 @@ function conciseWorkerError(stderr: string): string {
     .find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error):\s*\S/.test(line));
   if (errorLine) return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
   return "worker returned no concise diagnostic";
+}
+
+function scoreProfile(scores: readonly number[]): ConceptScoreProfile {
+  const ordered = scores.toSorted((a, b) => b - a);
+  const count = ordered.length;
+  const top = ordered[0];
+  const min = ordered.at(-1);
+  if (top === undefined || min === undefined || count === 0)
+    throw new Error("Concept score profile requires at least one score");
+  const middle = Math.floor(count / 2);
+  const middleValue = ordered[middle] ?? top;
+  const median = count % 2 === 1 ? middleValue : ((ordered[middle - 1] ?? top) + middleValue) / 2;
+  const second = ordered[1];
+  return {
+    count,
+    top,
+    ...(second !== undefined ? { second, topMargin: top - second } : {}),
+    median: median ?? top,
+    min,
+    spread: top - min,
+  };
 }
 
 function passage(document: SourceDocument, start: number): { value: Passage; next: number } {
@@ -236,6 +257,7 @@ async function runConceptSearch(
     result.stats = {
       inferencePeakRssBytes: inferred.peakRssBytes,
       passagesRanked: passages.length,
+      scoreProfile: scoreProfile(inferred.scores),
     };
   }
   result.filesRead = access.filesRead;

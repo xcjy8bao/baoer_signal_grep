@@ -96,6 +96,8 @@ export type StructureStatus =
   | "file-too-large"
   | "source-changed";
 
+export type SourceBoundary = "syntax" | "requested-range" | "line-window" | "mixed";
+
 export interface SymbolRange {
   startLine: number;
   endLine: number;
@@ -132,6 +134,7 @@ export interface SourceExcerptDetails {
   fragments?: SourceFragment[];
   remainingRanges?: ByteRange[];
   complete?: boolean;
+  boundary?: SourceBoundary;
   nextRequest?: SignalGrepInput;
 }
 
