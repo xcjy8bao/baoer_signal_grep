@@ -1,6 +1,10 @@
 import { SIGNAL_GREP_DESCRIPTION, signalGrepSchema } from "./tool-schema.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readSignalGrepConfig, type SignalGrepConfig } from "./config.js";
+import {
+  normalizeSearchEnforcement,
+  readSignalGrepConfig,
+  type SignalGrepConfig,
+} from "./config.js";
 import { resolveContextBudget } from "./context-budget.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
@@ -65,7 +69,8 @@ export async function registerSignalGrepExtension(
     },
   });
 
-  if (config.enforceSearch !== false) registerPiSearchPolicy(pi);
+  const enforcement = normalizeSearchEnforcement(config.enforceSearch, "extension config");
+  if (enforcement !== "off") registerPiSearchPolicy(pi, enforcement);
 
   pi.on("session_shutdown", async (_event, ctx) => {
     await runtime.shutdown();

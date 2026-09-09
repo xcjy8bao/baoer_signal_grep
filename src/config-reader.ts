@@ -3,15 +3,19 @@ import { readFile } from "node:fs/promises";
 export const SIGNAL_GREP_CONFIG_FILE = "baoer_signal_grep.json";
 
 export type SignalGrepLocale = "en" | "zh-CN";
+export type SearchEnforcementMode = "hard" | "prefer" | "off";
+export type SearchEnforcementSetting = boolean | SearchEnforcementMode;
+
+export const SIGNAL_GREP_ENFORCEMENT_ENV = "BAOER_SIGNAL_GREP_ENFORCE_SEARCH";
 
 export interface SignalGrepConfig {
   locale: SignalGrepLocale;
-  enforceSearch?: boolean;
+  enforceSearch?: SearchEnforcementSetting;
 }
 
 export const DEFAULT_SIGNAL_GREP_CONFIG: Readonly<SignalGrepConfig> = {
   locale: "en",
-  enforceSearch: true,
+  enforceSearch: "hard",
 };
 
 interface RawSignalGrepConfig {
@@ -39,12 +43,28 @@ function parseConfig(value: unknown, path: string): SignalGrepConfig {
   if (locale !== undefined && locale !== "en" && locale !== "zh-CN") {
     throw new Error(`Invalid baoer_signal_grep config at ${path}: locale must be "en" or "zh-CN"`);
   }
-  if (enforceSearch !== undefined && typeof enforceSearch !== "boolean")
-    throw new Error(`Invalid baoer_signal_grep config at ${path}: enforceSearch must be boolean`);
+  const enforcement = normalizeSearchEnforcement(enforceSearch, `config at ${path}`);
   return {
     locale: locale ?? DEFAULT_SIGNAL_GREP_CONFIG.locale,
-    enforceSearch: enforceSearch ?? true,
+    enforceSearch: enforcement,
   };
+}
+
+export function normalizeSearchEnforcement(value: unknown, source: string): SearchEnforcementMode {
+  if (value === undefined || value === true || value === "hard") return "hard";
+  if (value === "prefer") return "prefer";
+  if (value === false || value === "off") return "off";
+  throw new Error(
+    `Invalid baoer_signal_grep ${source}: enforceSearch must be true, false, "hard", "prefer", or "off"`,
+  );
+}
+
+/** Native hooks inherit this setting from their host process; absent means fail-safe hard mode. */
+export function readNativeSearchEnforcement(
+  environment: NodeJS.ProcessEnv = process.env,
+): SearchEnforcementMode {
+  const value = environment[SIGNAL_GREP_ENFORCEMENT_ENV];
+  return normalizeSearchEnforcement(value, `environment variable ${SIGNAL_GREP_ENFORCEMENT_ENV}`);
 }
 
 /** Read and validate one host-selected config path. */

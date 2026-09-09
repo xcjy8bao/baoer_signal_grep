@@ -3,6 +3,7 @@ export type ShellLanguage = "bash" | "powershell";
 
 export interface CommandDecision {
   kind?: SearchKind;
+  command?: string;
   nested?: { command: string; language: ShellLanguage };
 }
 
@@ -110,10 +111,10 @@ export function classifyCommand(
   const name = language === "powershell" ? rawName.toLowerCase() : rawName;
   const args = argv.slice(1);
   if (args.length === 1 && (args[0] === "--help" || args[0] === "--version")) return {};
-  if (contentCommands.has(name)) return { kind: "content" };
-  if (fileCommands.has(name)) return { kind: "files" };
+  if (contentCommands.has(name)) return { kind: "content", command: name };
+  if (fileCommands.has(name)) return { kind: "files", command: name };
   if (language === "powershell") {
-    if (name === "select-string" || name === "sls") return { kind: "content" };
+    if (name === "select-string" || name === "sls") return { kind: "content", command: name };
     if (
       ["get-childitem", "gci", "dir", "ls"].includes(name) &&
       args.some((arg, index) => {
@@ -125,10 +126,12 @@ export function classifyCommand(
         return /[*?[]/u.test(arg);
       })
     )
-      return { kind: "files" };
+      return { kind: "files", command: name };
   }
   if (name === "git") {
-    return args[afterOptions(args, gitValueOptions)] === "grep" ? { kind: "content" } : {};
+    return args[afterOptions(args, gitValueOptions)] === "grep"
+      ? { kind: "content", command: "git grep" }
+      : {};
   }
   if (["bash", "sh", "zsh", "dash", "ksh"].includes(name)) {
     const index = args.findIndex((arg) => arg !== null && /^-[a-z]*c[a-z]*$/u.test(arg));

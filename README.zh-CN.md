@@ -76,7 +76,7 @@ MCP 需要 Node.js 22.19+；Pi 需要 Pi 0.84.3+，以及 Node.js 22.19+ 或 Bun
 pi install npm:baoer_signal_grep
 ```
 
-安装或更新后重启 Pi。Pi 默认让常规搜索使用本插件，读取、编辑、测试、构建和脚本仍可使用。如需关闭强制搜索，在 `~/.pi/agent/baoer_signal_grep.json` 中设置 `"enforceSearch": false` 后重启；设置 `"locale": "zh-CN"` 可启用中文界面。
+安装或更新后重启 Pi。Pi 默认让常规搜索使用本插件，读取、编辑、测试、构建和脚本仍可使用。`enforceSearch` 支持 `"hard"`（默认严格拦截）、`"prefer"`（保留专用工具和模型指引，但不拒绝其他搜索）和 `"off"`；已有的 `true`、`false` 分别继续等价于 `"hard"`、`"off"`。请在 `~/.pi/agent/baoer_signal_grep.json` 中配置后重启；设置 `"locale": "zh-CN"` 可启用中文界面。
 
 ### OMP（Oh My Pi）
 
@@ -84,7 +84,7 @@ pi install npm:baoer_signal_grep
 omp install npm:baoer_signal_grep@latest
 ```
 
-安装或更新后重启 OMP。安装包声明了 OMP 原生扩展：注册 `baoer_signal_grep`，从活动工具集中移除 OMP 内置的 `grep` 和 `glob`，并在执行前阻止直接搜索命令；读取、编辑、测试、构建和其他开发工具仍可使用。OMP 当前 profile 会被正确识别：默认配置文件是 `~/.omp/agent/baoer_signal_grep.json`，命名 profile 使用 `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`。如需关闭 OMP 的强制搜索，在当前配置文件中设置 `"enforceSearch": false` 后重启 OMP；设置 `"locale": "zh-CN"` 可启用中文界面。
+安装或更新后重启 OMP。安装包声明了 OMP 原生扩展并注册 `baoer_signal_grep`。默认 hard 模式会从活动工具集中移除 OMP 内置的 `grep` 和 `glob`，并在执行前阻止直接搜索命令，同时保留读取、编辑、测试、构建和其他开发工具。prefer 模式会同时保留专用工具与其他搜索工具，加入模型指引，但不拒绝 shell 搜索。OMP 当前 profile 会被正确识别：默认配置文件是 `~/.omp/agent/baoer_signal_grep.json`，命名 profile 使用 `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`。在当前文件中将 `enforceSearch` 设置为 `"hard"`（默认）、`"prefer"` 或 `"off"` 后重启 OMP；已有的 `true`、`false` 继续兼容。设置 `"locale": "zh-CN"` 可启用中文界面。
 
 ### Claude Code 或 Codex：连接 MCP
 
@@ -112,7 +112,9 @@ MCP 默认同时返回可读文本和结构化证据。如果宿主会把两种�
 
 Kimi Code 的 web 模式可能从安装目录启动插件 MCP 服务。如果相对路径搜索解析到了错误项目，请继续使用原生插件强制搜索，并在项目内的 `.kimi-code/mcp.json` 中配置同名 `baoer_signal_grep` 服务，显式填写该项目的绝对 `cwd`。
 
-安装后重启。关闭方式：Claude Code 使用 `/plugin`，Codex 使用 `/hooks`，Kimi 使用 `/plugins disable baoer-signal-grep` 后执行 `/reload`。
+安装后重启。原生钩子默认使用严格模式。如需保留原生插件、MCP 工具和模型指引，但不硬性拒绝其他搜索，请使用 `BAOER_SIGNAL_GREP_ENFORCE_SEARCH=prefer` 启动宿主；设置为 `off` 只关闭钩子强制策略。可用值为 `hard`、`prefer` 和 `off`，非法值会安全拒绝并明确报错，不会静默放行。该设置由宿主进程继承，因此项目不能仅靠提交仓库配置文件降低用户的全局策略。仍可通过 Claude Code `/plugin`、Codex `/hooks`，或 Kimi `/plugins disable baoer-signal-grep` 后执行 `/reload` 来关闭整个集成。
+
+严格模式下，`grep warning report.txt` 这类直接搜索会被拒绝；`cat report.txt | grep warning` 仍可用，因为它只是过滤一个非搜索命令的输出。`find src | grep test` 和 `rg warning src | grep result` 仍会被拒绝，因为管道中已经包含直接搜索来源。复合 shell 调用中只要一个子命令被拒绝，宿主就不会执行其中任何操作；拒绝信息会指出检测到的搜索，并要求 Agent 单独重试非搜索操作。
 
 本地搜索在你的机器上进行。请只允许 Agent 读取已获授权的文件。HTTP 服务对外开放前需要认证网关，详见[安全说明](SECURITY.md)。
 
