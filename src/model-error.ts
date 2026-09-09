@@ -2,7 +2,11 @@ const MAX_MODEL_ERROR_CHARACTERS = 1_024;
 const MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "unreadable failure";
+  }
 }
 
 /** One bounded model-facing diagnostic; never serialize causes, stacks, or repeated request text. */

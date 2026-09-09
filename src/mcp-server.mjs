@@ -252,7 +252,11 @@ function compactMcpModelText(result) {
 var MAX_MODEL_ERROR_CHARACTERS = 1024;
 var MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "unreadable failure";
+  }
 }
 function modelErrorText(error) {
   const normalized = errorMessage(error).replace(/\s+/gu, " ").trim();
