@@ -8551,10 +8551,11 @@ function retainedHybridCounts(original, items) {
 function isEvidenceRequest(input) {
   return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "hybrid" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || input.conceptLimit !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
-function rejectFields(input, fields, operation, cursor = false, hint = "copy the complete returned request") {
+function rejectFields(input, fields, operation, cursor = false, repair = "copy the complete returned request unchanged") {
   const present = fields.filter((field) => input[field] !== undefined);
+  const message = `${operation} does not accept ${present.join(", ")}. Remove only those fields, then retry once: ${repair}. Keep the requested mode and remaining filters unchanged; do not include this error text in the retry.`;
   if (present.length)
-    throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; ${hint}`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
+    throw cursor ? new CursorError(message, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(message);
 }
 var searchFields = [
   "query",
@@ -8784,7 +8785,7 @@ class EvidenceService {
         "line",
         "symbol",
         "matchIndex"
-      ], "mode=concept", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact");
+      ], "mode=concept", false, "use only mode, query, path, glob, exclude, hidden and redact");
       return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
     }
     if (input.mode === "hybrid") {
@@ -8796,7 +8797,7 @@ class EvidenceService {
         "symbol",
         "matchIndex",
         "maxFilesToParse"
-      ], "mode=hybrid", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact");
+      ], "mode=hybrid", false, "use only mode, query, path, glob, exclude, hidden, conceptLimit and redact");
       const query = validateConceptQuery(input.query);
       const limit = hybridConceptLimit(input.conceptLimit);
       const literalRequest = normalizeRequest({
@@ -10525,6 +10526,7 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Every passage admitted by the source budget is ranked through token-safe windows, and content-addressed embeddings are reused from a bounded local cache. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `Use mode:"hybrid" plus query when wording may differ from the source. It always runs exact literal and local concept retrieval, keeps exact evidence first, removes semantic passages that overlap exact evidence, and retains the top three non-overlapping semantic candidates by default. conceptLimit changes only that semantic supplement. Hybrid uses one pageable snapshot and never treats similarity as exact evidence.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
+    `If a request is rejected, keep the strongest applicable mode and follow its repair instruction exactly once. Do not paste the error or rejected request into the retry, repeat an unchanged request, or switch to a weaker search because of a fixable argument error. Only an explicit capability-unavailable result permits a bounded alternative, which remains partial and must not be presented as complete.`,
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
@@ -21613,7 +21615,7 @@ class ShellSearchPolicy {
 }
 
 // src/search-policy.ts
-var SEARCH_POLICY_GUIDANCE = "Local content and filename searches must use baoer_signal_grep. Built-in search tools and direct search commands are blocked before execution; filtering output from an unrelated producer at a pipeline tail remains available. Use pattern for contents or mode=files with query for filenames. Keep read/edit/write, tests and builds available. Do not retry a blocked search through another shell or a custom script.";
+var SEARCH_POLICY_GUIDANCE = "Local content and filename searches must use baoer_signal_grep. Built-in search tools and direct search commands are blocked before execution; filtering output from an unrelated producer at a pipeline tail remains available. Use pattern for contents or mode=files with query for filenames. Keep read/edit/write, tests and builds available. After a denial, call baoer_signal_grep once with the stated repair; do not paste the denial into the request, repeat the blocked call, use another shell/custom script, or weaken the search mode.";
 var PI_REPLACED_SEARCH_TOOLS = new Set(["grep", "find"]);
 var PREFERRED_SEARCH_GUIDANCE = "Prefer baoer_signal_grep for local content and filename searches because it provides bounded evidence, coverage and continuation details. Conventional search entries remain available in advisory mode.";
 var contentTools = new Set(["grep", "Grep", "SearchFileContent"]);
@@ -21639,13 +21641,13 @@ function blockedMatch(match) {
   const request = recovery(match.kind);
   return {
     block: true,
-    reason: `baoer_signal_grep search policy blocked ${location} (${match.command} \u2026, bytes ${match.startByte}-${match.endByte}) as a direct ${match.kind} search. The host shell call is atomic: the entire tool call was denied before execution, so none of its commands or operations ran. Split non-search operations into a separate shell call, then route only the detected search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked search through another shell or custom script. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy blocked direct ${match.kind} search at ${location} (${match.command} \u2026, bytes ${match.startByte}-${match.endByte}); the atomic shell call did not run. Split out non-search operations, then retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${request}. Do not include this denial in the retry, repeat it through another shell/script, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
   };
 }
 function blockedTool(kind, toolName) {
   return {
     block: true,
-    reason: `baoer_signal_grep search policy blocked direct ${kind} tool ${toolName}. The entire tool call was denied before execution. Route the search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${recovery(kind)}. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy blocked direct ${kind} tool ${toolName}; it did not run. Retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${recovery(kind)}. Do not include this denial in the retry, use another search entry, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
   };
 }
 
@@ -26123,6 +26125,21 @@ var signalGrepSchema = exports_typebox.Object({
   cursor: exports_typebox.Optional(exports_typebox.String({ description: "Opaque cursor from a previous stable search snapshot." }))
 });
 
+// src/model-error.ts
+var MAX_MODEL_ERROR_CHARACTERS = 1024;
+var MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function modelErrorText(error) {
+  const normalized = errorMessage(error).replace(/\s+/gu, " ").trim();
+  const message = normalized.replace(/^(?:baoer_signal_grep failed:\s*)+/u, "") || "unknown failure";
+  const text = `${MODEL_ERROR_PREFIX} ${message}`;
+  if (text.length <= MAX_MODEL_ERROR_CHARACTERS)
+    return text;
+  return `${text.slice(0, MAX_MODEL_ERROR_CHARACTERS - 1).toWellFormed()}\u2026`;
+}
+
 // src/omp-index.ts
 var SIGNAL_GREP_LABEL = "baoer_signal_grep";
 var OMP_REPLACED_SEARCH_TOOLS = new Set(["grep", "glob"]);
@@ -26200,12 +26217,18 @@ async function registerOmpSignalGrepExtension(pi, searchPolicyAssets = new URL("
       return renderSignalGrepResult(result, resultOptions(options, result), locale2, theme);
     },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const result = await runtime.search(params, ctx.cwd, signal, resolveContextBudget(ctx.getContextUsage()));
-      ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale2));
-      return {
-        content: [{ type: "text", text: result.text }],
-        details: result.details
-      };
+      try {
+        const result = await runtime.search(params, ctx.cwd, signal, resolveContextBudget(ctx.getContextUsage()));
+        ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale2));
+        return {
+          content: [{ type: "text", text: result.text }],
+          details: result.details
+        };
+      } catch (error) {
+        if (signal?.aborted)
+          throw error;
+        throw new Error(modelErrorText(error));
+      }
     }
   });
   if (enforcement !== "off") {

@@ -3523,13 +3523,13 @@ function blockedMatch(match) {
   const request = recovery(match.kind);
   return {
     block: true,
-    reason: `baoer_signal_grep search policy blocked ${location} (${match.command} …, bytes ${match.startByte}-${match.endByte}) as a direct ${match.kind} search. The host shell call is atomic: the entire tool call was denied before execution, so none of its commands or operations ran. Split non-search operations into a separate shell call, then route only the detected search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked search through another shell or custom script. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy blocked direct ${match.kind} search at ${location} (${match.command} …, bytes ${match.startByte}-${match.endByte}); the atomic shell call did not run. Split out non-search operations, then retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${request}. Do not include this denial in the retry, repeat it through another shell/script, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
   };
 }
 function blockedTool(kind, toolName) {
   return {
     block: true,
-    reason: `baoer_signal_grep search policy blocked direct ${kind} tool ${toolName}. The entire tool call was denied before execution. Route the search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${recovery(kind)}. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy blocked direct ${kind} tool ${toolName}; it did not run. Retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${recovery(kind)}. Do not include this denial in the retry, use another search entry, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
   };
 }
 

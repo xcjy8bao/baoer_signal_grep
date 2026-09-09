@@ -19,6 +19,7 @@ import {
   type SignalGrepMcpOutputMode,
 } from "./mcp-output.js";
 import { compactMcpModelText } from "./mcp-model-output.js";
+import { modelErrorText } from "./model-error.js";
 import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { SignalGrepService, type SignalGrepInput } from "./service.js";
@@ -105,7 +106,7 @@ function parseSignalGrepInput(value: unknown): SignalGrepInput {
 
 function toolError(error: unknown) {
   return {
-    content: [{ type: "text" as const, text: `baoer_signal_grep failed: ${errorMessage(error)}` }],
+    content: [{ type: "text" as const, text: modelErrorText(error) }],
     isError: true,
   };
 }

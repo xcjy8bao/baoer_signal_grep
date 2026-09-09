@@ -248,6 +248,21 @@ function compactMcpModelText(result) {
   return Buffer.byteLength(compact) < Buffer.byteLength(standard) ? compact : standard;
 }
 
+// src/model-error.ts
+var MAX_MODEL_ERROR_CHARACTERS = 1024;
+var MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function modelErrorText(error) {
+  const normalized = errorMessage(error).replace(/\s+/gu, " ").trim();
+  const message = normalized.replace(/^(?:baoer_signal_grep failed:\s*)+/u, "") || "unknown failure";
+  const text = `${MODEL_ERROR_PREFIX} ${message}`;
+  if (text.length <= MAX_MODEL_ERROR_CHARACTERS)
+    return text;
+  return `${text.slice(0, MAX_MODEL_ERROR_CHARACTERS - 1).toWellFormed()}…`;
+}
+
 // src/rg.ts
 import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve4 } from "node:path";
 
@@ -8592,10 +8607,11 @@ function retainedHybridCounts(original, items) {
 function isEvidenceRequest(input) {
   return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "hybrid" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || input.conceptLimit !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
-function rejectFields(input, fields, operation, cursor = false, hint = "copy the complete returned request") {
+function rejectFields(input, fields, operation, cursor = false, repair = "copy the complete returned request unchanged") {
   const present = fields.filter((field) => input[field] !== undefined);
+  const message = `${operation} does not accept ${present.join(", ")}. Remove only those fields, then retry once: ${repair}. Keep the requested mode and remaining filters unchanged; do not include this error text in the retry.`;
   if (present.length)
-    throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; ${hint}`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
+    throw cursor ? new CursorError(message, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(message);
 }
 var searchFields = [
   "query",
@@ -8825,7 +8841,7 @@ class EvidenceService {
         "line",
         "symbol",
         "matchIndex"
-      ], "mode=concept", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact");
+      ], "mode=concept", false, "use only mode, query, path, glob, exclude, hidden and redact");
       return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
     }
     if (input.mode === "hybrid") {
@@ -8837,7 +8853,7 @@ class EvidenceService {
         "symbol",
         "matchIndex",
         "maxFilesToParse"
-      ], "mode=hybrid", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact");
+      ], "mode=hybrid", false, "use only mode, query, path, glob, exclude, hidden, conceptLimit and redact");
       const query = validateConceptQuery(input.query);
       const limit = hybridConceptLimit(input.conceptLimit);
       const literalRequest = normalizeRequest({
@@ -10566,6 +10582,7 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Every passage admitted by the source budget is ranked through token-safe windows, and content-addressed embeddings are reused from a bounded local cache. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `Use mode:"hybrid" plus query when wording may differ from the source. It always runs exact literal and local concept retrieval, keeps exact evidence first, removes semantic passages that overlap exact evidence, and retains the top three non-overlapping semantic candidates by default. conceptLimit changes only that semantic supplement. Hybrid uses one pageable snapshot and never treats similarity as exact evidence.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
+    `If a request is rejected, keep the strongest applicable mode and follow its repair instruction exactly once. Do not paste the error or rejected request into the retry, repeat an unchanged request, or switch to a weaker search because of a fixable argument error. Only an explicit capability-unavailable result permits a bounded alternative, which remains partial and must not be presented as complete.`,
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
@@ -10573,7 +10590,8 @@ function signalGrepModelGuidelines() {
   return [
     `Search contents with pattern and optional path; literal=true avoids regex escaping. Omit mode and limit for automatic detail/summary. An omitted path uses cwd; scope:"strict" forbids zero-result expansion. paths is only for selecting retained files from a returned cursor, so split new searches that have multiple roots.`,
     `Use returned exact matches directly when they contain enough context. Otherwise copy the visible cursor, nextRequest, or inspect selector exactly; batch inspect at most ${String(MAX_INSPECT_TARGETS)} locations. A partial status is not complete: read coverage and continue any returned request needed for the conclusion.`,
-    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`
+    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`,
+    `On rejection, preserve the strongest applicable mode and apply the stated repair once. Never include the old error/request in the retry or repeat an unchanged call. Use a weaker alternative only after an explicit capability-unavailable result, and keep that result visibly partial.`
   ];
 }
 function signalGrepMcpInstructions(outputMode = DEFAULT_MCP_OUTPUT_MODE) {
@@ -10596,7 +10614,7 @@ function stringEnum(values, options) {
   });
 }
 var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, ranks every passage admitted by the source budget through token-safe windows, reuses a bounded local content-addressed embedding cache, and exposes scoreProfile/cache coverage without deciding relevance thresholds. mode=hybrid always runs exact literal and local concept retrieval once, ranks exact evidence first, deduplicates overlapping semantic passages, and retains a bounded semantic supplement in one pageable snapshot. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
-var SIGNAL_GREP_MODEL_DESCRIPTION = "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. Partial status and coverage identify incomplete conclusions; semantic and static-analysis results are candidates, not proof.";
+var SIGNAL_GREP_MODEL_DESCRIPTION = "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. On rejection, keep the strongest applicable mode and apply its repair once without copying the old error/request. Only explicit capability unavailability permits a visibly partial alternative. Semantic and static-analysis results are candidates, not proof.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
@@ -10814,7 +10832,7 @@ function createDefaultSignalGrepMcpService() {
     structure: createCtagsStructureProvider()
   });
 }
-function errorMessage(error) {
+function errorMessage2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function validationMessage(value) {
@@ -10833,7 +10851,7 @@ function parseSignalGrepInput(value) {
 }
 function toolError(error) {
   return {
-    content: [{ type: "text", text: `baoer_signal_grep failed: ${errorMessage(error)}` }],
+    content: [{ type: "text", text: modelErrorText(error) }],
     isError: true
   };
 }
@@ -10968,7 +10986,7 @@ function writeJsonError(response, status, message) {
   response.end(body);
 }
 function reportHttpFailure(response, error) {
-  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage(error)}
+  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage2(error)}
 `);
   if (!response.headersSent)
     writeJsonError(response, 500, "MCP request failed");
