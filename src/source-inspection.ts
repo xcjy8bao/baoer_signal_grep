@@ -57,6 +57,10 @@ interface SourceBlock {
   continuation?: string;
 }
 
+function usesDocumentLineWindow(path: string): boolean {
+  return /\.(?:md|markdown)$/iu.test(path);
+}
+
 export function legacySourceTarget(target: InspectionTarget): SourceInspectionTarget {
   return {
     path: target.path,
@@ -162,7 +166,8 @@ async function prepare(
     document.utf8 &&
     structure &&
     document.reference.origin.kind === "worktree" &&
-    !target.range
+    !target.range &&
+    !usesDocumentLineWindow(document.path)
   ) {
     const result = await structure.inspect(
       {
@@ -184,6 +189,8 @@ async function prepare(
         details.range.startLine,
         Math.min(details.range.endLine, document.lineStarts.length),
       );
+  } else if (usesDocumentLineWindow(document.path)) {
+    details = { status: "no-symbol" };
   } else {
     details = { status: "provider-unavailable", ...(language ? { language } : {}) };
   }
@@ -205,11 +212,13 @@ function boundaryNote(block: SourceBlock): string {
     const fallback = block.prepared.find((prepared) => prepared.boundary === "line-window");
     const status = fallback?.structure.status;
     const provider = fallback?.structure.provider;
-    return (
-      "; syntax boundary unavailable" +
-      (status ? " (" + status + (provider ? " via " + provider : "") + ")" : "") +
-      "; bounded line window"
-    );
+    const diagnostic =
+      status === "no-symbol" && provider === undefined
+        ? ""
+        : status
+          ? " (" + status + (provider ? " via " + provider : "") + ")"
+          : "";
+    return "; syntax boundary unavailable" + diagnostic + "; bounded line window";
   }
   return block.boundary === "requested-range"
     ? "; requested range; syntax boundary not inferred"
@@ -255,7 +264,7 @@ function blockDetails(block: SourceBlock): SourceExcerptDetails {
 function render(items: InspectBatchItemDetails[], blocks: SourceBlock[], single: boolean): string {
   const rows = items.map(
     (item) =>
-      `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `\nRetry: ${JSON.stringify(item.retry)}` : ""}`,
+      `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure && !(item.structure.status === "no-symbol" && item.structure.provider === undefined) ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `\nRetry: ${JSON.stringify(item.retry)}` : ""}`,
   );
   const sourceRows = blocks.map((block, index) => {
     const origin =

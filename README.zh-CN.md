@@ -98,7 +98,9 @@ codex mcp add baoer_signal_grep -- npx -y --package baoer_signal_grep@latest bao
 
 `@latest` 会在 MCP 启动时跟随最新发布版本，更新后重启宿主即可加载。服务器默认搜索当前项目，可用 `BAOER_SIGNAL_GREP_MCP_CWD` 指定其他根目录。仅连接 MCP 会添加工具，不会禁用其他搜索工具。
 
-MCP 默认同时返回可读文本和结构化证据。如果宿主会把两种形式一起序列化进模型上下文，请在该 MCP 服务的环境中设置 `BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE=model`，然后重启。模型模式不返回 `structuredContent`，也不声明结构化输出 schema；它会在标准页和同一个已保留分析快照的紧凑视图中选择较小者。紧凑视图共享重复路径和 inspect 请求，hybrid 不会拼接两份独立的 literal 与 Concept 正文，并把 outline 签名延后到版本校验过的源码检查。计数、覆盖范围、部分状态、原因和续读请求仍然可见。`text` 模式只省略结构化输出，逐字保留标准文本；程序消费者或只展示结构化结果的客户端应继续使用默认的 `structured` 模式。其他取值会在启动时明确失败。捆绑的 Claude Code、Codex 和 Kimi 原生插件会选择 `model`；直接 MCP 连接仍保留兼容默认值，除非显式配置。
+MCP 默认同时返回可读文本和结构化证据。如果宿主会把两种形式一起序列化进模型上下文，请在该 MCP 服务的环境中设置 `BAOER_SIGNAL_GREP_MCP_OUTPUT_MODE=model`，然后重启。模型模式不返回 `structuredContent`，也不声明结构化输出 schema；它会提供精简的工作流说明，并在标准页和同一个已保留分析快照的紧凑视图中选择较小者。紧凑视图共享重复路径和 inspect 请求，hybrid 不会拼接两份独立的 literal 与 Concept 正文，并把 outline 签名延后到版本校验过的源码检查。计数、覆盖范围、部分状态、原因和续读请求仍然可见。`text` 模式只省略结构化输出，逐字保留标准文本和完整兼容说明；程序消费者或只展示结构化结果的客户端应继续使用默认的 `structured` 模式。其他取值会在启动时明确失败。捆绑的 Claude Code、Codex 和 Kimi 原生插件会选择 `model`；直接 MCP 连接仍保留兼容默认值，除非显式配置。
+
+`paths` 只用于从已有 cursor 中精确选择已保留文件；新搜索只接受一个 `path`。多个互不相干的根目录应拆成独立请求，不要自动改成范围更大的共同父目录。Markdown 检查直接使用有界行窗口，不依赖 Universal Ctags；代码结构检查真的受到 provider 缺失影响时仍会明确报告。
 
 ### 原生插件
 
