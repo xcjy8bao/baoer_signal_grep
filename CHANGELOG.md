@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.4.1] - 2026-09-09
+## [1.5.6] - 2026-09-10
 
 - Fix Concept token-window binary search stalls on UTF-16 surrogate-pair interiors (emoji and other astral characters). `maximumTokenSafeEnd` and `overlapStart` now strictly advance `low`, minimum overlap progress crosses a complete code point, and `tokenSafeWindows` rejects a non-advancing overlap instead of spinning until the 10-minute deadline.
 - Add an explicit iteration budget so a future tokenizer or boundary regression fails fast with a clear diagnostic instead of hanging.
