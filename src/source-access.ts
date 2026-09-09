@@ -144,6 +144,11 @@ export class SourceAccess {
     return this.#syntaxCacheHits;
   }
 
+  /** Derive a fresh request-local access scope that shares only the parser owner and limits. */
+  withSignal(signal: AbortSignal): SourceAccess {
+    return new SourceAccess(this.cwd, this.#queue, signal, { maxFiles: this.#maxFiles });
+  }
+
   async load(path: string, expected?: SourceReference): Promise<SourceDocument> {
     if (this.signal?.aborted) throw abortError();
     if (expected && resolve(this.cwd, expected.path) !== resolve(this.cwd, path)) {

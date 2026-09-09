@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.4.0",
+  version: "1.5.6",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -248,6 +248,54 @@ function compactMcpModelText(result) {
   return Buffer.byteLength(compact) < Buffer.byteLength(standard) ? compact : standard;
 }
 
+// src/model-error.ts
+import { types } from "node:util";
+var MAX_RAW_ERROR_SCAN_CHARACTERS = 4096;
+var MAX_MODEL_ERROR_CHARACTERS = 1024;
+var MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
+function errorMessage(error) {
+  try {
+    if (types.isNativeError(error)) {
+      const message = Object.getOwnPropertyDescriptor(error, "message");
+      if (!message)
+        return "unknown failure";
+      return typeof message.value === "string" ? message.value : "unreadable failure";
+    }
+    if (error === null)
+      return "null";
+    switch (typeof error) {
+      case "string":
+        return error;
+      case "number":
+        return String(error);
+      case "boolean":
+        return error ? "true" : "false";
+      case "undefined":
+        return "undefined";
+      case "bigint":
+        return "bigint failure";
+      case "symbol":
+        return "symbol failure";
+      case "function":
+      case "object":
+        return "non-error failure";
+      default:
+        return "unreadable failure";
+    }
+  } catch {
+    return "unreadable failure";
+  }
+}
+function modelErrorText(error) {
+  const raw = errorMessage(error);
+  const normalized = raw.slice(0, MAX_RAW_ERROR_SCAN_CHARACTERS).toWellFormed().replace(/\s+/gu, " ").trim();
+  const message = normalized.replace(/^(?:baoer_signal_grep failed:\s*)+/u, "") || "unknown failure";
+  const text = `${MODEL_ERROR_PREFIX} ${message}`;
+  if (text.length <= MAX_MODEL_ERROR_CHARACTERS)
+    return text;
+  return `${text.slice(0, MAX_MODEL_ERROR_CHARACTERS - 1).toWellFormed()}…`;
+}
+
 // src/rg.ts
 import { isAbsolute as isAbsolute3, relative as relative2, resolve as resolve4 } from "node:path";
 
@@ -256,6 +304,13 @@ class SignalGrepError extends Error {
   constructor(message, options) {
     super(message, options);
     this.name = "SignalGrepError";
+  }
+}
+
+class ConceptUnavailableError extends SignalGrepError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ConceptUnavailableError";
   }
 }
 
@@ -2697,8 +2752,21 @@ var MAX_CONCEPT_CHARS = 1000;
 var CONCEPT_PASSAGE_OVERLAP_CHARS = 160;
 var CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 var CONCEPT_TIMEOUT_MS = 10 * 60000;
+var MIN_CONCEPT_TIMEOUT_MS = 1000;
+var MAX_CONCEPT_TIMEOUT_MS = 60 * 60000;
+var CONCEPT_TIMEOUT_ENV = "BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS";
 var MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
 var MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
+function resolveConceptTimeoutMs(environment = process.env) {
+  const raw = environment[CONCEPT_TIMEOUT_ENV];
+  if (raw === undefined || raw === "")
+    return CONCEPT_TIMEOUT_MS;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < MIN_CONCEPT_TIMEOUT_MS || value > MAX_CONCEPT_TIMEOUT_MS) {
+    throw new SignalGrepError(`${CONCEPT_TIMEOUT_ENV} must be an integer from ${String(MIN_CONCEPT_TIMEOUT_MS)} through ${String(MAX_CONCEPT_TIMEOUT_MS)}`);
+  }
+  return value;
+}
 
 // src/request.ts
 function list(value) {
@@ -4058,6 +4126,9 @@ class SourceAccess {
   get syntaxCacheHits() {
     return this.#syntaxCacheHits;
   }
+  withSignal(signal) {
+    return new SourceAccess(this.cwd, this.#queue, signal, { maxFiles: this.#maxFiles });
+  }
   async load(path, expected) {
     if (this.signal?.aborted)
       throw abortError();
@@ -4140,6 +4211,7 @@ class SourceAccess {
 
 // src/concept-search.ts
 var inferenceQueue = new OwnedTaskQueue;
+var MAX_CONCEPT_FILES_WARN = 500;
 function conciseWorkerError(stderr) {
   const errorLine = stderr.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error|error):\s*\S/i.test(line));
   if (errorLine)
@@ -4200,9 +4272,6 @@ function passage(document, start) {
 async function similarities(query, passages, parent) {
   const worker = fileURLToPath3(new URL("./concept-worker.mjs", import.meta.url));
   const config = fileURLToPath3(new URL("./syntax-worker.toml", import.meta.url));
-  const controller = new AbortController;
-  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timer = setTimeout(() => controller.abort(), CONCEPT_TIMEOUT_MS);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers = [];
@@ -4220,7 +4289,7 @@ async function similarities(query, passages, parent) {
       ] : [worker, "--infer"],
       cwd: dirname4(worker),
       env,
-      signal,
+      ...parent ? { signal: parent } : {},
       input: Buffer.from(JSON.stringify({
         query,
         encodedPassages: passages.map((item) => Buffer.from(item.text).toString("base64"))
@@ -4234,7 +4303,7 @@ async function similarities(query, passages, parent) {
       }
     });
     if (processResult.code !== 0)
-      throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
+      throw new ConceptUnavailableError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
     const value = JSON.parse(Buffer.concat(buffers).toString("utf8"));
     if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || typeof value.cacheHits !== "number" || !Number.isSafeInteger(value.cacheHits) || value.cacheHits < 0 || typeof value.cacheMisses !== "number" || !Number.isSafeInteger(value.cacheMisses) || value.cacheMisses < 0 || typeof value.cacheMaxBytes !== "number" || !Number.isSafeInteger(value.cacheMaxBytes) || value.cacheMaxBytes <= 0 || value.cacheBytes !== undefined && (typeof value.cacheBytes !== "number" || !Number.isSafeInteger(value.cacheBytes) || value.cacheBytes < 0) || typeof value.windowsRanked !== "number" || !Number.isSafeInteger(value.windowsRanked) || value.windowsRanked < passages.length || !Array.isArray(value.warnings) || value.warnings.some((warning) => typeof warning !== "string") || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
       throw new SignalGrepError("Invalid concept inference response");
@@ -4251,11 +4320,12 @@ async function similarities(query, passages, parent) {
   } catch (error) {
     if (parent?.aborted)
       throw abortError();
-    if (controller.signal.aborted)
-      throw new SignalGrepError(`Concept inference exceeded the ${String(CONCEPT_TIMEOUT_MS)} ms deadline`);
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    if (error instanceof ConceptUnavailableError)
+      throw error;
+    const message = error instanceof Error ? error.message : "unknown provider failure";
+    throw new ConceptUnavailableError(`Local concept inference failed: ${message}`, {
+      cause: error
+    });
   }
 }
 function validateConceptQuery(query) {
@@ -4282,22 +4352,29 @@ async function runConceptSearch(input, access2, infer) {
     redact: input.redact ?? false
   };
   const documents = [];
+  let filesSkippedEmpty = 0;
+  let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
       const document = await access2.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", "Not lossless UTF-8");
-      if (document.text.trim())
-        documents.push({ document, next: 0 });
+      if (!document.text.trim()) {
+        filesSkippedEmpty += 1;
+        continue;
+      }
+      documents.push({ document, next: 0 });
     } catch (error) {
       if (error instanceof SourceBudgetError) {
         result.partial = true;
         result.reasons.push(error.message);
+        filesUnavailable += 1;
         break;
       }
       if (!(error instanceof SourceDocumentError))
         throw error;
       result.partial = true;
+      filesUnavailable += 1;
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
@@ -4311,6 +4388,19 @@ async function runConceptSearch(input, access2, infer) {
       item.next = chunk.next;
     }
   }
+  const filesAdmitted = documents.length;
+  const filesProcessed = filesAdmitted + filesSkippedEmpty + filesUnavailable;
+  const filesNotProcessed = Math.max(0, files.paths.length - filesProcessed);
+  if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
+    result.reasons.push(`Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`);
+  }
+  result.counts = {
+    filesEnumerated: files.paths.length,
+    filesAdmitted,
+    filesSkippedEmpty,
+    filesUnavailable: filesUnavailable + filesNotProcessed,
+    passagesQueued: passages.length
+  };
   if (passages.length) {
     const inferred = await infer(query, passages, access2.signal);
     result.reasons.push(...inferred.warnings);
@@ -4355,10 +4445,12 @@ async function runConceptSearch(input, access2, infer) {
   result.stats = {
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
-    filesEnumerated: files.paths.length
+    filesEnumerated: files.paths.length,
+    filesAdmitted
   };
   result.coverage = {
     conceptCandidates: result.partial ? "partial" : "complete",
+    admissionPlan: result.partial ? "partial" : "complete",
     compilerBindings: "not-applicable"
   };
   result.scope = {
@@ -4373,7 +4465,26 @@ async function runConceptSearch(input, access2, infer) {
   return result;
 }
 function conceptSearch(input, access2) {
-  return inferenceQueue.run(() => runConceptSearch(input, access2, similarities), access2.signal);
+  return runConceptSearchWithDeadline(input, access2, similarities);
+}
+async function runConceptSearchWithDeadline(input, access2, infer, timeout = resolveConceptTimeoutMs) {
+  const timeoutMs = timeout();
+  const controller = new AbortController;
+  const signal = access2.signal ? AbortSignal.any([access2.signal, controller.signal]) : controller.signal;
+  const scopedAccess = access2.withSignal(signal);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await inferenceQueue.run(() => runConceptSearch(input, scopedAccess, infer), scopedAccess.signal);
+  } catch (error) {
+    if (access2.signal?.aborted)
+      throw abortError();
+    if (controller.signal.aborted) {
+      throw new ConceptUnavailableError(`Concept request exceeded the ${String(timeoutMs)} ms deadline`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // src/structural-search.ts
@@ -8473,7 +8584,7 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
   const literalCoverage = scan.snapshotComplete ? "complete" : "partial";
   const conceptCoverage = concept.coverage?.conceptCandidates ?? (concept.partial ? "partial" : "complete");
   const deduplicationCoverage = scan.snapshotComplete && literal.sourceCoverage === "complete" ? "complete" : "partial";
-  const partial = !scan.snapshotComplete || concept.partial || literal.sourceCoverage === "partial" || deduplicationCoverage === "partial";
+  const partial = !scan.snapshotComplete || concept.partial || conceptCoverage === "skipped" || literal.sourceCoverage === "partial" || deduplicationCoverage === "partial";
   const selectionReason = conceptCandidatesOmitted ? `Hybrid concept limit retained the top ${String(selectedConcept.length)} of ${String(eligibleConcept.length)} non-overlapping semantic candidates` : undefined;
   return {
     kind: "hybrid",
@@ -8489,6 +8600,7 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
     filesRead: (concept.filesRead ?? 0) + access2.filesRead,
     bytesRead: (concept.bytesRead ?? 0) + access2.bytesRead,
     counts: {
+      ...concept.counts,
       literalMatchingLinesFound: scan.totalMatches,
       literalMatchingLinesPrepared: literal.items.length,
       literalOccurrencesRetained,
@@ -8528,10 +8640,11 @@ function retainedHybridCounts(original, items) {
 function isEvidenceRequest(input) {
   return isSemanticMode(input.mode) || input.mode === "concept" || input.mode === "hybrid" || input.mode === "structure" || input.mode === "files" || input.mode === "inspect" || input.mode === "outline" || input.mode === "imports" || input.mode === "tests" || input.mode === "impact" || input.sourceCursor !== undefined || input.anyOf !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.changes !== undefined || input.symbol !== undefined || input.conceptLimit !== undefined || (input.cursor?.includes(".analysis") ?? false);
 }
-function rejectFields(input, fields, operation, cursor = false, hint = "copy the complete returned request") {
+function rejectFields(input, fields, operation, cursor = false, repair = "copy the complete returned request unchanged") {
   const present = fields.filter((field) => input[field] !== undefined);
+  const message = `${operation} does not accept ${present.join(", ")}. Remove only those fields, then retry once: ${repair}. Keep the requested mode and remaining filters unchanged; do not include this error text in the retry.`;
   if (present.length)
-    throw cursor ? new CursorError(`${operation} does not accept ${present.join(", ")}; ${hint}`, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
+    throw cursor ? new CursorError(message, "E_CURSOR_OPTIONS_CONFLICT") : new SignalGrepError(message);
 }
 var searchFields = [
   "query",
@@ -8761,7 +8874,7 @@ class EvidenceService {
         "line",
         "symbol",
         "matchIndex"
-      ], "mode=concept", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact");
+      ], "mode=concept", false, "use only mode, query, path, glob, exclude, hidden and redact");
       return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
     }
     if (input.mode === "hybrid") {
@@ -8773,7 +8886,7 @@ class EvidenceService {
         "symbol",
         "matchIndex",
         "maxFilesToParse"
-      ], "mode=hybrid", false, "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact");
+      ], "mode=hybrid", false, "use only mode, query, path, glob, exclude, hidden, conceptLimit and redact");
       const query = validateConceptQuery(input.query);
       const limit = hybridConceptLimit(input.conceptLimit);
       const literalRequest = normalizeRequest({
@@ -8789,6 +8902,7 @@ class EvidenceService {
       let literalResult;
       let conceptResult;
       let conceptAccess;
+      let conceptFailure;
       await runOwnedParallel((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
@@ -8799,11 +8913,29 @@ class EvidenceService {
           this.#conceptSearch(input, conceptAccess).then((result2) => {
             conceptResult = result2;
             return;
+          }).catch((error) => {
+            if (signal?.aborted || groupSignal.aborted)
+              throw error;
+            if (!(error instanceof ConceptUnavailableError))
+              throw error;
+            conceptFailure = error;
+            return;
           })
         ];
       }, signal);
-      if (!literalResult || !conceptResult || !conceptAccess)
-        throw new Error("Hybrid search did not settle both owned operations");
+      if (!literalResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle its owned literal operation");
+      if (!conceptResult) {
+        const message = conceptFailure instanceof Error ? conceptFailure.message : "concept search failed without a diagnostic";
+        conceptResult = {
+          kind: "concept",
+          unit: "evidence-items",
+          items: [],
+          partial: true,
+          reasons: [`Semantic candidates unavailable: ${message}`],
+          coverage: { conceptCandidates: "skipped" }
+        };
+      }
       const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
       const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
       const originalCounts = hybrid.counts ?? {};
@@ -10483,6 +10615,7 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Every passage admitted by the source budget is ranked through token-safe windows, and content-addressed embeddings are reused from a bounded local cache. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `Use mode:"hybrid" plus query when wording may differ from the source. It always runs exact literal and local concept retrieval, keeps exact evidence first, removes semantic passages that overlap exact evidence, and retains the top three non-overlapping semantic candidates by default. conceptLimit changes only that semantic supplement. Hybrid uses one pageable snapshot and never treats similarity as exact evidence.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
+    `If a request is rejected, keep the strongest applicable mode and follow its repair instruction exactly once. Do not paste the error or rejected request into the retry, repeat an unchanged request, or switch to a weaker search because of a fixable argument error. Only an explicit capability-unavailable result permits a bounded alternative, which remains partial and must not be presented as complete.`,
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
@@ -10490,7 +10623,8 @@ function signalGrepModelGuidelines() {
   return [
     `Search contents with pattern and optional path; literal=true avoids regex escaping. Omit mode and limit for automatic detail/summary. An omitted path uses cwd; scope:"strict" forbids zero-result expansion. paths is only for selecting retained files from a returned cursor, so split new searches that have multiple roots.`,
     `Use returned exact matches directly when they contain enough context. Otherwise copy the visible cursor, nextRequest, or inspect selector exactly; batch inspect at most ${String(MAX_INSPECT_TARGETS)} locations. A partial status is not complete: read coverage and continue any returned request needed for the conclusion.`,
-    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`
+    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`,
+    `On rejection, preserve the strongest applicable mode and apply the stated repair once. Never include the old error/request in the retry or repeat an unchanged call. Use a weaker alternative only after an explicit capability-unavailable result, and keep that result visibly partial.`
   ];
 }
 function signalGrepMcpInstructions(outputMode = DEFAULT_MCP_OUTPUT_MODE) {
@@ -10513,7 +10647,7 @@ function stringEnum(values, options) {
   });
 }
 var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, ranks every passage admitted by the source budget through token-safe windows, reuses a bounded local content-addressed embedding cache, and exposes scoreProfile/cache coverage without deciding relevance thresholds. mode=hybrid always runs exact literal and local concept retrieval once, ranks exact evidence first, deduplicates overlapping semantic passages, and retains a bounded semantic supplement in one pageable snapshot. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
-var SIGNAL_GREP_MODEL_DESCRIPTION = "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. Partial status and coverage identify incomplete conclusions; semantic and static-analysis results are candidates, not proof.";
+var SIGNAL_GREP_MODEL_DESCRIPTION = "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. On rejection, keep the strongest applicable mode and apply its repair once without copying the old error/request. Only explicit capability unavailability permits a visibly partial alternative. Semantic and static-analysis results are candidates, not proof.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
@@ -10731,7 +10865,7 @@ function createDefaultSignalGrepMcpService() {
     structure: createCtagsStructureProvider()
   });
 }
-function errorMessage(error) {
+function errorMessage2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function validationMessage(value) {
@@ -10750,7 +10884,7 @@ function parseSignalGrepInput(value) {
 }
 function toolError(error) {
   return {
-    content: [{ type: "text", text: `baoer_signal_grep failed: ${errorMessage(error)}` }],
+    content: [{ type: "text", text: modelErrorText(error) }],
     isError: true
   };
 }
@@ -10885,7 +11019,7 @@ function writeJsonError(response, status, message) {
   response.end(body);
 }
 function reportHttpFailure(response, error) {
-  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage(error)}
+  process.stderr.write(`baoer_signal_grep MCP request failed: ${errorMessage2(error)}
 `);
   if (!response.headersSent)
     writeJsonError(response, 500, "MCP request failed");

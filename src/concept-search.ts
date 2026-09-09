@@ -8,11 +8,11 @@ import {
   CONCEPT_MODEL,
   CONCEPT_PASSAGE_OVERLAP_CHARS,
   CONCEPT_REVISION,
-  CONCEPT_TIMEOUT_MS,
   MAX_CONCEPT_CHARS,
   MAX_CONCEPT_WORKER_OUTPUT_BYTES,
+  resolveConceptTimeoutMs,
 } from "./concept-model.js";
-import { abortError, SignalGrepError } from "./errors.js";
+import { abortError, ConceptUnavailableError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { rpcRecord } from "./owned-json-rpc.js";
 import { normalizeRequest } from "./request.js";
@@ -26,6 +26,9 @@ export interface Passage {
   range: ByteRange;
   text: string;
 }
+
+/** Soft planning signal: large enumerations should narrow path/glob before interactive inference. */
+const MAX_CONCEPT_FILES_WARN = 500;
 
 function conciseWorkerError(stderr: string): string {
   const errorLine = stderr
@@ -111,9 +114,6 @@ async function similarities(
 ): Promise<ConceptInferenceResult> {
   const worker = fileURLToPath(new URL("./concept-worker.mjs", import.meta.url));
   const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
-  const controller = new AbortController();
-  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timer = setTimeout(() => controller.abort(), CONCEPT_TIMEOUT_MS);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers: Buffer[] = [];
@@ -134,7 +134,7 @@ async function similarities(
           : [worker, "--infer"],
         cwd: dirname(worker),
         env,
-        signal,
+        ...(parent ? { signal: parent } : {}),
         input: Buffer.from(
           JSON.stringify({
             query,
@@ -152,7 +152,7 @@ async function similarities(
       },
     );
     if (processResult.code !== 0)
-      throw new SignalGrepError(
+      throw new ConceptUnavailableError(
         `Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`,
       );
     const value: unknown = JSON.parse(Buffer.concat(buffers).toString("utf8"));
@@ -196,13 +196,11 @@ async function similarities(
     };
   } catch (error) {
     if (parent?.aborted) throw abortError();
-    if (controller.signal.aborted)
-      throw new SignalGrepError(
-        `Concept inference exceeded the ${String(CONCEPT_TIMEOUT_MS)} ms deadline`,
-      );
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    if (error instanceof ConceptUnavailableError) throw error;
+    const message = error instanceof Error ? error.message : "unknown provider failure";
+    throw new ConceptUnavailableError(`Local concept inference failed: ${message}`, {
+      cause: error,
+    });
   }
 }
 
@@ -237,20 +235,29 @@ async function runConceptSearch(
     redact: input.redact ?? false,
   };
   const documents: { document: SourceDocument; next: number }[] = [];
+  let filesSkippedEmpty = 0;
+  let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- shared verified source budget; no source is sent over the network.
       const document = await access.load(path);
       if (!document.utf8) throw new SourceDocumentError("encoding", "Not lossless UTF-8");
-      if (document.text.trim()) documents.push({ document, next: 0 });
+      // Empty or whitespace-only files carry no passages; this is a normal skip, not a coverage gap.
+      if (!document.text.trim()) {
+        filesSkippedEmpty += 1;
+        continue;
+      }
+      documents.push({ document, next: 0 });
     } catch (error) {
       if (error instanceof SourceBudgetError) {
         result.partial = true;
         result.reasons.push(error.message);
+        filesUnavailable += 1;
         break;
       }
       if (!(error instanceof SourceDocumentError)) throw error;
       result.partial = true;
+      filesUnavailable += 1;
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
@@ -263,6 +270,21 @@ async function runConceptSearch(
       item.next = chunk.next;
     }
   }
+  const filesAdmitted = documents.length;
+  const filesProcessed = filesAdmitted + filesSkippedEmpty + filesUnavailable;
+  const filesNotProcessed = Math.max(0, files.paths.length - filesProcessed);
+  if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
+    result.reasons.push(
+      `Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`,
+    );
+  }
+  result.counts = {
+    filesEnumerated: files.paths.length,
+    filesAdmitted,
+    filesSkippedEmpty,
+    filesUnavailable: filesUnavailable + filesNotProcessed,
+    passagesQueued: passages.length,
+  };
   if (passages.length) {
     const inferred = await infer(query, passages, access.signal);
     result.reasons.push(...inferred.warnings);
@@ -313,9 +335,11 @@ async function runConceptSearch(
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
     filesEnumerated: files.paths.length,
+    filesAdmitted,
   };
   result.coverage = {
     conceptCandidates: result.partial ? "partial" : "complete",
+    admissionPlan: result.partial ? "partial" : "complete",
     compilerBindings: "not-applicable",
   };
   result.scope = {
@@ -334,12 +358,48 @@ export function conceptSearch(
   input: SignalGrepInput,
   access: SourceAccess,
 ): Promise<AnalysisResultSet> {
-  return inferenceQueue.run(() => runConceptSearch(input, access, similarities), access.signal);
+  return runConceptSearchWithDeadline(input, access, similarities);
 }
 
 export type ConceptSearchRunner = typeof conceptSearch;
 
-export function createConceptSearchRunner(infer: ConceptInferenceRunner): ConceptSearchRunner {
-  return (input, access) =>
-    inferenceQueue.run(() => runConceptSearch(input, access, infer), access.signal);
+type ConceptTimeoutResolver = () => number;
+
+async function runConceptSearchWithDeadline(
+  input: SignalGrepInput,
+  access: SourceAccess,
+  infer: ConceptInferenceRunner,
+  timeout: ConceptTimeoutResolver = resolveConceptTimeoutMs,
+): Promise<AnalysisResultSet> {
+  const timeoutMs = timeout();
+  const controller = new AbortController();
+  const signal = access.signal
+    ? AbortSignal.any([access.signal, controller.signal])
+    : controller.signal;
+  const scopedAccess = access.withSignal(signal);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await inferenceQueue.run(
+      () => runConceptSearch(input, scopedAccess, infer),
+      scopedAccess.signal,
+    );
+  } catch (error) {
+    if (access.signal?.aborted) throw abortError();
+    if (controller.signal.aborted) {
+      throw new ConceptUnavailableError(
+        `Concept request exceeded the ${String(timeoutMs)} ms deadline`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createConceptSearchRunner(
+  infer: ConceptInferenceRunner,
+  timeout?: ConceptTimeoutResolver,
+): ConceptSearchRunner {
+  return (input, access) => runConceptSearchWithDeadline(input, access, infer, timeout);
 }

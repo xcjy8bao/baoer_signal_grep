@@ -5,6 +5,14 @@ export class SignalGrepError extends Error {
   }
 }
 
+/** A bounded Concept provider failure that hybrid retrieval may expose as skipped coverage. */
+export class ConceptUnavailableError extends SignalGrepError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ConceptUnavailableError";
+  }
+}
+
 export class CursorError extends SignalGrepError {
   readonly code:
     | "E_CURSOR_MALFORMED"

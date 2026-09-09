@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.6] - 2026-09-10
+
+- Fix Concept token-window binary search stalls on UTF-16 surrogate-pair interiors (emoji and other astral characters). `maximumTokenSafeEnd` and `overlapStart` now strictly advance `low`, minimum overlap progress crosses a complete code point, and `tokenSafeWindows` rejects a non-advancing overlap instead of spinning until the 10-minute deadline.
+- Add an explicit iteration budget so a future tokenizer or boundary regression fails fast with a clear diagnostic instead of hanging.
+- Keep hybrid literal evidence when Concept inference fails: semantic candidates are marked `skipped`, reasons name the failure, and the request returns partial hybrid results instead of discarding an in-flight exact search.
+- Keep models on the strongest applicable search mode after a rejected request: every host now instructs one corrected retry without copying the old error/request or weakening the search. Pi, OMP and MCP share one single-line 1,024-character error boundary with a 4,096-character raw scan limit; unknown objects are never coerced, so causes, stacks, hostile conversion hooks and repeated request text cannot accumulate in model context or block error formatting. Only explicit capability unavailability permits a visibly partial alternative.
+- Allow hosts to bound the complete Concept request—including queue admission, source planning and inference—with `BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS` (1s–1h). Missing or empty keeps the 10-minute default; invalid values fail closed before planning with an explicit configuration error.
+- Surface Concept admission planning in `counts`/`coverage` (`filesEnumerated`, `filesAdmitted`, `filesSkippedEmpty`, `filesUnavailable`, `passagesQueued`, `admissionPlan`) and warn when interactive Concept enumerates more than 500 files. Empty files remain a normal skip and do not mark Concept coverage partial.
+
 ## [1.4.0] - 2026-09-09
 
 - Identify the exact Bash or PowerShell subcommand that triggered strict native search enforcement, including its sequence and bounded source position, while preserving the existing allow/deny policy. Denials now explain that the host call is atomic and instruct agents to split non-search work before routing only the search through `baoer_signal_grep`.

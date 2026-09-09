@@ -7,7 +7,7 @@ import { navigateSemantics } from "./semantic-navigation.js";
 import { dirname, resolve } from "node:path";
 import { AnalysisStore } from "./analysis-store.js";
 import type { AnalysisItem, AnalysisResultSet, CoverageStatus } from "./analysis-types.js";
-import { abortError, CursorError, SignalGrepError } from "./errors.js";
+import { abortError, ConceptUnavailableError, CursorError, SignalGrepError } from "./errors.js";
 import { findGitRepository } from "./git-repository.js";
 import { isPathInsideCwd } from "./path-policy.js";
 import { resolveInspectionTarget } from "./inspect.js";
@@ -95,16 +95,14 @@ function rejectFields(
   fields: (keyof SignalGrepInput)[],
   operation: string,
   cursor = false,
-  hint = "copy the complete returned request",
+  repair = "copy the complete returned request unchanged",
 ): void {
   const present = fields.filter((field) => input[field] !== undefined);
+  const message = `${operation} does not accept ${present.join(", ")}. Remove only those fields, then retry once: ${repair}. Keep the requested mode and remaining filters unchanged; do not include this error text in the retry.`;
   if (present.length)
     throw cursor
-      ? new CursorError(
-          `${operation} does not accept ${present.join(", ")}; ${hint}`,
-          "E_CURSOR_OPTIONS_CONFLICT",
-        )
-      : new SignalGrepError(`${operation} does not accept ${present.join(", ")}; ${hint}`);
+      ? new CursorError(message, "E_CURSOR_OPTIONS_CONFLICT")
+      : new SignalGrepError(message);
 }
 const searchFields = [
   "query",
@@ -419,7 +417,7 @@ export class EvidenceService {
         ],
         "mode=concept",
         false,
-        "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, redact",
+        "use only mode, query, path, glob, exclude, hidden and redact",
       );
       return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access)));
     }
@@ -439,7 +437,7 @@ export class EvidenceService {
         ],
         "mode=hybrid",
         false,
-        "retry without unsupported fields; accepted fields: mode, query, path, glob, exclude, hidden, conceptLimit, redact",
+        "use only mode, query, path, glob, exclude, hidden, conceptLimit and redact",
       );
       const query = validateConceptQuery(input.query);
       const limit = hybridConceptLimit(input.conceptLimit);
@@ -456,6 +454,7 @@ export class EvidenceService {
       let literalResult: Awaited<ReturnType<RipgrepRunner>> | undefined;
       let conceptResult: AnalysisResultSet | undefined;
       let conceptAccess: SourceAccess | undefined;
+      let conceptFailure: unknown;
       await runOwnedParallel<void>((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
@@ -463,14 +462,36 @@ export class EvidenceService {
             literalResult = result;
             return undefined;
           }),
-          this.#conceptSearch(input, conceptAccess).then((result) => {
-            conceptResult = result;
-            return undefined;
-          }),
+          // Semantic failure must not cancel an in-flight literal search owned by the same group.
+          this.#conceptSearch(input, conceptAccess)
+            .then((result) => {
+              conceptResult = result;
+              return undefined;
+            })
+            .catch((error: unknown) => {
+              if (signal?.aborted || groupSignal.aborted) throw error;
+              if (!(error instanceof ConceptUnavailableError)) throw error;
+              conceptFailure = error;
+              return undefined;
+            }),
         ];
       }, signal);
-      if (!literalResult || !conceptResult || !conceptAccess)
-        throw new Error("Hybrid search did not settle both owned operations");
+      if (!literalResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle its owned literal operation");
+      if (!conceptResult) {
+        const message =
+          conceptFailure instanceof Error
+            ? conceptFailure.message
+            : "concept search failed without a diagnostic";
+        conceptResult = {
+          kind: "concept",
+          unit: "evidence-items",
+          items: [],
+          partial: true,
+          reasons: [`Semantic candidates unavailable: ${message}`],
+          coverage: { conceptCandidates: "skipped" },
+        };
+      }
       const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
       const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
       const originalCounts = hybrid.counts ?? {};

@@ -24,6 +24,7 @@ import {
   SearchPolicy,
 } from "./search-policy.js";
 import { signalGrepSchema } from "./tool-schema.js";
+import { modelErrorText } from "./model-error.js";
 
 const SIGNAL_GREP_LABEL = "baoer_signal_grep";
 const OMP_REPLACED_SEARCH_TOOLS = new Set(["grep", "glob"]);
@@ -214,17 +215,23 @@ export async function registerOmpSignalGrepExtension(
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const result = await runtime.search(
-        params,
-        ctx.cwd,
-        signal,
-        resolveContextBudget(ctx.getContextUsage()),
-      );
-      ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale));
-      return {
-        content: [{ type: "text", text: result.text }],
-        details: result.details,
-      };
+      try {
+        const result = await runtime.search(
+          params,
+          ctx.cwd,
+          signal,
+          resolveContextBudget(ctx.getContextUsage()),
+        );
+        ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale));
+        return {
+          content: [{ type: "text", text: result.text }],
+          details: result.details,
+        };
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        // oxlint-disable-next-line preserve-caught-error -- the model boundary must not expose a recursive cause chain
+        throw new Error(modelErrorText(error));
+      }
     },
   });
 
