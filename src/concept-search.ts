@@ -239,20 +239,29 @@ async function runConceptSearch(
     redact: input.redact ?? false,
   };
   const documents: { document: SourceDocument; next: number }[] = [];
+  let filesSkippedEmpty = 0;
+  let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- shared verified source budget; no source is sent over the network.
       const document = await access.load(path);
       if (!document.utf8) throw new SourceDocumentError("encoding", "Not lossless UTF-8");
-      if (document.text.trim()) documents.push({ document, next: 0 });
+      // Empty or whitespace-only files carry no passages; this is a normal skip, not a coverage gap.
+      if (!document.text.trim()) {
+        filesSkippedEmpty += 1;
+        continue;
+      }
+      documents.push({ document, next: 0 });
     } catch (error) {
       if (error instanceof SourceBudgetError) {
         result.partial = true;
         result.reasons.push(error.message);
+        filesUnavailable += 1;
         break;
       }
       if (!(error instanceof SourceDocumentError)) throw error;
       result.partial = true;
+      filesUnavailable += 1;
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
@@ -266,13 +275,8 @@ async function runConceptSearch(
     }
   }
   const filesAdmitted = documents.length;
-  const filesExcluded = Math.max(0, files.paths.length - filesAdmitted);
-  if (filesExcluded > 0) {
-    result.partial = true;
-    result.reasons.push(
-      `Concept admission excluded ${String(filesExcluded)} of ${String(files.paths.length)} enumerated files before inference`,
-    );
-  }
+  const filesProcessed = filesAdmitted + filesSkippedEmpty + filesUnavailable;
+  const filesNotProcessed = Math.max(0, files.paths.length - filesProcessed);
   if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
     result.reasons.push(
       `Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`,
@@ -281,7 +285,8 @@ async function runConceptSearch(
   result.counts = {
     filesEnumerated: files.paths.length,
     filesAdmitted,
-    filesExcludedBeforeInference: filesExcluded,
+    filesSkippedEmpty,
+    filesUnavailable: filesUnavailable + filesNotProcessed,
     passagesQueued: passages.length,
   };
   if (passages.length) {

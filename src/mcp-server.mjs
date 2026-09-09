@@ -4297,22 +4297,29 @@ async function runConceptSearch(input, access2, infer) {
     redact: input.redact ?? false
   };
   const documents = [];
+  let filesSkippedEmpty = 0;
+  let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
       const document = await access2.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", "Not lossless UTF-8");
-      if (document.text.trim())
-        documents.push({ document, next: 0 });
+      if (!document.text.trim()) {
+        filesSkippedEmpty += 1;
+        continue;
+      }
+      documents.push({ document, next: 0 });
     } catch (error) {
       if (error instanceof SourceBudgetError) {
         result.partial = true;
         result.reasons.push(error.message);
+        filesUnavailable += 1;
         break;
       }
       if (!(error instanceof SourceDocumentError))
         throw error;
       result.partial = true;
+      filesUnavailable += 1;
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
@@ -4327,18 +4334,16 @@ async function runConceptSearch(input, access2, infer) {
     }
   }
   const filesAdmitted = documents.length;
-  const filesExcluded = Math.max(0, files.paths.length - filesAdmitted);
-  if (filesExcluded > 0) {
-    result.partial = true;
-    result.reasons.push(`Concept admission excluded ${String(filesExcluded)} of ${String(files.paths.length)} enumerated files before inference`);
-  }
+  const filesProcessed = filesAdmitted + filesSkippedEmpty + filesUnavailable;
+  const filesNotProcessed = Math.max(0, files.paths.length - filesProcessed);
   if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
     result.reasons.push(`Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`);
   }
   result.counts = {
     filesEnumerated: files.paths.length,
     filesAdmitted,
-    filesExcludedBeforeInference: filesExcluded,
+    filesSkippedEmpty,
+    filesUnavailable: filesUnavailable + filesNotProcessed,
     passagesQueued: passages.length
   };
   if (passages.length) {
