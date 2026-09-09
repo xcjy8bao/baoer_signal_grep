@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.4.0",
+  version: "1.4.1",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -2697,8 +2697,21 @@ var MAX_CONCEPT_CHARS = 1000;
 var CONCEPT_PASSAGE_OVERLAP_CHARS = 160;
 var CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 var CONCEPT_TIMEOUT_MS = 10 * 60000;
+var MIN_CONCEPT_TIMEOUT_MS = 1000;
+var MAX_CONCEPT_TIMEOUT_MS = 60 * 60000;
+var CONCEPT_TIMEOUT_ENV = "BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS";
 var MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
 var MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
+function resolveConceptTimeoutMs(environment = process.env) {
+  const raw = environment[CONCEPT_TIMEOUT_ENV];
+  if (raw === undefined || raw === "")
+    return CONCEPT_TIMEOUT_MS;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < MIN_CONCEPT_TIMEOUT_MS || value > MAX_CONCEPT_TIMEOUT_MS) {
+    throw new SignalGrepError(`${CONCEPT_TIMEOUT_ENV} must be an integer from ${String(MIN_CONCEPT_TIMEOUT_MS)} through ${String(MAX_CONCEPT_TIMEOUT_MS)}`);
+  }
+  return value;
+}
 
 // src/request.ts
 function list(value) {
@@ -4140,6 +4153,7 @@ class SourceAccess {
 
 // src/concept-search.ts
 var inferenceQueue = new OwnedTaskQueue;
+var MAX_CONCEPT_FILES_WARN = 500;
 function conciseWorkerError(stderr) {
   const errorLine = stderr.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error|error):\s*\S/i.test(line));
   if (errorLine)
@@ -4202,7 +4216,8 @@ async function similarities(query, passages, parent) {
   const config = fileURLToPath3(new URL("./syntax-worker.toml", import.meta.url));
   const controller = new AbortController;
   const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timer = setTimeout(() => controller.abort(), CONCEPT_TIMEOUT_MS);
+  const timeoutMs = resolveConceptTimeoutMs();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers = [];
@@ -4252,7 +4267,7 @@ async function similarities(query, passages, parent) {
     if (parent?.aborted)
       throw abortError();
     if (controller.signal.aborted)
-      throw new SignalGrepError(`Concept inference exceeded the ${String(CONCEPT_TIMEOUT_MS)} ms deadline`);
+      throw new SignalGrepError(`Concept inference exceeded the ${String(timeoutMs)} ms deadline`);
     throw error;
   } finally {
     clearTimeout(timer);
@@ -4311,6 +4326,21 @@ async function runConceptSearch(input, access2, infer) {
       item.next = chunk.next;
     }
   }
+  const filesAdmitted = documents.length;
+  const filesExcluded = Math.max(0, files.paths.length - filesAdmitted);
+  if (filesExcluded > 0) {
+    result.partial = true;
+    result.reasons.push(`Concept admission excluded ${String(filesExcluded)} of ${String(files.paths.length)} enumerated files before inference`);
+  }
+  if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
+    result.reasons.push(`Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`);
+  }
+  result.counts = {
+    filesEnumerated: files.paths.length,
+    filesAdmitted,
+    filesExcludedBeforeInference: filesExcluded,
+    passagesQueued: passages.length
+  };
   if (passages.length) {
     const inferred = await infer(query, passages, access2.signal);
     result.reasons.push(...inferred.warnings);
@@ -4355,10 +4385,12 @@ async function runConceptSearch(input, access2, infer) {
   result.stats = {
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
-    filesEnumerated: files.paths.length
+    filesEnumerated: files.paths.length,
+    filesAdmitted
   };
   result.coverage = {
     conceptCandidates: result.partial ? "partial" : "complete",
+    admissionPlan: result.partial ? "partial" : "complete",
     compilerBindings: "not-applicable"
   };
   result.scope = {
@@ -8473,7 +8505,7 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
   const literalCoverage = scan.snapshotComplete ? "complete" : "partial";
   const conceptCoverage = concept.coverage?.conceptCandidates ?? (concept.partial ? "partial" : "complete");
   const deduplicationCoverage = scan.snapshotComplete && literal.sourceCoverage === "complete" ? "complete" : "partial";
-  const partial = !scan.snapshotComplete || concept.partial || literal.sourceCoverage === "partial" || deduplicationCoverage === "partial";
+  const partial = !scan.snapshotComplete || concept.partial || conceptCoverage === "skipped" || literal.sourceCoverage === "partial" || deduplicationCoverage === "partial";
   const selectionReason = conceptCandidatesOmitted ? `Hybrid concept limit retained the top ${String(selectedConcept.length)} of ${String(eligibleConcept.length)} non-overlapping semantic candidates` : undefined;
   return {
     kind: "hybrid",
@@ -8789,6 +8821,7 @@ class EvidenceService {
       let literalResult;
       let conceptResult;
       let conceptAccess;
+      let conceptFailure;
       await runOwnedParallel((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
@@ -8799,11 +8832,27 @@ class EvidenceService {
           this.#conceptSearch(input, conceptAccess).then((result2) => {
             conceptResult = result2;
             return;
+          }).catch((error) => {
+            if (signal?.aborted || groupSignal.aborted)
+              throw error;
+            conceptFailure = error;
+            return;
           })
         ];
       }, signal);
-      if (!literalResult || !conceptResult || !conceptAccess)
-        throw new Error("Hybrid search did not settle both owned operations");
+      if (!literalResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle its owned literal operation");
+      if (!conceptResult) {
+        const message = conceptFailure instanceof Error ? conceptFailure.message : "concept search failed without a diagnostic";
+        conceptResult = {
+          kind: "concept",
+          unit: "evidence-items",
+          items: [],
+          partial: true,
+          reasons: [`Semantic candidates unavailable: ${message}`],
+          coverage: { conceptCandidates: "skipped" }
+        };
+      }
       const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
       const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
       const originalCounts = hybrid.counts ?? {};

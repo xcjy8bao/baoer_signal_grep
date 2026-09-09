@@ -33,6 +33,7 @@ var CONCEPT_EMBEDDING_DIMENSIONS = 384;
 var CONCEPT_CACHE_VERSION = 1;
 var CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 var CONCEPT_TIMEOUT_MS = 10 * 60000;
+var MAX_CONCEPT_TIMEOUT_MS = 60 * 60000;
 var MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
 var MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
 var CONCEPT_ASSETS = [
@@ -219,11 +220,22 @@ function safeUtf16End(text, end) {
 function tokenCount(extractor, text) {
   return extractor.tokenizer.encode(text).length;
 }
+function advanceLow(low, middle) {
+  return Math.max(low + 1, middle + 1);
+}
+function binarySearchBudget(span) {
+  return 2 * Math.max(span, 1) + 32;
+}
 function maximumTokenSafeEnd(extractor, prefix, text, start) {
   let low = start + 1;
   let high = text.length;
   let accepted = start;
+  let iterations = 0;
+  const maxIterations = binarySearchBudget(high - low + 1);
   while (low <= high) {
+    iterations += 1;
+    if (iterations > maxIterations)
+      throw new Error("Concept token window search failed to make progress");
     const middle = safeUtf16End(text, Math.floor((low + high) / 2));
     if (middle <= start) {
       low += 1;
@@ -231,7 +243,7 @@ function maximumTokenSafeEnd(extractor, prefix, text, start) {
     }
     if (tokenCount(extractor, `${prefix}${text.slice(start, middle)}`) <= CONCEPT_MODEL_TOKENS) {
       accepted = middle;
-      low = middle + 1;
+      low = advanceLow(low, middle);
     } else {
       high = middle - 1;
     }
@@ -242,14 +254,19 @@ function overlapStart(extractor, prefix, text, start, end) {
   let low = start + 1;
   let high = end;
   let accepted = end;
+  let iterations = 0;
+  const maxIterations = binarySearchBudget(high - low + 1);
   while (low <= high) {
+    iterations += 1;
+    if (iterations > maxIterations)
+      throw new Error("Concept overlap search failed to make progress");
     const middle = safeUtf16End(text, Math.floor((low + high) / 2));
     const tokens = tokenCount(extractor, `${prefix}${text.slice(middle, end)}`);
     if (tokens <= CONCEPT_WINDOW_OVERLAP_TOKENS) {
       accepted = middle;
       high = middle - 1;
     } else {
-      low = middle + 1;
+      low = advanceLow(low, middle);
     }
   }
   return Math.max(start + 1, accepted);
@@ -265,7 +282,10 @@ function tokenSafeWindows(extractor, pending) {
     windows.push({ start, end, input: `${prefix}${pending.text.slice(start, end)}` });
     if (end >= pending.text.length)
       break;
-    start = overlapStart(extractor, prefix, pending.text, start, end);
+    const next = overlapStart(extractor, prefix, pending.text, start, end);
+    if (next <= start)
+      throw new Error("Concept window overlap failed to advance past a complete window");
+    start = next;
   }
   return windows;
 }

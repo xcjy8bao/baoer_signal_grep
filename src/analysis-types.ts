@@ -83,6 +83,7 @@ export interface AnalysisDetails {
     passagesRanked?: number;
     elapsedMs?: number;
     filesEnumerated?: number;
+    filesAdmitted?: number;
     filesParsed?: number;
     filesSkipped?: number;
     cacheHits?: number;

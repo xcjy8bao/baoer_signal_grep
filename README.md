@@ -26,6 +26,8 @@ Use `mode: "hybrid"` with one natural-language `query` when a sentence may have 
 
 Concept ranking covers every UTF-8 passage admitted by the request's documented source budget; it no longer samples a fixed prefix of the scope. Passages that exceed the model token window are ranked through overlapping token-safe windows, so later text is not silently discarded. Offline embeddings are cached by content, model revision and chunking revision in a bounded 512 MiB local cache. Repeated content is reused, changed content misses naturally, and cache write or cleanup failures remain visible in the result.
 
+If Concept inference fails or times out, hybrid still returns the exact literal page with `coverage.conceptCandidates` set to `skipped` and an explicit reason; it does not discard a completed literal search. Bound interactive Concept latency with `BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS` (integer milliseconds from 1000 through 3600000; default 600000). Admission planning counts (`filesEnumerated`, `filesAdmitted`, `filesExcludedBeforeInference`, `passagesQueued`) stay visible so large libraries can be narrowed with `path` or `glob` before another attempt.
+
 ### Give several search conditions together
 
 “Find files mentioning both the customer and a refund” works like selecting documents with two labels. “Any of these words will do” works like handing over a shortlist. Multiple conditions can be expressed together to reduce repeated searches.

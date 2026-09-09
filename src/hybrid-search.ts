@@ -144,6 +144,7 @@ export async function combineHybridSearch(
   const partial =
     !scan.snapshotComplete ||
     concept.partial ||
+    conceptCoverage === "skipped" ||
     literal.sourceCoverage === "partial" ||
     deduplicationCoverage === "partial";
   const selectionReason = conceptCandidatesOmitted

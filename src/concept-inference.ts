@@ -14,7 +14,8 @@ export interface PendingConceptEmbedding {
 
 const INFERENCE_BATCH_SIZE = 16;
 
-function safeUtf16End(text: string, end: number): number {
+/** Snap a candidate UTF-16 index so it never splits a surrogate pair. */
+export function safeUtf16End(text: string, end: number): number {
   if (end <= 0 || end >= text.length) return end;
   const previous = text.charCodeAt(end - 1);
   return previous >= 0xd800 && previous <= 0xdbff ? end - 1 : end;
@@ -24,7 +25,19 @@ function tokenCount(extractor: FeatureExtractionPipeline, text: string): number 
   return extractor.tokenizer.encode(text).length;
 }
 
-function maximumTokenSafeEnd(
+/**
+ * Binary-search `low` must strictly advance even when `safeUtf16End`
+ * retreats a midpoint below the current bound (surrogate-pair interiors).
+ */
+function advanceLow(low: number, middle: number): number {
+  return Math.max(low + 1, middle + 1);
+}
+
+function binarySearchBudget(span: number): number {
+  return 2 * Math.max(span, 1) + 32;
+}
+
+export function maximumTokenSafeEnd(
   extractor: FeatureExtractionPipeline,
   prefix: string,
   text: string,
@@ -33,7 +46,12 @@ function maximumTokenSafeEnd(
   let low = start + 1;
   let high = text.length;
   let accepted = start;
+  let iterations = 0;
+  const maxIterations = binarySearchBudget(high - low + 1);
   while (low <= high) {
+    iterations += 1;
+    if (iterations > maxIterations)
+      throw new Error("Concept token window search failed to make progress");
     const middle = safeUtf16End(text, Math.floor((low + high) / 2));
     if (middle <= start) {
       low += 1;
@@ -41,7 +59,7 @@ function maximumTokenSafeEnd(
     }
     if (tokenCount(extractor, `${prefix}${text.slice(start, middle)}`) <= CONCEPT_MODEL_TOKENS) {
       accepted = middle;
-      low = middle + 1;
+      low = advanceLow(low, middle);
     } else {
       high = middle - 1;
     }
@@ -49,7 +67,7 @@ function maximumTokenSafeEnd(
   return accepted;
 }
 
-function overlapStart(
+export function overlapStart(
   extractor: FeatureExtractionPipeline,
   prefix: string,
   text: string,
@@ -59,20 +77,25 @@ function overlapStart(
   let low = start + 1;
   let high = end;
   let accepted = end;
+  let iterations = 0;
+  const maxIterations = binarySearchBudget(high - low + 1);
   while (low <= high) {
+    iterations += 1;
+    if (iterations > maxIterations)
+      throw new Error("Concept overlap search failed to make progress");
     const middle = safeUtf16End(text, Math.floor((low + high) / 2));
     const tokens = tokenCount(extractor, `${prefix}${text.slice(middle, end)}`);
     if (tokens <= CONCEPT_WINDOW_OVERLAP_TOKENS) {
       accepted = middle;
       high = middle - 1;
     } else {
-      low = middle + 1;
+      low = advanceLow(low, middle);
     }
   }
   return Math.max(start + 1, accepted);
 }
 
-function tokenSafeWindows(
+export function tokenSafeWindows(
   extractor: FeatureExtractionPipeline,
   pending: PendingConceptEmbedding,
 ): { start: number; end: number; input: string }[] {
@@ -85,7 +108,10 @@ function tokenSafeWindows(
       throw new Error("Concept tokenizer could not admit one complete source character");
     windows.push({ start, end, input: `${prefix}${pending.text.slice(start, end)}` });
     if (end >= pending.text.length) break;
-    start = overlapStart(extractor, prefix, pending.text, start, end);
+    const next = overlapStart(extractor, prefix, pending.text, start, end);
+    if (next <= start)
+      throw new Error("Concept window overlap failed to advance past a complete window");
+    start = next;
   }
   return windows;
 }

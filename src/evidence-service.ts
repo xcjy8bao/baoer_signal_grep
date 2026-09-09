@@ -456,6 +456,7 @@ export class EvidenceService {
       let literalResult: Awaited<ReturnType<RipgrepRunner>> | undefined;
       let conceptResult: AnalysisResultSet | undefined;
       let conceptAccess: SourceAccess | undefined;
+      let conceptFailure: unknown;
       await runOwnedParallel<void>((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
@@ -463,14 +464,35 @@ export class EvidenceService {
             literalResult = result;
             return undefined;
           }),
-          this.#conceptSearch(input, conceptAccess).then((result) => {
-            conceptResult = result;
-            return undefined;
-          }),
+          // Semantic failure must not cancel an in-flight literal search owned by the same group.
+          this.#conceptSearch(input, conceptAccess)
+            .then((result) => {
+              conceptResult = result;
+              return undefined;
+            })
+            .catch((error: unknown) => {
+              if (signal?.aborted || groupSignal.aborted) throw error;
+              conceptFailure = error;
+              return undefined;
+            }),
         ];
       }, signal);
-      if (!literalResult || !conceptResult || !conceptAccess)
-        throw new Error("Hybrid search did not settle both owned operations");
+      if (!literalResult || !conceptAccess)
+        throw new Error("Hybrid search did not settle its owned literal operation");
+      if (!conceptResult) {
+        const message =
+          conceptFailure instanceof Error
+            ? conceptFailure.message
+            : "concept search failed without a diagnostic";
+        conceptResult = {
+          kind: "concept",
+          unit: "evidence-items",
+          items: [],
+          partial: true,
+          reasons: [`Semantic candidates unavailable: ${message}`],
+          coverage: { conceptCandidates: "skipped" },
+        };
+      }
       const literalAccess = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
       const hybrid = await combineHybridSearch(literalResult, conceptResult, literalAccess, limit);
       const originalCounts = hybrid.counts ?? {};

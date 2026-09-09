@@ -26,6 +26,8 @@
 
 Concept 排名会覆盖请求所声明源码预算内接纳的全部 UTF-8 段落，不再固定抽取范围开头的一小部分。超过模型 token 窗口的段落会拆成带重叠、且保证不截断的窗口参与排名，后半段内容不会被静默丢弃。离线 embedding 按内容、模型版本和分段版本缓存在本地，缓存上限为 512 MiB；重复内容直接复用，内容变化自然失效，缓存写入或清理失败会在结果中明确显示。
 
+如果 Concept 推理失败或超时，hybrid 仍会返回已完成的精确字面结果，并把 `coverage.conceptCandidates` 标为 `skipped`，同时写明原因；不会丢掉已经算完的字面搜索。交互场景可用 `BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS` 限制 Concept 时限（整数毫秒，1000–3600000，默认 600000）。接纳计划计数（`filesEnumerated`、`filesAdmitted`、`filesExcludedBeforeInference`、`passagesQueued`）会出现在结果里，便于在下一次请求前用 `path` 或 `glob` 收窄大库。
+
 ### 几个条件，可以一起交代
 
 “找同时提到客户和退款的文件”，就像请管理员挑出同时贴着两张标签的资料；“这几个词任意一个出现都算”，则像列出一张候选清单。可以一次表达多个查找条件，减少反复搜索。

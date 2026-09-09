@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1] - 2026-09-09
+
+- Fix Concept token-window binary search stalls on UTF-16 surrogate-pair interiors (emoji and other astral characters). `maximumTokenSafeEnd` and `overlapStart` now strictly advance `low`, and `tokenSafeWindows` rejects a non-advancing overlap instead of spinning until the 10-minute deadline.
+- Add an explicit iteration budget so a future tokenizer or boundary regression fails fast with a clear diagnostic instead of hanging.
+- Keep hybrid literal evidence when Concept inference fails: semantic candidates are marked `skipped`, reasons name the failure, and the request returns partial hybrid results instead of discarding an in-flight exact search.
+- Allow hosts to bound Concept inference with `BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS` (1s–1h). Missing or empty keeps the 10-minute default; invalid values fail closed with an explicit configuration error.
+- Surface Concept admission planning in `counts`/`coverage` (`filesEnumerated`, `filesAdmitted`, `filesExcludedBeforeInference`, `passagesQueued`, `admissionPlan`) and warn when interactive Concept enumerates more than 500 files.
+
 ## [1.4.0] - 2026-09-09
 
 - Identify the exact Bash or PowerShell subcommand that triggered strict native search enforcement, including its sequence and bounded source position, while preserving the existing allow/deny policy. Denials now explain that the host call is atomic and instruct agents to split non-search work before routing only the search through `baoer_signal_grep`.

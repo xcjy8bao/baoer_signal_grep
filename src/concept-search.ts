@@ -8,9 +8,9 @@ import {
   CONCEPT_MODEL,
   CONCEPT_PASSAGE_OVERLAP_CHARS,
   CONCEPT_REVISION,
-  CONCEPT_TIMEOUT_MS,
   MAX_CONCEPT_CHARS,
   MAX_CONCEPT_WORKER_OUTPUT_BYTES,
+  resolveConceptTimeoutMs,
 } from "./concept-model.js";
 import { abortError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
@@ -26,6 +26,9 @@ export interface Passage {
   range: ByteRange;
   text: string;
 }
+
+/** Soft planning signal: large enumerations should narrow path/glob before interactive inference. */
+const MAX_CONCEPT_FILES_WARN = 500;
 
 function conciseWorkerError(stderr: string): string {
   const errorLine = stderr
@@ -113,7 +116,8 @@ async function similarities(
   const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
   const controller = new AbortController();
   const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timer = setTimeout(() => controller.abort(), CONCEPT_TIMEOUT_MS);
+  const timeoutMs = resolveConceptTimeoutMs();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers: Buffer[] = [];
@@ -197,9 +201,7 @@ async function similarities(
   } catch (error) {
     if (parent?.aborted) throw abortError();
     if (controller.signal.aborted)
-      throw new SignalGrepError(
-        `Concept inference exceeded the ${String(CONCEPT_TIMEOUT_MS)} ms deadline`,
-      );
+      throw new SignalGrepError(`Concept inference exceeded the ${String(timeoutMs)} ms deadline`);
     throw error;
   } finally {
     clearTimeout(timer);
@@ -263,6 +265,25 @@ async function runConceptSearch(
       item.next = chunk.next;
     }
   }
+  const filesAdmitted = documents.length;
+  const filesExcluded = Math.max(0, files.paths.length - filesAdmitted);
+  if (filesExcluded > 0) {
+    result.partial = true;
+    result.reasons.push(
+      `Concept admission excluded ${String(filesExcluded)} of ${String(files.paths.length)} enumerated files before inference`,
+    );
+  }
+  if (files.paths.length > MAX_CONCEPT_FILES_WARN) {
+    result.reasons.push(
+      `Concept enumerated ${String(files.paths.length)} files; narrow path or glob for faster interactive retrieval`,
+    );
+  }
+  result.counts = {
+    filesEnumerated: files.paths.length,
+    filesAdmitted,
+    filesExcludedBeforeInference: filesExcluded,
+    passagesQueued: passages.length,
+  };
   if (passages.length) {
     const inferred = await infer(query, passages, access.signal);
     result.reasons.push(...inferred.warnings);
@@ -313,9 +334,11 @@ async function runConceptSearch(
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
     filesEnumerated: files.paths.length,
+    filesAdmitted,
   };
   result.coverage = {
     conceptCandidates: result.partial ? "partial" : "complete",
+    admissionPlan: result.partial ? "partial" : "complete",
     compilerBindings: "not-applicable",
   };
   result.scope = {

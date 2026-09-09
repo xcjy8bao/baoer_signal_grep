@@ -14,6 +14,9 @@ export const CONCEPT_EMBEDDING_DIMENSIONS = 384;
 export const CONCEPT_CACHE_VERSION = 1;
 export const CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 export const CONCEPT_TIMEOUT_MS = 10 * 60_000;
+export const MIN_CONCEPT_TIMEOUT_MS = 1_000;
+export const MAX_CONCEPT_TIMEOUT_MS = 60 * 60_000;
+export const CONCEPT_TIMEOUT_ENV = "BAOER_SIGNAL_GREP_CONCEPT_TIMEOUT_MS";
 export const MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
 export const MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const CONCEPT_ASSETS = [
@@ -51,6 +54,23 @@ export function conceptCacheDirectory(): string {
     "concept-cache",
     `${CONCEPT_REVISION}-v${String(CONCEPT_CACHE_VERSION)}`,
   );
+}
+
+/** Interactive hosts may lower the deadline; invalid values fail closed with an explicit error. */
+export function resolveConceptTimeoutMs(environment: NodeJS.ProcessEnv = process.env): number {
+  const raw = environment[CONCEPT_TIMEOUT_ENV];
+  if (raw === undefined || raw === "") return CONCEPT_TIMEOUT_MS;
+  const value = Number(raw);
+  if (
+    !Number.isSafeInteger(value) ||
+    value < MIN_CONCEPT_TIMEOUT_MS ||
+    value > MAX_CONCEPT_TIMEOUT_MS
+  ) {
+    throw new SignalGrepError(
+      `${CONCEPT_TIMEOUT_ENV} must be an integer from ${String(MIN_CONCEPT_TIMEOUT_MS)} through ${String(MAX_CONCEPT_TIMEOUT_MS)}`,
+    );
+  }
+  return value;
 }
 export async function verifyConceptModel(directory = conceptModelDirectory()): Promise<void> {
   for (const asset of CONCEPT_ASSETS) {

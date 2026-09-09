@@ -5,7 +5,7 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 // src/search-policy-shell.ts
 import { fileURLToPath } from "node:url";
 
-// node_modules/web-tree-sitter/tree-sitter.js
+// ../../../pi-plugin/pi-plugin-signal-grep/node_modules/web-tree-sitter/tree-sitter.js
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 var SIZE_OF_SHORT = 2;
