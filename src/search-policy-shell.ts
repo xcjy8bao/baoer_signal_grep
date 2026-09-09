@@ -152,10 +152,10 @@ export class ShellSearchPolicy {
             if (nested) return nested;
           }
         }
-        if (tree.rootNode.hasError)
-          throw new Error(
-            `Search policy cannot parse this ${language} command; use a supported shell command or invoke a script file`,
-          );
+        // Tree-sitter's Bash grammar deliberately does not implement every zsh extension.
+        // Error recovery still exposes executable-position `command` nodes, which are the
+        // policy's authority. An error in an argument (for example `${(P)name}`) is not
+        // evidence of a search and must not turn an otherwise ordinary command into a denial.
         return undefined;
       } finally {
         tree.delete();

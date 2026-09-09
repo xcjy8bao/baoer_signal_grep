@@ -12,7 +12,7 @@ The tool runs with the permissions of its host process. It is read-only, but it 
 
 `redact: true` optionally masks common credential values in returned output. It does not change which files are searched and cannot guarantee removal of every sensitive value. Only connect the tool to repositories and paths that the agent is authorized to read.
 
-Local searches have no telemetry and do not upload source or queries. Package installation can access npm. Explicit installation of the optional concept model downloads public assets; concept searches then run offline. Remote HTTP connections transmit requests and results to the configured server.
+Local searches have no telemetry and do not upload source or queries. Package installation can access npm. Explicit installation of the optional concept model downloads public assets; concept searches then run offline. Concept mode stores content-addressed embeddings, never source text or paths, beneath the configured local model root. The cache identity includes the pinned model and chunking revision, is bounded to 512 MiB, and can be deleted without losing source data or search correctness. Remote HTTP connections transmit requests and results to the configured server.
 
 ## HTTP deployments
 

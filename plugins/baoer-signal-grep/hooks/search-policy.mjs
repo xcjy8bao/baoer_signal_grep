@@ -3478,8 +3478,6 @@ class ShellSearchPolicy {
               return nested;
           }
         }
-        if (tree.rootNode.hasError)
-          throw new Error(`Search policy cannot parse this ${language} command; use a supported shell command or invoke a script file`);
         return;
       } finally {
         tree.delete();

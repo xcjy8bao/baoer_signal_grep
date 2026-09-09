@@ -24,6 +24,8 @@ Looking for an error message, a sentence or a name is like giving a librarian a 
 
 Use `mode: "hybrid"` with one natural-language `query` when a sentence may have been remembered with different wording. Hybrid always runs an exact literal search and the installed local Concept model under one owned request. Exact evidence appears first; semantic candidates are clearly labeled, ranked only by similarity and removed when they overlap an exact match. The initial page shares counts, coverage, source references, one inspection cursor and a compact preview instead of concatenating two complete responses. `conceptLimit` changes only the non-overlapping semantic supplement (default 3, maximum 20); it never displaces literal evidence. The returned matches request opens the same snapshot's complete exact-first pagination without rerunning either search.
 
+Concept ranking covers every UTF-8 passage admitted by the request's documented source budget; it no longer samples a fixed prefix of the scope. Passages that exceed the model token window are ranked through overlapping token-safe windows, so later text is not silently discarded. Offline embeddings are cached by content, model revision and chunking revision in a bounded 512 MiB local cache. Repeated content is reused, changed content misses naturally, and cache write or cleanup failures remain visible in the result.
+
 ### Give several search conditions together
 
 “Find files mentioning both the customer and a refund” works like selecting documents with two labels. “Any of these words will do” works like handing over a shortlist. Multiple conditions can be expressed together to reduce repeated searches.

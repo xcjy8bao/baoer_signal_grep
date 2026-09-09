@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-09-09
+
+- Rank every Concept passage admitted by the documented source budget instead of stopping after 128 candidates. Token-overlong passages now use overlapping tokenizer-verified windows and max-pooled similarity, so no ranking relies on a silently truncated prefix.
+- Reuse offline query and passage embeddings through a model/chunking-versioned, content-addressed 512 MiB cache. Cache hits, misses, ranked windows and cache maintenance failures are observable; changed content invalidates naturally.
+- Allow ordinary compound shell commands containing unsupported zsh argument syntax while continuing to block recognized search executables recovered from the same syntax tree.
+
 ## [1.3.0] - 2026-09-08
 
 - Add fixed `mode=hybrid` retrieval that always runs exact literal and local Concept searches under one cancellation owner, ranks exact evidence first, removes overlapping semantic passages and retains a configurable top semantic supplement (default 3, maximum 20).
