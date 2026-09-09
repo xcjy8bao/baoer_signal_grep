@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 import type { AnalysisResultSet, ConceptScoreProfile } from "./analysis-types.js";
 import {
   CONCEPT_MODEL,
+  CONCEPT_PASSAGE_OVERLAP_CHARS,
   CONCEPT_REVISION,
   CONCEPT_TIMEOUT_MS,
   MAX_CONCEPT_CHARS,
-  MAX_CONCEPT_CHUNKS,
+  MAX_CONCEPT_WORKER_OUTPUT_BYTES,
 } from "./concept-model.js";
 import { abortError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
@@ -20,7 +21,7 @@ import { SourceAccess, SourceBudgetError } from "./source-access.js";
 import { SourceDocumentError, type SourceDocument, type ByteRange } from "./source-document.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
 
-interface Passage {
+export interface Passage {
   document: SourceDocument;
   range: ByteRange;
   text: string;
@@ -30,8 +31,13 @@ function conciseWorkerError(stderr: string): string {
   const errorLine = stderr
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error):\s*\S/.test(line));
-  if (errorLine) return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
+    .find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error|error):\s*\S/i.test(line));
+  if (errorLine) return errorLine.replace(/^[^:]+(?:Error|error):\s*/i, "").slice(0, 512);
+  const diagnostic = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (diagnostic) return diagnostic.slice(0, 512);
   return "worker returned no concise diagnostic";
 }
 
@@ -65,17 +71,44 @@ function passage(document: SourceDocument, start: number): { value: Passage; nex
     if (code >= 0xdc00 && code <= 0xdfff) end -= 1;
   }
   const range = { start: document.toByteOffset(start), end: document.toByteOffset(end) };
+  let next = end;
+  if (end < document.text.length) {
+    next = Math.max(start + 1, end - CONCEPT_PASSAGE_OVERLAP_CHARS);
+    const code = document.text.charCodeAt(next);
+    if (code >= 0xdc00 && code <= 0xdfff) next += 1;
+  }
   return {
     value: {
       document,
       range,
-      text: `${document.path.slice(0, 200)}\n${document.text.slice(start, end)}`,
+      text: document.text.slice(start, end),
     },
-    next: end,
+    next,
   };
 }
 
-async function similarities(query: string, passages: Passage[], parent?: AbortSignal) {
+export interface ConceptInferenceResult {
+  scores: number[];
+  cacheHits: number;
+  cacheMisses: number;
+  cacheMaxBytes: number;
+  cacheBytes?: number;
+  windowsRanked: number;
+  warnings: string[];
+  peakRssBytes: number;
+}
+
+export type ConceptInferenceRunner = (
+  query: string,
+  passages: Passage[],
+  parent?: AbortSignal,
+) => Promise<ConceptInferenceResult>;
+
+async function similarities(
+  query: string,
+  passages: Passage[],
+  parent?: AbortSignal,
+): Promise<ConceptInferenceResult> {
   const worker = fileURLToPath(new URL("./concept-worker.mjs", import.meta.url));
   const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
   const controller = new AbortController();
@@ -102,13 +135,18 @@ async function similarities(query: string, passages: Passage[], parent?: AbortSi
         cwd: dirname(worker),
         env,
         signal,
-        input: Buffer.from(JSON.stringify({ query, passages: passages.map((item) => item.text) })),
+        input: Buffer.from(
+          JSON.stringify({
+            query,
+            encodedPassages: passages.map((item) => Buffer.from(item.text).toString("base64")),
+          }),
+        ),
       },
       async (stdout) => {
         for await (const chunk of stdout) {
           bytes += chunk.byteLength;
-          if (bytes > 32_768)
-            throw new SignalGrepError("Concept worker exceeded its 32 KiB response budget");
+          if (bytes > MAX_CONCEPT_WORKER_OUTPUT_BYTES)
+            throw new SignalGrepError("Concept worker exceeded its 4 MiB response budget");
           buffers.push(Buffer.from(chunk));
         }
       },
@@ -123,14 +161,24 @@ async function similarities(query: string, passages: Passage[], parent?: AbortSi
       !Array.isArray(value.scores) ||
       value.scores.length !== passages.length ||
       value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) ||
-      !Array.isArray(value.truncated) ||
-      value.truncated.some(
-        (index) =>
-          typeof index !== "number" ||
-          !Number.isSafeInteger(index) ||
-          index < -1 ||
-          index >= passages.length,
-      ) ||
+      typeof value.cacheHits !== "number" ||
+      !Number.isSafeInteger(value.cacheHits) ||
+      value.cacheHits < 0 ||
+      typeof value.cacheMisses !== "number" ||
+      !Number.isSafeInteger(value.cacheMisses) ||
+      value.cacheMisses < 0 ||
+      typeof value.cacheMaxBytes !== "number" ||
+      !Number.isSafeInteger(value.cacheMaxBytes) ||
+      value.cacheMaxBytes <= 0 ||
+      (value.cacheBytes !== undefined &&
+        (typeof value.cacheBytes !== "number" ||
+          !Number.isSafeInteger(value.cacheBytes) ||
+          value.cacheBytes < 0)) ||
+      typeof value.windowsRanked !== "number" ||
+      !Number.isSafeInteger(value.windowsRanked) ||
+      value.windowsRanked < passages.length ||
+      !Array.isArray(value.warnings) ||
+      value.warnings.some((warning) => typeof warning !== "string") ||
       typeof value.peakRssBytes !== "number" ||
       !Number.isFinite(value.peakRssBytes) ||
       value.peakRssBytes < 0
@@ -138,7 +186,12 @@ async function similarities(query: string, passages: Passage[], parent?: AbortSi
       throw new SignalGrepError("Invalid concept inference response");
     return {
       scores: value.scores.filter((score): score is number => typeof score === "number"),
-      truncated: value.truncated.filter((index): index is number => typeof index === "number"),
+      cacheHits: value.cacheHits,
+      cacheMisses: value.cacheMisses,
+      cacheMaxBytes: value.cacheMaxBytes,
+      ...(typeof value.cacheBytes === "number" ? { cacheBytes: value.cacheBytes } : {}),
+      windowsRanked: value.windowsRanked,
+      warnings: value.warnings.filter((warning): warning is string => typeof warning === "string"),
       peakRssBytes: value.peakRssBytes,
     };
   } catch (error) {
@@ -164,6 +217,7 @@ export function validateConceptQuery(query: string | undefined): string {
 async function runConceptSearch(
   input: SignalGrepInput,
   access: SourceAccess,
+  infer: ConceptInferenceRunner,
 ): Promise<AnalysisResultSet> {
   const query = validateConceptQuery(input.query);
   const started = performance.now();
@@ -201,33 +255,17 @@ async function runConceptSearch(
     }
   }
   const passages: Passage[] = [];
-  // Round-robin prevents one long file from consuming every candidate slot.
-  while (
-    passages.length < MAX_CONCEPT_CHUNKS &&
-    documents.some((item) => item.next < item.document.text.length)
-  ) {
+  while (documents.some((item) => item.next < item.document.text.length)) {
     for (const item of documents) {
-      if (passages.length >= MAX_CONCEPT_CHUNKS) break;
       if (item.next >= item.document.text.length) continue;
       const chunk = passage(item.document, item.next);
       passages.push(chunk.value);
       item.next = chunk.next;
     }
   }
-  if (documents.some((item) => item.next < item.document.text.length)) {
-    result.partial = true;
-    result.reasons.push(
-      `Concept coverage reached ${String(MAX_CONCEPT_CHUNKS)} passages of at most ${String(MAX_CONCEPT_CHARS)} characters; narrow path/glob to cover remaining source`,
-    );
-  }
   if (passages.length) {
-    const inferred = await similarities(query, passages, access.signal);
-    if (inferred.truncated.length) {
-      result.partial = true;
-      result.reasons.push(
-        `Model token limit: ${String(inferred.truncated.length)} query/passages exceeded 512 tokens; ranking used their prefixes`,
-      );
-    }
+    const inferred = await infer(query, passages, access.signal);
+    result.reasons.push(...inferred.warnings);
     result.items = passages
       .map((item, index) => {
         const similarity = inferred.scores[index];
@@ -248,7 +286,7 @@ async function runConceptSearch(
               "local multilingual E5 cosine similarity; relevance candidate, no binding or execution claim",
             model: CONCEPT_MODEL,
             revision: CONCEPT_REVISION,
-            tokenTruncated: inferred.truncated.includes(index),
+            tokenTruncated: false,
             excerptRange: evidence.excerptRange,
             excerptTruncated: evidence.excerptTruncated,
           },
@@ -261,6 +299,11 @@ async function runConceptSearch(
     result.stats = {
       inferencePeakRssBytes: inferred.peakRssBytes,
       passagesRanked: passages.length,
+      conceptWindowsRanked: inferred.windowsRanked,
+      conceptCacheHits: inferred.cacheHits,
+      conceptCacheMisses: inferred.cacheMisses,
+      conceptCacheMaxBytes: inferred.cacheMaxBytes,
+      ...(inferred.cacheBytes === undefined ? {} : { conceptCacheBytes: inferred.cacheBytes }),
       scoreProfile: scoreProfile(inferred.scores),
     };
   }
@@ -291,7 +334,12 @@ export function conceptSearch(
   input: SignalGrepInput,
   access: SourceAccess,
 ): Promise<AnalysisResultSet> {
-  return inferenceQueue.run(() => runConceptSearch(input, access), access.signal);
+  return inferenceQueue.run(() => runConceptSearch(input, access, similarities), access.signal);
 }
 
 export type ConceptSearchRunner = typeof conceptSearch;
+
+export function createConceptSearchRunner(infer: ConceptInferenceRunner): ConceptSearchRunner {
+  return (input, access) =>
+    inferenceQueue.run(() => runConceptSearch(input, access, infer), access.signal);
+}

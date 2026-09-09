@@ -86,6 +86,11 @@ export interface AnalysisDetails {
     filesParsed?: number;
     filesSkipped?: number;
     cacheHits?: number;
+    conceptCacheHits?: number;
+    conceptCacheMisses?: number;
+    conceptCacheBytes?: number;
+    conceptCacheMaxBytes?: number;
+    conceptWindowsRanked?: number;
     parseMs?: number;
     budgetExhausted?: boolean;
     scoreProfile?: ConceptScoreProfile;

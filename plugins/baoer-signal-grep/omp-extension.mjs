@@ -2644,9 +2644,12 @@ import { fileURLToPath as fileURLToPath3 } from "url";
 // src/concept-model.ts
 var CONCEPT_MODEL = "Xenova/multilingual-e5-small";
 var CONCEPT_REVISION = "761b726dd34fb83930e26aab4e9ac3899aa1fa78";
-var MAX_CONCEPT_CHUNKS = 128;
 var MAX_CONCEPT_CHARS = 1000;
-var CONCEPT_TIMEOUT_MS = 90000;
+var CONCEPT_PASSAGE_OVERLAP_CHARS = 160;
+var CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
+var CONCEPT_TIMEOUT_MS = 10 * 60000;
+var MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
+var MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 // src/request.ts
 function list(value) {
@@ -4089,9 +4092,12 @@ class SourceAccess {
 // src/concept-search.ts
 var inferenceQueue = new OwnedTaskQueue;
 function conciseWorkerError(stderr) {
-  const errorLine = stderr.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error):\s*\S/.test(line));
+  const errorLine = stderr.split(/\r?\n/).map((line) => line.trim()).find((line) => /^(?:[A-Za-z_$][\w$]*Error|Error|error):\s*\S/i.test(line));
   if (errorLine)
-    return errorLine.replace(/^[^:]+Error:\s*/, "").slice(0, 512);
+    return errorLine.replace(/^[^:]+(?:Error|error):\s*/i, "").slice(0, 512);
+  const diagnostic = stderr.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (diagnostic)
+    return diagnostic.slice(0, 512);
   return "worker returned no concise diagnostic";
 }
 function scoreProfile(scores) {
@@ -4126,14 +4132,20 @@ function passage(document2, start2) {
       end -= 1;
   }
   const range = { start: document2.toByteOffset(start2), end: document2.toByteOffset(end) };
+  let next = end;
+  if (end < document2.text.length) {
+    next = Math.max(start2 + 1, end - CONCEPT_PASSAGE_OVERLAP_CHARS);
+    const code = document2.text.charCodeAt(next);
+    if (code >= 56320 && code <= 57343)
+      next += 1;
+  }
   return {
     value: {
       document: document2,
       range,
-      text: `${document2.path.slice(0, 200)}
-${document2.text.slice(start2, end)}`
+      text: document2.text.slice(start2, end)
     },
-    next: end
+    next
   };
 }
 async function similarities(query, passages, parent) {
@@ -4160,23 +4172,31 @@ async function similarities(query, passages, parent) {
       cwd: dirname4(worker),
       env,
       signal,
-      input: Buffer.from(JSON.stringify({ query, passages: passages.map((item) => item.text) }))
+      input: Buffer.from(JSON.stringify({
+        query,
+        encodedPassages: passages.map((item) => Buffer.from(item.text).toString("base64"))
+      }))
     }, async (stdout) => {
       for await (const chunk of stdout) {
         bytes += chunk.byteLength;
-        if (bytes > 32768)
-          throw new SignalGrepError("Concept worker exceeded its 32 KiB response budget");
+        if (bytes > MAX_CONCEPT_WORKER_OUTPUT_BYTES)
+          throw new SignalGrepError("Concept worker exceeded its 4 MiB response budget");
         buffers.push(Buffer.from(chunk));
       }
     });
     if (processResult.code !== 0)
       throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
     const value = JSON.parse(Buffer.concat(buffers).toString("utf8"));
-    if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || !Array.isArray(value.truncated) || value.truncated.some((index) => typeof index !== "number" || !Number.isSafeInteger(index) || index < -1 || index >= passages.length) || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
+    if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || typeof value.cacheHits !== "number" || !Number.isSafeInteger(value.cacheHits) || value.cacheHits < 0 || typeof value.cacheMisses !== "number" || !Number.isSafeInteger(value.cacheMisses) || value.cacheMisses < 0 || typeof value.cacheMaxBytes !== "number" || !Number.isSafeInteger(value.cacheMaxBytes) || value.cacheMaxBytes <= 0 || value.cacheBytes !== undefined && (typeof value.cacheBytes !== "number" || !Number.isSafeInteger(value.cacheBytes) || value.cacheBytes < 0) || typeof value.windowsRanked !== "number" || !Number.isSafeInteger(value.windowsRanked) || value.windowsRanked < passages.length || !Array.isArray(value.warnings) || value.warnings.some((warning) => typeof warning !== "string") || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
       throw new SignalGrepError("Invalid concept inference response");
     return {
       scores: value.scores.filter((score) => typeof score === "number"),
-      truncated: value.truncated.filter((index) => typeof index === "number"),
+      cacheHits: value.cacheHits,
+      cacheMisses: value.cacheMisses,
+      cacheMaxBytes: value.cacheMaxBytes,
+      ...typeof value.cacheBytes === "number" ? { cacheBytes: value.cacheBytes } : {},
+      windowsRanked: value.windowsRanked,
+      warnings: value.warnings.filter((warning) => typeof warning === "string"),
       peakRssBytes: value.peakRssBytes
     };
   } catch (error) {
@@ -4194,7 +4214,7 @@ function validateConceptQuery(query) {
     throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
   return query;
 }
-async function runConceptSearch(input, access2) {
+async function runConceptSearch(input, access2, infer) {
   const query = validateConceptQuery(input.query);
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
@@ -4233,10 +4253,8 @@ async function runConceptSearch(input, access2) {
     }
   }
   const passages = [];
-  while (passages.length < MAX_CONCEPT_CHUNKS && documents.some((item) => item.next < item.document.text.length)) {
+  while (documents.some((item) => item.next < item.document.text.length)) {
     for (const item of documents) {
-      if (passages.length >= MAX_CONCEPT_CHUNKS)
-        break;
       if (item.next >= item.document.text.length)
         continue;
       const chunk = passage(item.document, item.next);
@@ -4244,16 +4262,9 @@ async function runConceptSearch(input, access2) {
       item.next = chunk.next;
     }
   }
-  if (documents.some((item) => item.next < item.document.text.length)) {
-    result.partial = true;
-    result.reasons.push(`Concept coverage reached ${String(MAX_CONCEPT_CHUNKS)} passages of at most ${String(MAX_CONCEPT_CHARS)} characters; narrow path/glob to cover remaining source`);
-  }
   if (passages.length) {
-    const inferred = await similarities(query, passages, access2.signal);
-    if (inferred.truncated.length) {
-      result.partial = true;
-      result.reasons.push(`Model token limit: ${String(inferred.truncated.length)} query/passages exceeded 512 tokens; ranking used their prefixes`);
-    }
+    const inferred = await infer(query, passages, access2.signal);
+    result.reasons.push(...inferred.warnings);
     result.items = passages.map((item, index) => {
       const similarity = inferred.scores[index];
       if (similarity === undefined)
@@ -4273,7 +4284,7 @@ async function runConceptSearch(input, access2) {
           rankingReason: "local multilingual E5 cosine similarity; relevance candidate, no binding or execution claim",
           model: CONCEPT_MODEL,
           revision: CONCEPT_REVISION,
-          tokenTruncated: inferred.truncated.includes(index),
+          tokenTruncated: false,
           excerptRange: evidence.excerptRange,
           excerptTruncated: evidence.excerptTruncated
         }
@@ -4282,6 +4293,11 @@ async function runConceptSearch(input, access2) {
     result.stats = {
       inferencePeakRssBytes: inferred.peakRssBytes,
       passagesRanked: passages.length,
+      conceptWindowsRanked: inferred.windowsRanked,
+      conceptCacheHits: inferred.cacheHits,
+      conceptCacheMisses: inferred.cacheMisses,
+      conceptCacheMaxBytes: inferred.cacheMaxBytes,
+      ...inferred.cacheBytes === undefined ? {} : { conceptCacheBytes: inferred.cacheBytes },
       scoreProfile: scoreProfile(inferred.scores)
     };
   }
@@ -4308,7 +4324,7 @@ async function runConceptSearch(input, access2) {
   return result;
 }
 function conceptSearch(input, access2) {
-  return inferenceQueue.run(() => runConceptSearch(input, access2), access2.signal);
+  return inferenceQueue.run(() => runConceptSearch(input, access2, similarities), access2.signal);
 }
 
 // src/structural-search.ts
@@ -10409,7 +10425,7 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     `Use mode:"files" plus query for unknown filenames and fuzzy paths. Use wholeWord:true for a single-pattern whole-word search. exclude contains file globs, not content negation.`,
     `Use JS/TS modes definitions, references, implementations, callers or callees with path+line+column (1-based UTF-16), or an unambiguous symbol. Returned evidence includes exact positions and executable next requests. The compiler resolves project aliases, package exports and workspace packages; static relationships do not prove runtime dispatch. dependencies/dependents take only a workspace file path.`,
     `Use mode:"structure" plus an ast-grep pattern such as "compare($X, $X)" or "send()" for code shapes across whitespace; no literal/regex or scope options. Use path/glob/exclude to narrow admitted syntax.`,
-    `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
+    `Use mode:"concept" plus a natural-language query when names are unknown. It runs a pinned local multilingual model only after explicit installation; no search downloads weights or sends code to a remote model. Every passage admitted by the source budget is ranked through token-safe windows, and content-addressed embeddings are reused from a bounded local cache. Similarity scores identify source candidates, not proof. File/concept/structure discovery never expands its requested path.`,
     `Use mode:"hybrid" plus query when wording may differ from the source. It always runs exact literal and local concept retrieval, keeps exact evidence first, removes semantic passages that overlap exact evidence, and retains the top three non-overlapping semantic candidates by default. conceptLimit changes only that semantic supplement. Hybrid uses one pageable snapshot and never treats similarity as exact evidence.`,
     `If inspection reports missing source, execute its complete nextRequest with sourceCursor. Never treat a partial source excerpt as the complete implementation.`,
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
@@ -21479,8 +21495,6 @@ class ShellSearchPolicy {
               return nested;
           }
         }
-        if (tree.rootNode.hasError)
-          throw new Error(`Search policy cannot parse this ${language} command; use a supported shell command or invoke a script file`);
         return;
       } finally {
         tree.delete();

@@ -6,9 +6,16 @@ import { SignalGrepError } from "./errors.js";
 
 export const CONCEPT_MODEL = "Xenova/multilingual-e5-small";
 export const CONCEPT_REVISION = "761b726dd34fb83930e26aab4e9ac3899aa1fa78";
-export const MAX_CONCEPT_CHUNKS = 128;
 export const MAX_CONCEPT_CHARS = 1_000;
-export const CONCEPT_TIMEOUT_MS = 90_000;
+export const CONCEPT_PASSAGE_OVERLAP_CHARS = 160;
+export const CONCEPT_MODEL_TOKENS = 512;
+export const CONCEPT_WINDOW_OVERLAP_TOKENS = 64;
+export const CONCEPT_EMBEDDING_DIMENSIONS = 384;
+export const CONCEPT_CACHE_VERSION = 1;
+export const CONCEPT_CACHE_MAX_BYTES = 512 * 1024 * 1024;
+export const CONCEPT_TIMEOUT_MS = 10 * 60_000;
+export const MAX_CONCEPT_WORKER_INPUT_BYTES = 64 * 1024 * 1024;
+export const MAX_CONCEPT_WORKER_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const CONCEPT_ASSETS = [
   {
     path: "config.json",
@@ -35,6 +42,14 @@ export function conceptModelDirectory(): string {
   return resolve(
     process.env.SIGNAL_GREP_MODEL_DIR ?? join(homedir(), ".cache", "baoer_signal_grep", "models"),
     CONCEPT_REVISION,
+  );
+}
+
+export function conceptCacheDirectory(): string {
+  return resolve(
+    process.env.SIGNAL_GREP_MODEL_DIR ?? join(homedir(), ".cache", "baoer_signal_grep", "models"),
+    "concept-cache",
+    `${CONCEPT_REVISION}-v${String(CONCEPT_CACHE_VERSION)}`,
   );
 }
 export async function verifyConceptModel(directory = conceptModelDirectory()): Promise<void> {
