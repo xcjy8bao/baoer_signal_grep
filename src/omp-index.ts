@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  normalizeSearchEnforcement,
   readSignalGrepConfigFile,
   SIGNAL_GREP_CONFIG_FILE,
   type SignalGrepConfig,
@@ -17,7 +18,11 @@ import {
   renderSignalGrepResult,
   type SignalGrepToolResult,
 } from "./tui/renderers.js";
-import { SEARCH_POLICY_GUIDANCE, SearchPolicy } from "./search-policy.js";
+import {
+  PREFERRED_SEARCH_GUIDANCE,
+  SEARCH_POLICY_GUIDANCE,
+  SearchPolicy,
+} from "./search-policy.js";
 import { signalGrepSchema } from "./tool-schema.js";
 
 const SIGNAL_GREP_LABEL = "baoer_signal_grep";
@@ -140,9 +145,11 @@ function ompAgentDir(): string {
     : join(homedir(), configDir, "agent");
 }
 
-function selectSearchTools(pi: OmpExtensionAPI): string[] {
+function selectSearchTools(pi: OmpExtensionAPI, replaceAlternatives: boolean): string[] {
   const current = pi.getActiveTools();
-  const next = current.filter((tool) => !OMP_REPLACED_SEARCH_TOOLS.has(tool));
+  const next = replaceAlternatives
+    ? current.filter((tool) => !OMP_REPLACED_SEARCH_TOOLS.has(tool))
+    : [...current];
   if (!next.includes(SIGNAL_GREP_LABEL)) next.push(SIGNAL_GREP_LABEL);
   return next;
 }
@@ -173,10 +180,14 @@ export async function registerOmpSignalGrepExtension(
   const resolvedConfig =
     config ?? (await readSignalGrepConfigFile(join(ompAgentDir(), SIGNAL_GREP_CONFIG_FILE)));
   const { locale } = resolvedConfig;
+  const enforcement = normalizeSearchEnforcement(
+    resolvedConfig.enforceSearch,
+    "OMP extension config",
+  );
   let selection = Promise.resolve();
   const updateSelection = async (): Promise<void> => {
     const current = pi.getActiveTools();
-    const next = selectSearchTools(pi);
+    const next = selectSearchTools(pi, enforcement === "hard");
     if (toolSelectionChanged(current, next)) await pi.setActiveTools(next);
   };
   const selectTools = (): Promise<void> => {
@@ -217,13 +228,15 @@ export async function registerOmpSignalGrepExtension(
     },
   });
 
-  if (resolvedConfig.enforceSearch !== false) {
+  if (enforcement !== "off") {
     pi.on("session_start", selectTools);
     pi.on("before_agent_start", async (event) => {
       await selectTools();
-      return { systemPrompt: [...event.systemPrompt, SEARCH_POLICY_GUIDANCE] };
+      const guidance = enforcement === "hard" ? SEARCH_POLICY_GUIDANCE : PREFERRED_SEARCH_GUIDANCE;
+      return { systemPrompt: [...event.systemPrompt, guidance] };
     });
-    pi.on("tool_call", (event) => policy.check(event.toolName, event.input));
+    if (enforcement === "hard")
+      pi.on("tool_call", (event) => policy.check(event.toolName, event.input));
   }
 
   pi.on("session_shutdown", async (_event, ctx) => {

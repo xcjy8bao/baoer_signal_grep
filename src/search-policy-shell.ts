@@ -10,6 +10,20 @@ import {
 export const MAX_POLICY_COMMAND_BYTES = 64 * 1024;
 const MAX_SHELL_NESTING = 4;
 
+export interface ShellSearchMatch {
+  kind: SearchKind;
+  command: string;
+  commandIndex: number;
+  startByte: number;
+  endByte: number;
+  nestedDepth: number;
+  language: ShellLanguage;
+}
+
+interface InspectionState {
+  nextCommandIndex: number;
+}
+
 function literalWord(node: Node, language: ShellLanguage): string | null {
   const text = node.text;
   if (language === "powershell") {
@@ -91,7 +105,7 @@ export class ShellSearchPolicy {
     this.#assets = assets;
   }
 
-  async inspect(command: string, language: ShellLanguage): Promise<SearchKind | undefined> {
+  async inspect(command: string, language: ShellLanguage): Promise<ShellSearchMatch | undefined> {
     if (Buffer.byteLength(command, "utf8") > MAX_POLICY_COMMAND_BYTES)
       throw new Error("Search policy command exceeds 64 KiB; split the shell request");
     this.#initialization ??= Parser.init({
@@ -111,7 +125,7 @@ export class ShellSearchPolicy {
       this.#languages.get("powershell"),
     ]);
     if (!bash || !powershell) throw new Error("Search policy grammar initialization failed");
-    return this.#inspect(command, language, { bash, powershell }, 0);
+    return this.#inspect(command, language, { bash, powershell }, 0, { nextCommandIndex: 1 });
   }
 
   #inspect(
@@ -119,7 +133,8 @@ export class ShellSearchPolicy {
     language: ShellLanguage,
     grammars: Record<ShellLanguage, Language>,
     depth: number,
-  ): SearchKind | undefined {
+    state: InspectionState,
+  ): ShellSearchMatch | undefined {
     if (depth > MAX_SHELL_NESTING)
       throw new Error("Search policy shell nesting exceeds 4 levels; simplify the command");
     const parser = new Parser();
@@ -135,19 +150,30 @@ export class ShellSearchPolicy {
         const commands = tree.rootNode.descendantsOfType("command");
         for (const node of commands) {
           if (!node) continue;
+          const commandIndex = state.nextCommandIndex;
+          state.nextCommandIndex += 1;
           const words = commandWords(node, language);
           const decision = classifyCommand(words, language);
           if (
             decision.kind &&
             !(decision.kind === "content" && isSafePipelineFilter(node, language, words))
           )
-            return decision.kind;
+            return {
+              kind: decision.kind,
+              command: decision.command ?? "search command",
+              commandIndex,
+              startByte: node.startIndex,
+              endByte: node.endIndex,
+              nestedDepth: depth,
+              language,
+            };
           if (decision.nested) {
             const nested = this.#inspect(
               decision.nested.command,
               decision.nested.language,
               grammars,
               depth + 1,
+              state,
             );
             if (nested) return nested;
           }

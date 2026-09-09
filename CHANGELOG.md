@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0] - 2026-09-09
+
+- Identify the exact Bash or PowerShell subcommand that triggered strict native search enforcement, including its sequence and bounded source position, while preserving the existing allow/deny policy. Denials now explain that the host call is atomic and instruct agents to split non-search work before routing only the search through `baoer_signal_grep`.
+- Add explicit `"hard"`, `"prefer"`, and `"off"` search-enforcement modes while retaining `true` and `false` configuration compatibility. Hard enforcement remains the default; prefer mode keeps the dedicated tool and model guidance without denying conventional searches.
+- Let Claude Code, Codex and Kimi native hooks select enforcement through `BAOER_SIGNAL_GREP_ENFORCE_SEARCH=hard|prefer|off`. Missing configuration remains hard, and unsupported values fail closed with a visible configuration error.
+- Document why output-only pipeline filters remain available while direct content searches and pipelines containing another search producer remain blocked.
+
 ## [1.3.2] - 2026-09-09
 
 - Reduce the native model-host MCP description and workflow instructions while preserving ordinary search, strict scope, completeness, cursor and inspection recovery guidance. Structured and text consumers retain the full compatibility instructions.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { SearchPolicy } from "./search-policy.js";
+import { readNativeSearchEnforcement } from "./config-reader.js";
 
 const MAX_HOOK_INPUT_BYTES = 256 * 1024;
 
@@ -28,6 +29,7 @@ const inputTimer = setTimeout(() => {
 try {
   const input = await hookInput();
   clearTimeout(inputTimer);
+  const enforcement = readNativeSearchEnforcement();
   if (
     typeof input !== "object" ||
     input === null ||
@@ -38,16 +40,21 @@ try {
     !("tool_input" in input)
   )
     throw new Error("Search policy received an invalid PreToolUse payload");
-  const decision = await new SearchPolicy(new URL("./", import.meta.url)).check(
-    input.tool_name,
-    input.tool_input,
-  );
+  const decision =
+    enforcement === "hard"
+      ? await new SearchPolicy(new URL("./", import.meta.url)).check(
+          input.tool_name,
+          input.tool_input,
+        )
+      : undefined;
   if (decision) deny(decision.reason);
 } catch (error) {
   clearTimeout(inputTimer);
   // Do not echo command text, paths, or JSON parse errors that could contain credentials.
   deny(
-    error instanceof Error && error.message.startsWith("Search policy")
+    error instanceof Error &&
+      (error.message.startsWith("Search policy") ||
+        error.message.startsWith("Invalid baoer_signal_grep environment variable"))
       ? error.message
       : "baoer_signal_grep search policy failed; repair or disable this plugin before retrying",
   );

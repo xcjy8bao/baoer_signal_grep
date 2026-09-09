@@ -76,7 +76,7 @@ To use your own ripgrep, set `BAOER_SIGNAL_GREP_RG_PATH` in the MCP server or Pi
 pi install npm:baoer_signal_grep
 ```
 
-Restart Pi after installing or updating. Pi uses this plugin for conventional searches by default; reads, edits, tests, builds and scripts remain available. To turn enforcement off, set `"enforceSearch": false` in `~/.pi/agent/baoer_signal_grep.json` and restart. Set `"locale": "zh-CN"` there for the Chinese interface.
+Restart Pi after installing or updating. Pi uses this plugin for conventional searches by default; reads, edits, tests, builds and scripts remain available. `enforceSearch` accepts `"hard"` (the default), `"prefer"` (keep the dedicated tool and guidance without denying alternative searches), or `"off"`. Existing `true` and `false` values remain aliases for `"hard"` and `"off"`. Configure it in `~/.pi/agent/baoer_signal_grep.json`, then restart. Set `"locale": "zh-CN"` there for the Chinese interface.
 
 ### OMP (Oh My Pi)
 
@@ -84,7 +84,7 @@ Restart Pi after installing or updating. Pi uses this plugin for conventional se
 omp install npm:baoer_signal_grep@latest
 ```
 
-Restart OMP after installing or updating. The package declares its native OMP extension, which registers `baoer_signal_grep`, removes OMP's built-in `grep` and `glob` entries from the active tool set, and blocks direct search commands while leaving reads, edits, tests, builds and other development tools available. OMP's active profile is respected; the default configuration file is `~/.omp/agent/baoer_signal_grep.json`, and a named profile uses `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`. Set `"enforceSearch": false` in the active file to disable OMP enforcement, then restart OMP. Set `"locale": "zh-CN"` to use the Chinese interface.
+Restart OMP after installing or updating. The package declares its native OMP extension and registers `baoer_signal_grep`. In the default hard mode it removes OMP's built-in `grep` and `glob` entries from the active tool set and blocks direct search commands while leaving reads, edits, tests, builds and other development tools available. Prefer mode keeps both the dedicated and alternative tools active, adds model guidance, and does not deny shell searches. OMP's active profile is respected; the default configuration file is `~/.omp/agent/baoer_signal_grep.json`, and a named profile uses `~/.omp/profiles/<profile>/agent/baoer_signal_grep.json`. Set `enforceSearch` to `"hard"` (default), `"prefer"`, or `"off"` in the active file, then restart OMP. Existing `true` and `false` values remain compatible. Set `"locale": "zh-CN"` to use the Chinese interface.
 
 ### Claude Code or Codex: MCP connection
 
@@ -112,7 +112,9 @@ For conventional search enforcement in other hosts:
 
 Kimi Code's web mode can start plugin MCP servers from its installation directory. If relative MCP searches resolve to the wrong project, keep the native plugin for search enforcement and add a project-local `.kimi-code/mcp.json` entry with the same `baoer_signal_grep` server and an explicit absolute `cwd` for that project.
 
-Restart after installation. To disable, use Claude Code `/plugin`, Codex `/hooks`, or Kimi `/plugins disable baoer-signal-grep` followed by `/reload`.
+Restart after installation. Native hooks use hard enforcement by default. To keep the native plugin, MCP tool and model guidance without denying conventional searches, start the host with `BAOER_SIGNAL_GREP_ENFORCE_SEARCH=prefer`; use `off` to disable only hook enforcement. Accepted values are `hard`, `prefer`, and `off`; an unsupported value fails closed instead of silently allowing a search. The setting is inherited from the host process, so a project cannot lower a user's policy merely by committing a repository configuration file. You can still disable the complete integration through Claude Code `/plugin`, Codex `/hooks`, or Kimi `/plugins disable baoer-signal-grep` followed by `/reload`.
+
+In hard mode, a direct search such as `grep warning report.txt` is denied. A trailing filter such as `cat report.txt | grep warning` remains available because it filters output from a non-search producer; `find src | grep test` and `rg warning src | grep result` remain denied because their pipelines already contain a direct search producer. If one subcommand in a compound shell call is denied, the host executes none of that call. The denial identifies the detected search and tells the agent to retry non-search operations separately.
 
 Local searches stay on your machine. Only grant access to files your agent is allowed to read. HTTP deployments need an authenticated gateway before public exposure; see [Security](SECURITY.md).
 

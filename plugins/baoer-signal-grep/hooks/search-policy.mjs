@@ -3314,12 +3314,12 @@ function classifyCommand(argv, language, depth = 0) {
   if (args2.length === 1 && (args2[0] === "--help" || args2[0] === "--version"))
     return {};
   if (contentCommands.has(name2))
-    return { kind: "content" };
+    return { kind: "content", command: name2 };
   if (fileCommands.has(name2))
-    return { kind: "files" };
+    return { kind: "files", command: name2 };
   if (language === "powershell") {
     if (name2 === "select-string" || name2 === "sls")
-      return { kind: "content" };
+      return { kind: "content", command: name2 };
     if (["get-childitem", "gci", "dir", "ls"].includes(name2) && args2.some((arg, index) => {
       if (arg === null)
         return false;
@@ -3329,10 +3329,10 @@ function classifyCommand(argv, language, depth = 0) {
         return false;
       return /[*?[]/u.test(arg);
     }))
-      return { kind: "files" };
+      return { kind: "files", command: name2 };
   }
   if (name2 === "git") {
-    return args2[afterOptions(args2, gitValueOptions)] === "grep" ? { kind: "content" } : {};
+    return args2[afterOptions(args2, gitValueOptions)] === "grep" ? { kind: "content", command: "git grep" } : {};
   }
   if (["bash", "sh", "zsh", "dash", "ksh"].includes(name2)) {
     const index = args2.findIndex((arg) => arg !== null && /^-[a-z]*c[a-z]*$/u.test(arg));
@@ -3449,9 +3449,9 @@ class ShellSearchPolicy {
     ]);
     if (!bash || !powershell)
       throw new Error("Search policy grammar initialization failed");
-    return this.#inspect(command, language, { bash, powershell }, 0);
+    return this.#inspect(command, language, { bash, powershell }, 0, { nextCommandIndex: 1 });
   }
-  #inspect(command, language, grammars, depth) {
+  #inspect(command, language, grammars, depth, state) {
     if (depth > MAX_SHELL_NESTING)
       throw new Error("Search policy shell nesting exceeds 4 levels; simplify the command");
     const parser = new Parser;
@@ -3468,12 +3468,22 @@ class ShellSearchPolicy {
         for (const node of commands) {
           if (!node)
             continue;
+          const commandIndex = state.nextCommandIndex;
+          state.nextCommandIndex += 1;
           const words = commandWords(node, language);
           const decision = classifyCommand(words, language);
           if (decision.kind && !(decision.kind === "content" && isSafePipelineFilter(node, language, words)))
-            return decision.kind;
+            return {
+              kind: decision.kind,
+              command: decision.command ?? "search command",
+              commandIndex,
+              startByte: node.startIndex,
+              endByte: node.endIndex,
+              nestedDepth: depth,
+              language
+            };
           if (decision.nested) {
-            const nested = this.#inspect(decision.nested.command, decision.nested.language, grammars, depth + 1);
+            const nested = this.#inspect(decision.nested.command, decision.nested.language, grammars, depth + 1, state);
             if (nested)
               return nested;
           }
@@ -3505,11 +3515,21 @@ var shellTools = new Set([
 function isInputRecord(input) {
   return typeof input === "object" && input !== null && !Array.isArray(input);
 }
-function blocked(kind) {
-  const request = kind === "files" ? '{"mode":"files","query":"<filename or path>","path":"<scope>"}' : '{"pattern":"<search text>","path":"<scope>","scope":"strict"}';
+function recovery(kind) {
+  return kind === "files" ? '{"mode":"files","query":"<filename or path>","path":"<scope>"}' : '{"pattern":"<search text>","path":"<scope>","scope":"strict"}';
+}
+function blockedMatch(match) {
+  const location = match.nestedDepth > 0 ? `nested ${match.language} command #${match.commandIndex}` : `${match.language} subcommand #${match.commandIndex}`;
+  const request = recovery(match.kind);
   return {
     block: true,
-    reason: `baoer_signal_grep search policy: the entire tool call was denied before execution; none of its commands or operations ran. Call the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked call. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy blocked ${location} (${match.command} …, bytes ${match.startByte}-${match.endByte}) as a direct ${match.kind} search. The host shell call is atomic: the entire tool call was denied before execution, so none of its commands or operations ran. Split non-search operations into a separate shell call, then route only the detected search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked search through another shell or custom script. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+  };
+}
+function blockedTool(kind, toolName) {
+  return {
+    block: true,
+    reason: `baoer_signal_grep search policy blocked direct ${kind} tool ${toolName}. The entire tool call was denied before execution. Route the search through the available baoer_signal_grep tool (possibly MCP-prefixed) with ${recovery(kind)}. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
   };
 }
 
@@ -3521,9 +3541,9 @@ class SearchPolicy {
   async check(toolName, input, signal) {
     signal?.throwIfAborted();
     if (contentTools.has(toolName))
-      return blocked("content");
+      return blockedTool("content", toolName);
     if (fileTools.has(toolName))
-      return blocked("files");
+      return blockedTool("files", toolName);
     if (!shellTools.has(toolName))
       return;
     if (!isInputRecord(input))
@@ -3534,10 +3554,26 @@ class SearchPolicy {
       throw new Error("Search policy expected a shell command string");
     const shell = typeof fields.shell === "string" ? fields.shell : "";
     const language = /powershell|pwsh/iu.test(`${toolName} ${shell}`) || process.platform === "win32" && toolName !== "bash" ? "powershell" : "bash";
-    const kind = await this.#shell.inspect(command, language);
+    const match = await this.#shell.inspect(command, language);
     signal?.throwIfAborted();
-    return kind ? blocked(kind) : undefined;
+    return match ? blockedMatch(match) : undefined;
   }
+}
+
+// src/config-reader.ts
+var SIGNAL_GREP_ENFORCEMENT_ENV = "BAOER_SIGNAL_GREP_ENFORCE_SEARCH";
+function normalizeSearchEnforcement(value, source) {
+  if (value === undefined || value === true || value === "hard")
+    return "hard";
+  if (value === "prefer")
+    return "prefer";
+  if (value === false || value === "off")
+    return "off";
+  throw new Error(`Invalid baoer_signal_grep ${source}: enforceSearch must be true, false, "hard", "prefer", or "off"`);
+}
+function readNativeSearchEnforcement(environment = process.env) {
+  const value = environment[SIGNAL_GREP_ENFORCEMENT_ENV];
+  return normalizeSearchEnforcement(value, `environment variable ${SIGNAL_GREP_ENFORCEMENT_ENV}`);
 }
 
 // src/search-policy-hook.ts
@@ -3566,12 +3602,13 @@ var inputTimer = setTimeout(() => {
 try {
   const input = await hookInput();
   clearTimeout(inputTimer);
+  const enforcement = readNativeSearchEnforcement();
   if (typeof input !== "object" || input === null || !("hook_event_name" in input) || input.hook_event_name !== "PreToolUse" || !("tool_name" in input) || typeof input.tool_name !== "string" || !("tool_input" in input))
     throw new Error("Search policy received an invalid PreToolUse payload");
-  const decision = await new SearchPolicy(new URL("./", import.meta.url)).check(input.tool_name, input.tool_input);
+  const decision = enforcement === "hard" ? await new SearchPolicy(new URL("./", import.meta.url)).check(input.tool_name, input.tool_input) : undefined;
   if (decision)
     deny(decision.reason);
 } catch (error) {
   clearTimeout(inputTimer);
-  deny(error instanceof Error && error.message.startsWith("Search policy") ? error.message : "baoer_signal_grep search policy failed; repair or disable this plugin before retrying");
+  deny(error instanceof Error && (error.message.startsWith("Search policy") || error.message.startsWith("Invalid baoer_signal_grep environment variable")) ? error.message : "baoer_signal_grep search policy failed; repair or disable this plugin before retrying");
 }

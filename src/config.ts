@@ -8,8 +8,10 @@ import {
 
 export {
   DEFAULT_SIGNAL_GREP_CONFIG,
+  normalizeSearchEnforcement,
   type SignalGrepConfig,
   type SignalGrepLocale,
+  type SearchEnforcementMode,
 } from "./config-reader.js";
 
 export function signalGrepConfigPath(agentDir = getAgentDir()): string {
