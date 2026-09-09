@@ -12,7 +12,7 @@ import {
   MAX_CONCEPT_WORKER_OUTPUT_BYTES,
   resolveConceptTimeoutMs,
 } from "./concept-model.js";
-import { abortError, SignalGrepError } from "./errors.js";
+import { abortError, ConceptUnavailableError, SignalGrepError } from "./errors.js";
 import { runOwnedProcess } from "./owned-process.js";
 import { rpcRecord } from "./owned-json-rpc.js";
 import { normalizeRequest } from "./request.js";
@@ -114,10 +114,6 @@ async function similarities(
 ): Promise<ConceptInferenceResult> {
   const worker = fileURLToPath(new URL("./concept-worker.mjs", import.meta.url));
   const config = fileURLToPath(new URL("./syntax-worker.toml", import.meta.url));
-  const controller = new AbortController();
-  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timeoutMs = resolveConceptTimeoutMs();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers: Buffer[] = [];
@@ -138,7 +134,7 @@ async function similarities(
           : [worker, "--infer"],
         cwd: dirname(worker),
         env,
-        signal,
+        ...(parent ? { signal: parent } : {}),
         input: Buffer.from(
           JSON.stringify({
             query,
@@ -156,7 +152,7 @@ async function similarities(
       },
     );
     if (processResult.code !== 0)
-      throw new SignalGrepError(
+      throw new ConceptUnavailableError(
         `Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`,
       );
     const value: unknown = JSON.parse(Buffer.concat(buffers).toString("utf8"));
@@ -200,11 +196,11 @@ async function similarities(
     };
   } catch (error) {
     if (parent?.aborted) throw abortError();
-    if (controller.signal.aborted)
-      throw new SignalGrepError(`Concept inference exceeded the ${String(timeoutMs)} ms deadline`);
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    if (error instanceof ConceptUnavailableError) throw error;
+    const message = error instanceof Error ? error.message : "unknown provider failure";
+    throw new ConceptUnavailableError(`Local concept inference failed: ${message}`, {
+      cause: error,
+    });
   }
 }
 
@@ -362,12 +358,48 @@ export function conceptSearch(
   input: SignalGrepInput,
   access: SourceAccess,
 ): Promise<AnalysisResultSet> {
-  return inferenceQueue.run(() => runConceptSearch(input, access, similarities), access.signal);
+  return runConceptSearchWithDeadline(input, access, similarities);
 }
 
 export type ConceptSearchRunner = typeof conceptSearch;
 
-export function createConceptSearchRunner(infer: ConceptInferenceRunner): ConceptSearchRunner {
-  return (input, access) =>
-    inferenceQueue.run(() => runConceptSearch(input, access, infer), access.signal);
+type ConceptTimeoutResolver = () => number;
+
+async function runConceptSearchWithDeadline(
+  input: SignalGrepInput,
+  access: SourceAccess,
+  infer: ConceptInferenceRunner,
+  timeout: ConceptTimeoutResolver = resolveConceptTimeoutMs,
+): Promise<AnalysisResultSet> {
+  const timeoutMs = timeout();
+  const controller = new AbortController();
+  const signal = access.signal
+    ? AbortSignal.any([access.signal, controller.signal])
+    : controller.signal;
+  const scopedAccess = access.withSignal(signal);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await inferenceQueue.run(
+      () => runConceptSearch(input, scopedAccess, infer),
+      scopedAccess.signal,
+    );
+  } catch (error) {
+    if (access.signal?.aborted) throw abortError();
+    if (controller.signal.aborted) {
+      throw new ConceptUnavailableError(
+        `Concept request exceeded the ${String(timeoutMs)} ms deadline`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createConceptSearchRunner(
+  infer: ConceptInferenceRunner,
+  timeout?: ConceptTimeoutResolver,
+): ConceptSearchRunner {
+  return (input, access) => runConceptSearchWithDeadline(input, access, infer, timeout);
 }

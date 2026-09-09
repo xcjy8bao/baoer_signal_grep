@@ -162,6 +162,13 @@ class SignalGrepError extends Error {
   }
 }
 
+class ConceptUnavailableError extends SignalGrepError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ConceptUnavailableError";
+  }
+}
+
 class CursorError extends SignalGrepError {
   code;
   constructor(message, code = "E_CURSOR_MALFORMED") {
@@ -4030,6 +4037,9 @@ class SourceAccess {
   get syntaxCacheHits() {
     return this.#syntaxCacheHits;
   }
+  withSignal(signal) {
+    return new SourceAccess(this.cwd, this.#queue, signal, { maxFiles: this.#maxFiles });
+  }
   async load(path, expected) {
     if (this.signal?.aborted)
       throw abortError();
@@ -4173,10 +4183,6 @@ function passage(document2, start2) {
 async function similarities(query, passages, parent) {
   const worker = fileURLToPath3(new URL("./concept-worker.mjs", import.meta.url));
   const config = fileURLToPath3(new URL("./syntax-worker.toml", import.meta.url));
-  const controller = new AbortController;
-  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-  const timeoutMs = resolveConceptTimeoutMs();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   const buffers = [];
@@ -4194,7 +4200,7 @@ async function similarities(query, passages, parent) {
       ] : [worker, "--infer"],
       cwd: dirname4(worker),
       env,
-      signal,
+      ...parent ? { signal: parent } : {},
       input: Buffer.from(JSON.stringify({
         query,
         encodedPassages: passages.map((item) => Buffer.from(item.text).toString("base64"))
@@ -4208,7 +4214,7 @@ async function similarities(query, passages, parent) {
       }
     });
     if (processResult.code !== 0)
-      throw new SignalGrepError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
+      throw new ConceptUnavailableError(`Local concept inference failed (${String(processResult.code)}): ${conciseWorkerError(processResult.stderr)}`);
     const value = JSON.parse(Buffer.concat(buffers).toString("utf8"));
     if (!rpcRecord(value) || !Array.isArray(value.scores) || value.scores.length !== passages.length || value.scores.some((score) => typeof score !== "number" || !Number.isFinite(score)) || typeof value.cacheHits !== "number" || !Number.isSafeInteger(value.cacheHits) || value.cacheHits < 0 || typeof value.cacheMisses !== "number" || !Number.isSafeInteger(value.cacheMisses) || value.cacheMisses < 0 || typeof value.cacheMaxBytes !== "number" || !Number.isSafeInteger(value.cacheMaxBytes) || value.cacheMaxBytes <= 0 || value.cacheBytes !== undefined && (typeof value.cacheBytes !== "number" || !Number.isSafeInteger(value.cacheBytes) || value.cacheBytes < 0) || typeof value.windowsRanked !== "number" || !Number.isSafeInteger(value.windowsRanked) || value.windowsRanked < passages.length || !Array.isArray(value.warnings) || value.warnings.some((warning) => typeof warning !== "string") || typeof value.peakRssBytes !== "number" || !Number.isFinite(value.peakRssBytes) || value.peakRssBytes < 0)
       throw new SignalGrepError("Invalid concept inference response");
@@ -4225,11 +4231,12 @@ async function similarities(query, passages, parent) {
   } catch (error) {
     if (parent?.aborted)
       throw abortError();
-    if (controller.signal.aborted)
-      throw new SignalGrepError(`Concept inference exceeded the ${String(timeoutMs)} ms deadline`);
-    throw error;
-  } finally {
-    clearTimeout(timer);
+    if (error instanceof ConceptUnavailableError)
+      throw error;
+    const message = error instanceof Error ? error.message : "unknown provider failure";
+    throw new ConceptUnavailableError(`Local concept inference failed: ${message}`, {
+      cause: error
+    });
   }
 }
 function validateConceptQuery(query) {
@@ -4369,7 +4376,26 @@ async function runConceptSearch(input, access2, infer) {
   return result;
 }
 function conceptSearch(input, access2) {
-  return inferenceQueue.run(() => runConceptSearch(input, access2, similarities), access2.signal);
+  return runConceptSearchWithDeadline(input, access2, similarities);
+}
+async function runConceptSearchWithDeadline(input, access2, infer, timeout = resolveConceptTimeoutMs) {
+  const timeoutMs = timeout();
+  const controller = new AbortController;
+  const signal = access2.signal ? AbortSignal.any([access2.signal, controller.signal]) : controller.signal;
+  const scopedAccess = access2.withSignal(signal);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await inferenceQueue.run(() => runConceptSearch(input, scopedAccess, infer), scopedAccess.signal);
+  } catch (error) {
+    if (access2.signal?.aborted)
+      throw abortError();
+    if (controller.signal.aborted) {
+      throw new ConceptUnavailableError(`Concept request exceeded the ${String(timeoutMs)} ms deadline`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // src/structural-search.ts
@@ -8799,6 +8825,8 @@ class EvidenceService {
             return;
           }).catch((error) => {
             if (signal?.aborted || groupSignal.aborted)
+              throw error;
+            if (!(error instanceof ConceptUnavailableError))
               throw error;
             conceptFailure = error;
             return;
