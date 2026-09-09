@@ -253,7 +253,8 @@ var MAX_MODEL_ERROR_CHARACTERS = 1024;
 var MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
 function errorMessage(error) {
   try {
-    return error instanceof Error ? error.message : String(error);
+    const value = error instanceof Error ? error.message : error;
+    return String(value);
   } catch {
     return "unreadable failure";
   }

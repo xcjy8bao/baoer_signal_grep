@@ -3,7 +3,8 @@ const MODEL_ERROR_PREFIX = "baoer_signal_grep failed:";
 
 function errorMessage(error: unknown): string {
   try {
-    return error instanceof Error ? error.message : String(error);
+    const value: unknown = error instanceof Error ? error.message : error;
+    return String(value);
   } catch {
     return "unreadable failure";
   }
