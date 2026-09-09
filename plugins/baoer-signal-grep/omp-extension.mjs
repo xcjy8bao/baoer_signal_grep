@@ -7466,6 +7466,9 @@ class SourceContinuations {
 
 // src/source-inspection.ts
 import { resolve as resolve20 } from "path";
+function usesDocumentLineWindow(path) {
+  return /\.(?:md|markdown)$/iu.test(path);
+}
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -7529,7 +7532,7 @@ async function prepare(target, access2, structure) {
         };
       }
     }
-  } else if (document2.utf8 && structure && document2.reference.origin.kind === "worktree" && !target.range) {
+  } else if (document2.utf8 && structure && document2.reference.origin.kind === "worktree" && !target.range && !usesDocumentLineWindow(document2.path)) {
     const result = await structure.inspect({
       absolutePath: resolve20(access2.cwd, target.path),
       cwd: access2.cwd,
@@ -7541,6 +7544,8 @@ async function prepare(target, access2, structure) {
       throw new SourceDocumentError(details.status === "source-changed" ? "source-changed" : "source-unavailable", `Source inspection: ${details.status}`);
     if (details.range)
       range = document2.lineRange(details.range.startLine, Math.min(details.range.endLine, document2.lineStarts.length));
+  } else if (usesDocumentLineWindow(document2.path)) {
+    details = { status: "no-symbol" };
   } else {
     details = { status: "provider-unavailable", ...language ? { language } : {} };
   }
@@ -7554,7 +7559,8 @@ function boundaryNote(block) {
     const fallback = block.prepared.find((prepared) => prepared.boundary === "line-window");
     const status = fallback?.structure.status;
     const provider = fallback?.structure.provider;
-    return "; syntax boundary unavailable" + (status ? " (" + status + (provider ? " via " + provider : "") + ")" : "") + "; bounded line window";
+    const diagnostic = status === "no-symbol" && provider === undefined ? "" : status ? " (" + status + (provider ? " via " + provider : "") + ")" : "";
+    return "; syntax boundary unavailable" + diagnostic + "; bounded line window";
   }
   return block.boundary === "requested-range" ? "; requested range; syntax boundary not inferred" : "";
 }
@@ -7582,7 +7588,7 @@ function blockDetails(block) {
   };
 }
 function render(items, blocks, single) {
-  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
+  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure && !(item.structure.status === "no-symbol" && item.structure.provider === undefined) ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
 Retry: ${JSON.stringify(item.retry)}` : ""}`);
   const sourceRows = blocks.map((block, index) => {
     const origin = block.document.reference.origin.kind === "git" ? "commit " + block.document.reference.origin.commit + "; blob " + block.document.reference.origin.blob : "source sha256 " + block.document.reference.origin.contentHash;
@@ -8811,7 +8817,7 @@ class EvidenceService {
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
       return this.#navigate(input, access2);
-    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search");
+    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search", false, "a new search accepts one path; split multiple paths into separate requests without widening their scope");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
       if (input.pattern !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined || input.wholeWord !== undefined)
@@ -21527,7 +21533,7 @@ function blocked(kind) {
   const request = kind === "files" ? '{"mode":"files","query":"<filename or path>","path":"<scope>"}' : '{"pattern":"<search text>","path":"<scope>","scope":"strict"}';
   return {
     block: true,
-    reason: `baoer_signal_grep search policy: this search entry is disabled. Call the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat this command. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
+    reason: `baoer_signal_grep search policy: the entire tool call was denied before execution; none of its commands or operations ran. Call the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked call. If the plugin is unavailable, report the connection error instead of bypassing the policy.`
   };
 }
 
@@ -25904,7 +25910,7 @@ var signalGrepSchema = exports_typebox.Object({
   paths: exports_typebox.Optional(exports_typebox.Array(exports_typebox.String(), {
     minItems: 1,
     maxItems: MAX_SELECTED_PATHS,
-    description: "Exact retained files to select together from a cursor; unavailable for a new search."
+    description: "Exact retained files to select together from a cursor. A new search accepts one path; split multiple roots into separate requests."
   })),
   glob: exports_typebox.Optional(exports_typebox.Union([
     exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }),

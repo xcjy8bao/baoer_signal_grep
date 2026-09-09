@@ -23,7 +23,11 @@ import { createRipgrepRunner } from "./rg.js";
 import { createCtagsStructureProvider } from "./structure.js";
 import { SignalGrepService, type SignalGrepInput } from "./service.js";
 import { signalGrepMcpInstructions } from "./prompt-guidelines.js";
-import { SIGNAL_GREP_DESCRIPTION, signalGrepSchema } from "./tool-schema.js";
+import {
+  SIGNAL_GREP_DESCRIPTION,
+  SIGNAL_GREP_MODEL_DESCRIPTION,
+  signalGrepSchema,
+} from "./tool-schema.js";
 
 export const BAOER_SIGNAL_GREP_MCP_PATH = "/mcp";
 export const DEFAULT_MCP_HOST = "127.0.0.1";
@@ -51,7 +55,7 @@ function signalGrepTool(outputMode: SignalGrepMcpOutputMode): Tool {
   const tool: Tool = {
     name: "baoer_signal_grep",
     title: "baoer_signal_grep",
-    description: SIGNAL_GREP_DESCRIPTION,
+    description: outputMode === "model" ? SIGNAL_GREP_MODEL_DESCRIPTION : SIGNAL_GREP_DESCRIPTION,
     // TypeBox and MCP both consume JSON Schema, but their TypeScript declarations are intentionally unrelated.
     // SAFETY: signalGrepSchema is runtime-validated TypeBox JSON Schema and matches MCP's input schema shape.
     // oxlint-disable-next-line no-unsafe-type-assertion -- this is the checked JSON Schema adapter boundary

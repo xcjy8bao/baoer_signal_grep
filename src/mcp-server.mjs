@@ -9,7 +9,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.3.1",
+  version: "1.3.2",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -7515,6 +7515,9 @@ class SourceContinuations {
 
 // src/source-inspection.ts
 import { resolve as resolve20 } from "node:path";
+function usesDocumentLineWindow(path) {
+  return /\.(?:md|markdown)$/iu.test(path);
+}
 function legacySourceTarget(target) {
   return {
     path: target.path,
@@ -7578,7 +7581,7 @@ async function prepare(target, access2, structure) {
         };
       }
     }
-  } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range) {
+  } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range && !usesDocumentLineWindow(document.path)) {
     const result = await structure.inspect({
       absolutePath: resolve20(access2.cwd, target.path),
       cwd: access2.cwd,
@@ -7590,6 +7593,8 @@ async function prepare(target, access2, structure) {
       throw new SourceDocumentError(details.status === "source-changed" ? "source-changed" : "source-unavailable", `Source inspection: ${details.status}`);
     if (details.range)
       range = document.lineRange(details.range.startLine, Math.min(details.range.endLine, document.lineStarts.length));
+  } else if (usesDocumentLineWindow(document.path)) {
+    details = { status: "no-symbol" };
   } else {
     details = { status: "provider-unavailable", ...language ? { language } : {} };
   }
@@ -7603,7 +7608,8 @@ function boundaryNote(block) {
     const fallback = block.prepared.find((prepared) => prepared.boundary === "line-window");
     const status = fallback?.structure.status;
     const provider = fallback?.structure.provider;
-    return "; syntax boundary unavailable" + (status ? " (" + status + (provider ? " via " + provider : "") + ")" : "") + "; bounded line window";
+    const diagnostic = status === "no-symbol" && provider === undefined ? "" : status ? " (" + status + (provider ? " via " + provider : "") + ")" : "";
+    return "; syntax boundary unavailable" + diagnostic + "; bounded line window";
   }
   return block.boundary === "requested-range" ? "; requested range; syntax boundary not inferred" : "";
 }
@@ -7631,7 +7637,7 @@ function blockDetails(block) {
   };
 }
 function render(items, blocks, single) {
-  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
+  const rows = items.map((item) => `Target #${item.inputIndex} ${item.path ?? ""}:${item.line ?? ""}: ${item.status}${item.block ? `; Block #${item.block}` : ""}${item.structure && !(item.structure.status === "no-symbol" && item.structure.provider === undefined) ? ` [structure: ${item.structure.status}${item.structure.provider ? ` via ${item.structure.provider}` : ""}${item.structure.reason ? `; ${item.structure.reason}` : ""}]` : ""}${item.structure?.symbol ? ` ${item.structure.symbol.name} (${item.structure.symbol.kind}) lines ${item.structure.symbol.range.startLine}-${item.structure.symbol.range.endLine}` : ""}${item.error ? `; ${item.error}` : ""}${item.retry ? `
 Retry: ${JSON.stringify(item.retry)}` : ""}`);
   const sourceRows = blocks.map((block, index) => {
     const origin = block.document.reference.origin.kind === "git" ? "commit " + block.document.reference.origin.commit + "; blob " + block.document.reference.origin.blob : "source sha256 " + block.document.reference.origin.contentHash;
@@ -8860,7 +8866,7 @@ class EvidenceService {
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
       return this.#navigate(input, access2);
-    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search");
+    rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search", false, "a new search accepts one path; split multiple paths into separate requests without widening their scope");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
       if (input.pattern !== undefined || input.allOf !== undefined || input.within !== undefined || input.roles !== undefined || input.literal !== undefined || input.ignoreCase !== undefined || input.wholeWord !== undefined)
@@ -10480,12 +10486,19 @@ function signalGrepPromptGuidelines(structuredOutput = true) {
     structuredOutput ? `When status=partial, read details.analysis.coverage to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.` : `When status=partial, read the visible Coverage and bracketed reasons to see which conclusion is incomplete; an exact occurrence count may remain complete even when syntax or related-test analysis is partial.`
   ];
 }
+function signalGrepModelGuidelines() {
+  return [
+    `Search contents with pattern and optional path; literal=true avoids regex escaping. Omit mode and limit for automatic detail/summary. An omitted path uses cwd; scope:"strict" forbids zero-result expansion. paths is only for selecting retained files from a returned cursor, so split new searches that have multiple roots.`,
+    `Use returned exact matches directly when they contain enough context. Otherwise copy the visible cursor, nextRequest, or inspect selector exactly; batch inspect at most ${String(MAX_INSPECT_TARGETS)} locations. A partial status is not complete: read coverage and continue any returned request needed for the conclusion.`,
+    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`
+  ];
+}
 function signalGrepMcpInstructions(outputMode = DEFAULT_MCP_OUTPUT_MODE) {
   const outputInstruction = outputMode === "structured" ? "Successful MCP results provide text (the complete formatted evidence page) and details (counts, coverage and continuation selectors). The text content block contains the same page. Use either representation; do not treat the two copies as separate evidence." : outputMode === "model" ? "Successful MCP results provide one model-facing text page. Compact analysis rows share their path and inspect cursor; use the numbered item with the visible inspect template, and copy continuation requests exactly." : "Successful MCP results provide one complete formatted text page, including counts, coverage and continuation selectors.";
   return [
     "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
     outputInstruction,
-    ...signalGrepPromptGuidelines(outputMode === "structured")
+    ...outputMode === "model" ? signalGrepModelGuidelines() : signalGrepPromptGuidelines(outputMode === "structured")
   ].join(`
 `);
 }
@@ -10500,6 +10513,7 @@ function stringEnum(values, options) {
   });
 }
 var SIGNAL_GREP_DESCRIPTION = "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, ranks every passage admitted by the source budget through token-safe windows, reuses a bounded local content-addressed embedding cache, and exposes scoreProfile/cache coverage without deciding relevance thresholds. mode=hybrid always runs exact literal and local concept retrieval once, ranks exact evidence first, deduplicates overlapping semantic passages, and retains a bounded semantic supplement in one pageable snapshot. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
+var SIGNAL_GREP_MODEL_DESCRIPTION = "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. Partial status and coverage identify incomplete conclusions; semantic and static-analysis results are candidates, not proof.";
 var signalGrepSchema = Type.Object({
   column: Type.Optional(Type.Integer({
     minimum: 1,
@@ -10573,7 +10587,7 @@ var signalGrepSchema = Type.Object({
   paths: Type.Optional(Type.Array(Type.String(), {
     minItems: 1,
     maxItems: MAX_SELECTED_PATHS,
-    description: "Exact retained files to select together from a cursor; unavailable for a new search."
+    description: "Exact retained files to select together from a cursor. A new search accepts one path; split multiple roots into separate requests."
   })),
   glob: Type.Optional(Type.Union([
     Type.String({ maxLength: MAX_PATH_CHARACTERS }),
@@ -10697,7 +10711,7 @@ function signalGrepTool(outputMode) {
   const tool = {
     name: "baoer_signal_grep",
     title: "baoer_signal_grep",
-    description: SIGNAL_GREP_DESCRIPTION,
+    description: outputMode === "model" ? SIGNAL_GREP_MODEL_DESCRIPTION : SIGNAL_GREP_DESCRIPTION,
     inputSchema: signalGrepSchema,
     annotations: {
       title: "baoer_signal_grep",

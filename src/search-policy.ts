@@ -33,7 +33,7 @@ function blocked(kind: SearchKind): SearchPolicyDecision {
       : '{"pattern":"<search text>","path":"<scope>","scope":"strict"}';
   return {
     block: true,
-    reason: `baoer_signal_grep search policy: this search entry is disabled. Call the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat this command. If the plugin is unavailable, report the connection error instead of bypassing the policy.`,
+    reason: `baoer_signal_grep search policy: the entire tool call was denied before execution; none of its commands or operations ran. Call the available baoer_signal_grep tool (possibly MCP-prefixed) with ${request}. Do not repeat the blocked call. If the plugin is unavailable, report the connection error instead of bypassing the policy.`,
   };
 }
 

@@ -26,6 +26,14 @@ export function signalGrepPromptGuidelines(structuredOutput = true): string[] {
   ];
 }
 
+function signalGrepModelGuidelines(): string[] {
+  return [
+    `Search contents with pattern and optional path; literal=true avoids regex escaping. Omit mode and limit for automatic detail/summary. An omitted path uses cwd; scope:"strict" forbids zero-result expansion. paths is only for selecting retained files from a returned cursor, so split new searches that have multiple roots.`,
+    `Use returned exact matches directly when they contain enough context. Otherwise copy the visible cursor, nextRequest, or inspect selector exactly; batch inspect at most ${String(MAX_INSPECT_TARGETS)} locations. A partial status is not complete: read coverage and continue any returned request needed for the conclusion.`,
+    `Other focused modes remain available through the schema: files+query for names; anyOf/allOf for exact multi-term retrieval; outline/imports/tests/impact and JS/TS navigation for static candidates; structure for AST shapes; concept/hybrid for local semantic candidates. Semantic similarity and static relationships are not proof.`,
+  ];
+}
+
 export function signalGrepMcpInstructions(
   outputMode: SignalGrepMcpOutputMode = DEFAULT_MCP_OUTPUT_MODE,
 ): string {
@@ -38,6 +46,8 @@ export function signalGrepMcpInstructions(
   return [
     "Use baoer_signal_grep for read-only local filesystem search and bounded source inspection. The server searches from its configured project working directory. Prefer it over unbounded text search when gathering project evidence.",
     outputInstruction,
-    ...signalGrepPromptGuidelines(outputMode === "structured"),
+    ...(outputMode === "model"
+      ? signalGrepModelGuidelines()
+      : signalGrepPromptGuidelines(outputMode === "structured")),
   ].join("\n");
 }

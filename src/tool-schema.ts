@@ -32,6 +32,9 @@ function stringEnum<const Values extends readonly string[]>(
 export const SIGNAL_GREP_DESCRIPTION =
   "Search and navigate code with bounded, verifiable evidence. Ordinary pattern searches use auto detail/summary; scope=strict prevents zero-result path expansion and wholeWord requires word boundaries. mode=concept accepts query, path, glob, exclude, hidden and redact, ranks every passage admitted by the source budget through token-safe windows, reuses a bounded local content-addressed embedding cache, and exposes scoreProfile/cache coverage without deciding relevance thresholds. mode=hybrid always runs exact literal and local concept retrieval once, ranks exact evidence first, deduplicates overlapping semantic passages, and retains a bounded semantic supplement in one pageable snapshot. allOf is a 2-3 term literal conjunction; within is valid only with allOf and must be omitted for ordinary single-pattern searches. modifiedAfter/modifiedBefore filter worktree files by inclusive/exclusive modification-time bounds in Unix milliseconds. files+query discovers filenames and stays inside the requested path; structure+pattern matches AST shapes. Python outline is supported as bounded indentation-based function/class evidence; JS/TS definitions, references, implementations, callers and callees use path+line+column (1-based UTF-16) or an unambiguous symbol. dependencies/dependents use a workspace file path and the compiler's project module resolution. impact combines compiler-confirmed candidate bindings, exact occurrences and related-test candidates without running tests; all analysis is static evidence, and partial coverage stays explicit.";
 
+export const SIGNAL_GREP_MODEL_DESCRIPTION =
+  "Search local files with bounded evidence. Use pattern plus optional path for contents, mode=files plus query for names, and scope=strict to forbid zero-result expansion. Reuse returned cursors and inspect selectors. Partial status and coverage identify incomplete conclusions; semantic and static-analysis results are candidates, not proof.";
+
 export const signalGrepSchema = Type.Object({
   column: Type.Optional(
     Type.Integer({
@@ -153,7 +156,7 @@ export const signalGrepSchema = Type.Object({
       minItems: 1,
       maxItems: MAX_SELECTED_PATHS,
       description:
-        "Exact retained files to select together from a cursor; unavailable for a new search.",
+        "Exact retained files to select together from a cursor. A new search accepts one path; split multiple roots into separate requests.",
     }),
   ),
   glob: Type.Optional(

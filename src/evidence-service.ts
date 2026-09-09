@@ -556,6 +556,8 @@ export class EvidenceService {
       input,
       [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"],
       "Evidence search",
+      false,
+      "a new search accepts one path; split multiple paths into separate requests without widening their scope",
     );
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {

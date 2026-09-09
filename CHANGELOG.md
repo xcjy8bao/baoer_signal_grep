@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2] - 2026-09-09
+
+- Reduce the native model-host MCP description and workflow instructions while preserving ordinary search, strict scope, completeness, cursor and inspection recovery guidance. Structured and text consumers retain the full compatibility instructions.
+- Make invalid new-search `paths` requests explain the scope-preserving repair: run one request per path instead of copying a request that was never returned or silently widening to a common parent.
+- Inspect Markdown through a bounded line window without invoking or repeatedly warning about an unavailable Universal Ctags provider; code structure provider failures remain explicit.
+- State that a blocked search denies the entire tool call before execution, so no preceding or following compound-shell operation can be mistaken for completed work.
+
 ## [1.3.1] - 2026-09-09
 
 - Rank every Concept passage admitted by the documented source budget instead of stopping after 128 candidates. Token-overlong passages now use overlapping tokenizer-verified windows and max-pooled similarity, so no ranking relies on a silently truncated prefix.
