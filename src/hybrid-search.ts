@@ -164,6 +164,7 @@ export async function combineHybridSearch(
     filesRead: (concept.filesRead ?? 0) + access.filesRead,
     bytesRead: (concept.bytesRead ?? 0) + access.bytesRead,
     counts: {
+      ...concept.counts,
       literalMatchingLinesFound: scan.totalMatches,
       literalMatchingLinesPrepared: literal.items.length,
       literalOccurrencesRetained,

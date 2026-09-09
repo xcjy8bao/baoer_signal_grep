@@ -223,6 +223,14 @@ function tokenCount(extractor, text) {
 function advanceLow(low, middle) {
   return Math.max(low + 1, middle + 1);
 }
+function nextUtf16Boundary(text, start) {
+  const next = start + 1;
+  if (next >= text.length)
+    return next;
+  const first = text.charCodeAt(start);
+  const second = text.charCodeAt(next);
+  return first >= 55296 && first <= 56319 && second >= 56320 && second <= 57343 ? next + 1 : next;
+}
 function binarySearchBudget(span) {
   return 2 * Math.max(span, 1) + 32;
 }
@@ -269,7 +277,7 @@ function overlapStart(extractor, prefix, text, start, end) {
       low = advanceLow(low, middle);
     }
   }
-  return Math.max(start + 1, accepted);
+  return Math.max(nextUtf16Boundary(text, start), accepted);
 }
 function tokenSafeWindows(extractor, pending) {
   const prefix = `${pending.role}: `;

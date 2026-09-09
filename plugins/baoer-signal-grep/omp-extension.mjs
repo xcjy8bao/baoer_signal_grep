@@ -8485,6 +8485,7 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
     filesRead: (concept.filesRead ?? 0) + access2.filesRead,
     bytesRead: (concept.bytesRead ?? 0) + access2.bytesRead,
     counts: {
+      ...concept.counts,
       literalMatchingLinesFound: scan.totalMatches,
       literalMatchingLinesPrepared: literal.items.length,
       literalOccurrencesRetained,

@@ -33,6 +33,16 @@ function advanceLow(low: number, middle: number): number {
   return Math.max(low + 1, middle + 1);
 }
 
+function nextUtf16Boundary(text: string, start: number): number {
+  const next = start + 1;
+  if (next >= text.length) return next;
+  const first = text.charCodeAt(start);
+  const second = text.charCodeAt(next);
+  return first >= 0xd800 && first <= 0xdbff && second >= 0xdc00 && second <= 0xdfff
+    ? next + 1
+    : next;
+}
+
 function binarySearchBudget(span: number): number {
   return 2 * Math.max(span, 1) + 32;
 }
@@ -92,7 +102,7 @@ export function overlapStart(
       low = advanceLow(low, middle);
     }
   }
-  return Math.max(start + 1, accepted);
+  return Math.max(nextUtf16Boundary(text, start), accepted);
 }
 
 export function tokenSafeWindows(
