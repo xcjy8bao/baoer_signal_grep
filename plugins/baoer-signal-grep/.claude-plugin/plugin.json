@@ -1,6 +1,6 @@
 {
   "name": "baoer-signal-grep",
-  "version": "1.5.6",
+  "version": "1.5.6-1",
   "description": "Require baoer_signal_grep for conventional local searches while keeping development tools available.",
   "author": {
     "name": "宝儿"

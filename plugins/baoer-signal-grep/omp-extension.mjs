@@ -13,8 +13,17 @@ var __export = (target, all) => {
       set: __exportSetter.bind(all, name2)
     });
 };
-var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
-var __require = import.meta.require;
+var __esm = (fn, res, err2) => () => {
+  if (fn)
+    try {
+      res = fn(fn = 0);
+    } catch (e) {
+      err2 = [e];
+    }
+  if (err2)
+    throw err2[0];
+  return res;
+};
 
 // node_modules/@vscode/ripgrep/lib/index.js
 var exports_lib = {};
@@ -37,8 +46,8 @@ var init_lib = __esm(() => {
 });
 
 // src/omp-index.ts
-import { homedir as homedir3 } from "os";
-import { join as join5 } from "path";
+import { homedir as homedir2 } from "os";
+import { join as join4 } from "path";
 
 // src/config-reader.ts
 import { readFile } from "fs/promises";
@@ -1490,9 +1499,9 @@ class SessionSummary {
       return;
     const partialQueries = queries - completeQueries;
     if (locale === "zh-CN") {
-      const completeness2 = partialQueries === 0 ? "\u7ED3\u679C\u5168\u90E8\u5B8C\u6574" : `${String(completeQueries)} \u6B21\u7ED3\u679C\u5B8C\u6574\uFF1B${String(partialQueries)} \u6B21\u4EC5\u83B7\u5F97\u90E8\u5206\u7ED3\u679C\u5E76\u5DF2\u660E\u786E\u6807\u6CE8`;
-      const organized2 = organizedQueries > 0 ? `\uFF1B${String(organizedQueries)} \u6B21\u7ED3\u679C\u5DF2\u81EA\u52A8\u6309\u6587\u4EF6\u6574\u7406` : "";
-      return `baoer_signal_grep\uFF1A\u5DF2\u5904\u7406 ${String(queries)} \u6B21\u67E5\u8BE2\uFF0C${completeness2}${organized2}`;
+      const completeness = partialQueries === 0 ? "\u7ED3\u679C\u5168\u90E8\u5B8C\u6574" : `${String(completeQueries)} \u6B21\u7ED3\u679C\u5B8C\u6574\uFF1B${String(partialQueries)} \u6B21\u4EC5\u83B7\u5F97\u90E8\u5206\u7ED3\u679C\u5E76\u5DF2\u660E\u786E\u6807\u6CE8`;
+      const organized = organizedQueries > 0 ? `\uFF1B${String(organizedQueries)} \u6B21\u7ED3\u679C\u5DF2\u81EA\u52A8\u6309\u6587\u4EF6\u6574\u7406` : "";
+      return `baoer_signal_grep\uFF1A\u5DF2\u5904\u7406 ${String(queries)} \u6B21\u67E5\u8BE2\uFF0C${completeness}${organized}`;
     }
     const completeness = partialQueries === 0 ? "all results complete" : `${String(completeQueries)} complete; ${String(partialQueries)} partial and clearly marked`;
     const organized = organizedQueries > 0 ? `; ${String(organizedQueries)} ${organizedQueries === 1 ? "result" : "results"} automatically organized by file` : "";
@@ -1644,8 +1653,8 @@ class JsonRpcChannel {
 `),
       body2
     ]);
-    await new Promise((resolve7, reject) => {
-      this.#stdin.write(frame, (error) => error ? reject(error) : resolve7());
+    await new Promise((resolve, reject) => {
+      this.#stdin.write(frame, (error) => error ? reject(error) : resolve());
     });
   }
   async request(method, params) {
@@ -2585,21 +2594,21 @@ async function parseSyntax(path, text, signal, pattern) {
 }
 
 // src/impact-bindings.ts
-async function bindImpactCandidates(target, files, occurrences, access2) {
-  const syntax = await access2.syntax(target.document);
+async function bindImpactCandidates(target, files, occurrences, access) {
+  const syntax = await access.syntax(target.document);
   const name2 = syntax.nodes.find((node) => node.start >= target.symbol.start && node.end <= target.symbol.end && target.document.text.slice(node.start, node.end) === target.symbol.name && node.kind.endsWith("identifier"));
   if (!name2)
     throw new SignalGrepError("Impact compiler target has no exact identifier position");
-  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve7(access2.cwd, file.document.path), file.document]));
-  documents.set(resolve7(access2.cwd, target.document.path), target.document);
-  const sourceAt = await semanticSources(access2.cwd, documents.values());
-  const references = await withTypeScript(access2.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
-    textDocument: { uri: await semanticUri(access2.cwd, target.document.path) },
+  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve7(access.cwd, file.document.path), file.document]));
+  documents.set(resolve7(access.cwd, target.document.path), target.document);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
+  const references = await withTypeScript(access.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
+    textDocument: { uri: await semanticUri(access.cwd, target.document.path) },
     position: lspPosition(target.document, name2.start),
     context: { includeDeclaration: true }
-  })), access2.signal);
+  })), access.signal);
   const retained = new Map(occurrences.map((item) => [
-    `${resolve7(access2.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
+    `${resolve7(access.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
     item
   ]));
   let bound = 0;
@@ -2608,7 +2617,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     if (!document2)
       continue;
     const range = byteRange(document2, reference.range);
-    const key = `${resolve7(access2.cwd, document2.path)}:${String(range.start)}:${String(range.end)}`;
+    const key = `${resolve7(access.cwd, document2.path)}:${String(range.start)}:${String(range.end)}`;
     const existing = retained.get(key);
     const line = document2.lineAt(range.start);
     const evidence = sourceEvidence(document2, range);
@@ -2637,7 +2646,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     bound += 1;
   }
   for (const document2 of documents.values()) {
-    await access2.refresh(document2.path, document2.reference);
+    await access.refresh(document2.path, document2.reference);
   }
   return { items: [...retained.values()], bound };
 }
@@ -4244,11 +4253,11 @@ function validateConceptQuery(query) {
     throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
   return query;
 }
-async function runConceptSearch(input, access2, infer) {
+async function runConceptSearch(input, access, infer) {
   const query = validateConceptQuery(input.query);
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -4267,7 +4276,7 @@ async function runConceptSearch(input, access2, infer) {
   let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
-      const document2 = await access2.load(path);
+      const document2 = await access.load(path);
       if (!document2.utf8)
         throw new SourceDocumentError("encoding", "Not lossless UTF-8");
       if (!document2.text.trim()) {
@@ -4313,7 +4322,7 @@ async function runConceptSearch(input, access2, infer) {
     passagesQueued: passages.length
   };
   if (passages.length) {
-    const inferred = await infer(query, passages, access2.signal);
+    const inferred = await infer(query, passages, access.signal);
     result.reasons.push(...inferred.warnings);
     result.items = passages.map((item, index) => {
       const similarity = inferred.scores[index];
@@ -4351,8 +4360,8 @@ async function runConceptSearch(input, access2, infer) {
       scoreProfile: scoreProfile(inferred.scores)
     };
   }
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.stats = {
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
@@ -4375,19 +4384,19 @@ async function runConceptSearch(input, access2, infer) {
   };
   return result;
 }
-function conceptSearch(input, access2) {
-  return runConceptSearchWithDeadline(input, access2, similarities);
+function conceptSearch(input, access) {
+  return runConceptSearchWithDeadline(input, access, similarities);
 }
-async function runConceptSearchWithDeadline(input, access2, infer, timeout = resolveConceptTimeoutMs) {
+async function runConceptSearchWithDeadline(input, access, infer, timeout = resolveConceptTimeoutMs) {
   const timeoutMs = timeout();
   const controller = new AbortController;
-  const signal = access2.signal ? AbortSignal.any([access2.signal, controller.signal]) : controller.signal;
-  const scopedAccess = access2.withSignal(signal);
+  const signal = access.signal ? AbortSignal.any([access.signal, controller.signal]) : controller.signal;
+  const scopedAccess = access.withSignal(signal);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await inferenceQueue.run(() => runConceptSearch(input, scopedAccess, infer), scopedAccess.signal);
   } catch (error) {
-    if (access2.signal?.aborted)
+    if (access.signal?.aborted)
       throw abortError();
     if (controller.signal.aborted) {
       throw new ConceptUnavailableError(`Concept request exceeded the ${String(timeoutMs)} ms deadline`, { cause: error });
@@ -4399,11 +4408,11 @@ async function runConceptSearchWithDeadline(input, access2, infer, timeout = res
 }
 
 // src/structural-search.ts
-async function structuralSearch(input, access2) {
+async function structuralSearch(input, access) {
   if (!input.pattern?.trim() || Buffer.byteLength(input.pattern) > 4096 || !input.pattern.isWellFormed())
     throw new SignalGrepError("Structural pattern must be nonempty, well-formed and at most 4 KiB; ast-grep $NAME/$$$ARGS metavariables are supported");
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -4429,8 +4438,8 @@ async function structuralSearch(input, access2) {
     if (!syntaxLanguage(path))
       continue;
     try {
-      const document2 = await access2.load(path);
-      const syntax = await access2.pattern(document2, input.pattern);
+      const document2 = await access.load(path);
+      const syntax = await access.pattern(document2, input.pattern);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${path}: syntax ${syntax.status}; structural matches withheld`);
@@ -4481,8 +4490,8 @@ async function structuralSearch(input, access2) {
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.coverage = { astPatterns: result.partial ? "partial" : "complete" };
   result.scope = {
     path: request.path ?? ".",
@@ -4612,29 +4621,29 @@ function semanticWorkspacePaths(files) {
     return language !== undefined && language !== "go" || semanticMetadataPath.test(path);
   }).toSorted((left, right) => left.localeCompare(right));
 }
-async function semanticProject(access2, targetPath) {
-  const root = await resolveSemanticProjectRoot(access2.cwd, targetPath, access2.signal);
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+async function semanticProject(access, targetPath) {
+  const root = await resolveSemanticProjectRoot(access.cwd, targetPath, access.signal);
+  const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
   const trackedPaths = semanticWorkspacePaths(files);
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
   const metadataPaths = files.paths.filter((path) => semanticMetadataPath.test(path));
-  const target = resolve14(access2.cwd, targetPath);
-  if (!paths.some((path) => resolve14(access2.cwd, path) === target))
+  const target = resolve14(access.cwd, targetPath);
+  if (!paths.some((path) => resolve14(access.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
-  paths.sort((a, b) => Number(resolve14(access2.cwd, b) === target) - Number(resolve14(access2.cwd, a) === target) || a.localeCompare(b));
+  paths.sort((a, b) => Number(resolve14(access.cwd, b) === target) - Number(resolve14(access.cwd, a) === target) || a.localeCompare(b));
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata2 = [];
   for (const path of [...paths, ...metadataPaths]) {
     try {
-      const document2 = await access2.load(path);
+      const document2 = await access.load(path);
       if (!document2.utf8)
         throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
       if (paths.includes(path))
-        documents.set(resolve14(access2.cwd, path), document2);
+        documents.set(resolve14(access.cwd, path), document2);
       else
         metadata2.push(document2);
     } catch (error) {
@@ -4654,9 +4663,9 @@ async function semanticProject(access2, targetPath) {
     for (const document2 of [...documents.values(), ...metadata2]) {
       if (document2.reference.origin.kind !== "worktree")
         throw new Error("Expected worktree semantic source");
-      await access2.refresh(document2.path, document2.reference);
+      await access.refresh(document2.path, document2.reference);
     }
-    const after = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+    const after = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
     if (JSON.stringify(semanticWorkspacePaths(after)) !== JSON.stringify(trackedPaths))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
@@ -4666,8 +4675,8 @@ async function semanticProject(access2, targetPath) {
     items: [],
     partial: reasons.length > 0,
     reasons,
-    filesRead: access2.filesRead,
-    bytesRead: access2.bytesRead,
+    filesRead: access.filesRead,
+    bytesRead: access.bytesRead,
     coverage: {
       admittedSources: reasons.length ? "partial" : "complete",
       runtimeDispatch: "not-applicable"
@@ -4679,7 +4688,7 @@ async function semanticProject(access2, targetPath) {
 
 // src/semantic-navigation.ts
 var semanticRequestQueue = new OwnedTaskQueue;
-async function selection(input, access2, document2) {
+async function selection(input, access, document2) {
   if (input.column !== undefined) {
     if (input.line === undefined || !Number.isSafeInteger(input.column) || input.column < 1 || input.symbol !== undefined)
       throw new SignalGrepError("Semantic column requires line and no symbol; both are 1-based UTF-16 positions");
@@ -4687,7 +4696,7 @@ async function selection(input, access2, document2) {
     byteAt(document2, position);
     return position;
   }
-  const syntax = await access2.syntax(document2);
+  const syntax = await access.syntax(document2);
   if (syntax.status !== "ok")
     throw new SignalGrepError("Selecting a semantic symbol requires valid syntax; supply an exact line+column position");
   const candidates = syntax.nodes.filter((node) => /^(?:identifier|property_identifier|type_identifier|shorthand_property_identifier(?:_pattern)?)$/.test(node.kind) && (input.symbol === undefined || document2.text.slice(node.start, node.end) === input.symbol) && (input.line === undefined || document2.lineAt(document2.toByteOffset(node.start)) === input.line));
@@ -4761,10 +4770,10 @@ async function queryLocations(channel, mode, params) {
     ...method === "references" ? { context: { includeDeclaration: true } } : {}
   }));
 }
-async function runSemanticNavigation(input, access2) {
+async function runSemanticNavigation(input, access) {
   if (!input.path || !isSemanticMode(input.mode))
     throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
-  const project = await semanticProject(access2, input.path);
+  const project = await semanticProject(access, input.path);
   const { result, documents, primary, root } = project;
   result.kind = input.mode;
   result.redact = input.redact ?? false;
@@ -4772,8 +4781,8 @@ async function runSemanticNavigation(input, access2) {
   const graph = mode === "dependencies" || mode === "dependents";
   if (graph && (input.line !== undefined || input.column !== undefined || input.symbol !== undefined))
     throw new SignalGrepError("File dependencies/dependents accept path without line, column or symbol");
-  const position = graph ? undefined : await selection(input, access2, primary);
-  const sourceAt = await semanticSources(access2.cwd, documents.values());
+  const position = graph ? undefined : await selection(input, access, primary);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
   const add = async (location, relation) => {
     const document2 = await sourceAt(location.path);
     if (document2)
@@ -4786,7 +4795,7 @@ async function runSemanticNavigation(input, access2) {
   await withTypeScript(root, [...documents.values()], async (channel) => {
     if (!graph) {
       const found = await queryLocations(channel, mode, {
-        textDocument: { uri: await semanticUri(access2.cwd, primary.path) },
+        textDocument: { uri: await semanticUri(access.cwd, primary.path) },
         position
       });
       for (const location of found) {
@@ -4795,13 +4804,13 @@ async function runSemanticNavigation(input, access2) {
       return;
     }
     for (const document2 of mode === "dependencies" ? [primary] : documents.values()) {
-      const syntax = await access2.syntax(document2);
+      const syntax = await access.syntax(document2);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${document2.path}: module syntax ${syntax.status}`);
         continue;
       }
-      const uri = await semanticUri(access2.cwd, document2.path);
+      const uri = await semanticUri(access.cwd, document2.path);
       const specifiers = syntax.nodes.filter((node) => node.kind === "string" && node.parent !== null && (() => {
         const parent = syntax.nodes[node.parent];
         if (!parent)
@@ -4814,21 +4823,21 @@ async function runSemanticNavigation(input, access2) {
         return call?.kind === "call_expression" && /^(?:import|require)\s*\(/.test(document2.text.slice(call.start, node.start));
       })());
       for (const specifier of specifiers) {
-        const resolved2 = locations(await channel.request("textDocument/definition", {
+        const resolved = locations(await channel.request("textDocument/definition", {
           textDocument: { uri },
           position: lspPosition(document2, specifier.start + 1)
         }));
-        if (!resolved2.length) {
+        if (!resolved.length) {
           result.partial = true;
           result.reasons.push(`${document2.path}: unresolved module ${document2.text.slice(specifier.start, specifier.end)}`);
         }
-        for (const target of resolved2) {
+        for (const target of resolved) {
           const targetDocument = await sourceAt(target.path);
           if (mode === "dependencies") {
             await add(target, "dependency");
           } else if (targetDocument === primary) {
             await add({
-              path: resolve15(access2.cwd, document2.path),
+              path: resolve15(access.cwd, document2.path),
               range: {
                 start: lspPosition(document2, specifier.start),
                 end: lspPosition(document2, specifier.end)
@@ -4837,12 +4846,12 @@ async function runSemanticNavigation(input, access2) {
           }
         }
       }
-      access2.releaseSyntax(document2);
+      access.releaseSyntax(document2);
     }
-  }, access2.signal, access2.cwd);
+  }, access.signal, access.cwd);
   await project.recheck();
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.items = rankEvidence([
     ...new Map(result.items.map((item) => [
       `${item.path}:${String(item.range?.start)}:${String(item.range?.end)}`,
@@ -4856,8 +4865,8 @@ async function runSemanticNavigation(input, access2) {
   };
   return result;
 }
-function navigateSemantics(input, access2) {
-  return semanticRequestQueue.run(() => runSemanticNavigation(input, access2), access2.signal);
+function navigateSemantics(input, access) {
+  return semanticRequestQueue.run(() => runSemanticNavigation(input, access), access.signal);
 }
 
 // src/evidence-service.ts
@@ -5888,14 +5897,14 @@ class NavigationContext {
     const cached = this.modules.get(path);
     if (cached) {
       if (retainSyntax && cached.syntax.nodes.length === 0) {
-        let retained2 = false;
+        let retained = false;
         try {
           cached.syntax = await this.host.syntax(cached.document);
           if (cached.syntax.status !== "ok")
             throw new NavigationFailure(`syntax-${cached.syntax.status}`);
-          retained2 = true;
+          retained = true;
         } finally {
-          if (!retained2)
+          if (!retained)
             this.release(cached);
         }
       }
@@ -6066,13 +6075,13 @@ async function traceImport(context, initial, binding) {
       return unresolved("hop-budget-exhausted");
     hops++;
     chain.push(step);
-    const resolved2 = await resolveStaticModule(context, facts.document.path, source);
-    if (!resolved2.path)
-      return unresolved(resolved2.reason ?? "module-unresolved", resolved2.candidates);
-    paths.add(resolved2.path);
+    const resolved = await resolveStaticModule(context, facts.document.path, source);
+    if (!resolved.path)
+      return unresolved(resolved.reason ?? "module-unresolved", resolved.candidates);
+    paths.add(resolved.path);
     if (paths.size > MAX_IMPORT_FILES)
       return unresolved("file-budget-exhausted");
-    const next = await context.module(resolved2.path);
+    const next = await context.module(resolved.path);
     step.to = next.document.reference;
     step.resolution = "static-source-candidates";
     return next;
@@ -6456,13 +6465,13 @@ function basenameStem(path) {
 function targetSymbol(facts, input) {
   if (input.line === undefined && input.symbol === undefined)
     return;
-  const symbols = facts.syntax.symbols.filter((symbol2) => {
-    if (!symbol2.hasBody)
+  const symbols = facts.syntax.symbols.filter((symbol) => {
+    if (!symbol.hasBody)
       return false;
-    if (input.symbol !== undefined && symbol2.name !== input.symbol)
+    if (input.symbol !== undefined && symbol.name !== input.symbol)
       return false;
-    const start2 = facts.document.lineAt(facts.document.toByteOffset(symbol2.start));
-    const end = facts.document.lineAt(Math.max(facts.document.toByteOffset(symbol2.start), facts.document.toByteOffset(symbol2.end) - 1));
+    const start2 = facts.document.lineAt(facts.document.toByteOffset(symbol.start));
+    const end = facts.document.lineAt(Math.max(facts.document.toByteOffset(symbol.start), facts.document.toByteOffset(symbol.end) - 1));
     return input.line === undefined || start2 <= input.line && input.line <= end;
   }).toSorted((a, b) => a.end - a.start - (b.end - b.start));
   if (symbols.length === 0)
@@ -6502,9 +6511,9 @@ async function relations(context, test, target, symbol) {
   for (const binding of test.imports) {
     if (!binding.source?.startsWith("."))
       continue;
-    const resolved2 = await resolveStaticModule(context, test.document.path, binding.source);
+    const resolved = await resolveStaticModule(context, test.document.path, binding.source);
     const targetPath = context.normalizePath(target.document.path);
-    const direct = resolved2.path === targetPath;
+    const direct = resolved.path === targetPath;
     const trace = await traceImport(context, test, binding);
     if (trace.reason === "structural-read-budget-exhausted") {
       context.reasons.add(trace.reason);
@@ -7556,10 +7565,10 @@ function errorStatus(error) {
     return "source-unavailable";
   return;
 }
-async function prepare(target, access2, structure) {
+async function prepare(target, access, structure) {
   if (target.unverified)
     throw new SourceDocumentError("source-unavailable", "Snapshot source revision is unverified; refresh the search");
-  const document2 = await access2.load(target.path, target.reference);
+  const document2 = await access.load(target.path, target.reference);
   if (target.expectedRevision && (document2.reference.origin.kind !== "worktree" || !sameSourceRevision(target.expectedRevision, document2.reference.origin.revision)))
     throw new SourceDocumentError("source-changed", "Source changed; refresh the search");
   if (target.line > document2.lineStarts.length)
@@ -7570,7 +7579,7 @@ async function prepare(target, access2, structure) {
   let details = { status: "no-symbol" };
   const language = syntaxLanguage(document2.path);
   if (document2.utf8 && language && language !== "go") {
-    const syntax = await access2.syntax(document2);
+    const syntax = await access.syntax(document2);
     details = {
       status: syntax.status === "ok" ? "no-symbol" : syntax.status === "unsupported" ? "provider-unavailable" : "parse-error",
       provider: "tree-sitter",
@@ -7578,7 +7587,7 @@ async function prepare(target, access2, structure) {
     };
     if (syntax.status === "ok") {
       const character = document2.toCharacterOffset(focus);
-      const symbols = syntax.symbols.filter((symbol2) => symbol2.hasBody && symbol2.start <= character && character < symbol2.end).toSorted((a, b) => a.end - a.start - (b.end - b.start));
+      const symbols = syntax.symbols.filter((symbol) => symbol.hasBody && symbol.start <= character && character < symbol.end).toSorted((a, b) => a.end - a.start - (b.end - b.start));
       const symbol = symbols[0] ?? syntax.symbols.find((item) => item.hasBody && document2.lineAt(document2.toByteOffset(item.start)) === target.line);
       if (symbol && !target.range) {
         range = {
@@ -7605,11 +7614,11 @@ async function prepare(target, access2, structure) {
     }
   } else if (document2.utf8 && structure && document2.reference.origin.kind === "worktree" && !target.range && !usesDocumentLineWindow(document2.path)) {
     const result = await structure.inspect({
-      absolutePath: resolve20(access2.cwd, target.path),
-      cwd: access2.cwd,
+      absolutePath: resolve20(access.cwd, target.path),
+      cwd: access.cwd,
       line: target.line,
       expectedRevision: document2.reference.origin.revision
-    }, access2.signal);
+    }, access.signal);
     details = result.details;
     if (["source-changed", "source-unavailable", "file-too-large"].includes(details.status))
       throw new SourceDocumentError(details.status === "source-changed" ? "source-changed" : "source-unavailable", `Source inspection: ${details.status}`);
@@ -7695,13 +7704,13 @@ function fallbackContinuationRange(document2, ranges) {
     return;
   return document2.lineRange(nextStartLine, Math.min(document2.lineStarts.length, nextFocusLine + 10));
 }
-async function inspectDocuments(targets, access2, continuations, structure) {
+async function inspectDocuments(targets, access, continuations, structure) {
   const items = [];
   const blocks = [];
   for (const [index, target] of targets.entries()) {
     try {
-      const prepared = await prepare(target, access2, structure);
-      let blockIndex = blocks.findIndex((block2) => block2.document === prepared.document);
+      const prepared = await prepare(target, access, structure);
+      let blockIndex = blocks.findIndex((block) => block.document === prepared.document);
       if (blockIndex < 0) {
         blockIndex = blocks.length;
         blocks.push({
@@ -7731,7 +7740,7 @@ async function inspectDocuments(targets, access2, continuations, structure) {
         structure: prepared.structure
       });
     } catch (error) {
-      if (access2.signal?.aborted || error instanceof Error && error.name === "AbortError")
+      if (access.signal?.aborted || error instanceof Error && error.name === "AbortError")
         throw abortError();
       const status = errorStatus(error);
       if (!status)
@@ -7823,7 +7832,7 @@ ${preview.text}`);
     if (continuationGaps.length)
       block.continuation = continuations.create(block.document.reference, continuationTarget, continuationGaps, block.boundary);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve20(access2.cwd, block.document.path));
+      const current = await getSourceRevision(resolve20(access.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -7844,7 +7853,7 @@ ${preview.text}`);
       if (item?.status === "returned")
         item.source = blockDetails(block);
     }
-    if (access2.signal?.aborted)
+    if (access.signal?.aborted)
       throw abortError();
     if (index >= 5)
       throw new Error("Inspection target limit was not validated");
@@ -7878,9 +7887,9 @@ ${preview.text}`);
     }
   };
 }
-async function continueSource(cursor, access2, continuations) {
+async function continueSource(cursor, access, continuations) {
   const state = continuations.resolve(cursor);
-  const document2 = await access2.load(state.source.path, state.source);
+  const document2 = await access.load(state.source.path, state.source);
   const page = sourcePage(document2, state.remaining, MAX_RESULT_BYTES - 1400);
   const next = continuations.advance(cursor, page.fragment);
   const block = {
@@ -8217,14 +8226,14 @@ function indentation(line) {
 function stripStringsAndComments(line, state) {
   const code = line.split("");
   const blank = (start2, end) => {
-    for (let index2 = start2;index2 < end; index2 += 1)
-      code[index2] = " ";
+    for (let index = start2;index < end; index += 1)
+      code[index] = " ";
   };
   let index = 0;
   while (index < line.length) {
     if (state.tripleQuote) {
-      const delimiter2 = state.tripleQuote.repeat(3);
-      const close = line.indexOf(delimiter2, index);
+      const delimiter = state.tripleQuote.repeat(3);
+      const close = line.indexOf(delimiter, index);
       if (close < 0) {
         blank(index, line.length);
         return code.join("");
@@ -8331,10 +8340,10 @@ function scanTopLevelColon(code, initialDepth) {
   }
   return { depth, colon };
 }
-function hasBody(lines, declaration2, endLine) {
+function hasBody(lines, declaration, endLine) {
   let headerEnded = false;
   let depth = 0;
-  for (let lineIndex = declaration2.lineIndex;lineIndex < endLine; lineIndex += 1) {
+  for (let lineIndex = declaration.lineIndex;lineIndex < endLine; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line)
       continue;
@@ -8349,9 +8358,9 @@ function hasBody(lines, declaration2, endLine) {
   }
   if (!headerEnded)
     return false;
-  for (let lineIndex = declaration2.lineIndex + 1;lineIndex < endLine; lineIndex += 1) {
+  for (let lineIndex = declaration.lineIndex + 1;lineIndex < endLine; lineIndex += 1) {
     const line = lines[lineIndex];
-    if (line?.meaningful && line.indent > declaration2.indent)
+    if (line?.meaningful && line.indent > declaration.indent)
       return true;
   }
   return false;
@@ -8363,34 +8372,34 @@ function parsePythonOutline(document2) {
   const found = declarations(lines);
   const boundaries = endLines(lines);
   const active = [];
-  return found.map((declaration2) => {
-    while (active.at(-1) && (active.at(-1)?.lineIndex ?? 0) >= declaration2.lineIndex) {
+  return found.map((declaration) => {
+    while (active.at(-1) && (active.at(-1)?.lineIndex ?? 0) >= declaration.lineIndex) {
       active.pop();
     }
-    while (active.at(-1) && (active.at(-1)?.indent ?? 0) >= declaration2.indent) {
+    while (active.at(-1) && (active.at(-1)?.indent ?? 0) >= declaration.indent) {
       active.pop();
     }
     const parents = [...active];
-    const boundary = boundaries[declaration2.lineIndex] ?? lines.length;
+    const boundary = boundaries[declaration.lineIndex] ?? lines.length;
     const endLine = boundary === lines.length ? lines.length : boundary;
     const nearestParent = parents.at(-1);
-    const kind = declaration2.kind === "function" && nearestParent?.kind === "class" ? "method" : declaration2.kind;
-    const scope = parents.map((item2) => item2.name);
-    const range = document2.lineRange(declaration2.lineIndex + 1, endLine);
+    const kind = declaration.kind === "function" && nearestParent?.kind === "class" ? "method" : declaration.kind;
+    const scope = parents.map((item) => item.name);
+    const range = document2.lineRange(declaration.lineIndex + 1, endLine);
     const lineStart = document2.toCharacterOffset(range.start);
     const signature = document2.text.slice(lineStart, Math.min(document2.toCharacterOffset(range.end), lineStart + 600)).split(`
 `, 1)[0]?.trimEnd() ?? "";
     const item = {
-      name: declaration2.name,
+      name: declaration.name,
       kind,
-      startLine: declaration2.lineIndex + 1,
+      startLine: declaration.lineIndex + 1,
       endLine,
       scope,
-      hasBody: hasBody(lines, declaration2, boundary),
+      hasBody: hasBody(lines, declaration, boundary),
       range,
       signature
     };
-    active.push(declaration2);
+    active.push(declaration);
     return item;
   });
 }
@@ -8413,23 +8422,23 @@ function absoluteOccurrenceRanges(document2, line, match) {
     end: lineRange.start + occurrence.byteEnd
   }));
 }
-async function literalEvidence(scan, access2) {
+async function literalEvidence(scan, access) {
   const documents = new Map;
-  const unavailable2 = new Map;
+  const unavailable = new Map;
   for (const match of scan.matches) {
-    if (documents.has(match.absolutePath) || unavailable2.has(match.absolutePath))
+    if (documents.has(match.absolutePath) || unavailable.has(match.absolutePath))
       continue;
     try {
-      const document2 = await access2.load(match.absolutePath);
+      const document2 = await access.load(match.absolutePath);
       const expected = scan.sourceRevisions.get(match.absolutePath);
       if (!expected || document2.reference.origin.kind !== "worktree" || !sameSourceRevision(expected, document2.reference.origin.revision)) {
-        unavailable2.set(match.absolutePath, "source revision was not stable across hybrid search");
+        unavailable.set(match.absolutePath, "source revision was not stable across hybrid search");
         continue;
       }
       documents.set(match.absolutePath, document2);
     } catch (error) {
       if (error instanceof SourceBudgetError || error instanceof SourceDocumentError) {
-        unavailable2.set(match.absolutePath, error.message);
+        unavailable.set(match.absolutePath, error.message);
         continue;
       }
       throw error;
@@ -8463,11 +8472,11 @@ async function literalEvidence(scan, access2) {
       }
     };
   });
-  const reasons = [...new Set(unavailable2.values())].map((reason) => `Literal source inspection is unavailable for retained evidence: ${reason}`);
+  const reasons = [...new Set(unavailable.values())].map((reason) => `Literal source inspection is unavailable for retained evidence: ${reason}`);
   return {
     items,
     rangesByPath,
-    sourceCoverage: unavailable2.size ? "partial" : "complete",
+    sourceCoverage: unavailable.size ? "partial" : "complete",
     reasons
   };
 }
@@ -8477,10 +8486,10 @@ function isLiteralOverlap(item, rangesByPath) {
     return false;
   return (rangesByPath.get(item.path) ?? []).some((range) => rangesOverlap(range, itemRange));
 }
-async function combineHybridSearch(scan, concept, access2, conceptLimit) {
+async function combineHybridSearch(scan, concept, access, conceptLimit) {
   if (concept.kind !== "concept")
     throw new Error("Hybrid search requires concept evidence");
-  const literal = await literalEvidence(scan, access2);
+  const literal = await literalEvidence(scan, access);
   const eligibleConcept = concept.items.filter((item) => !isLiteralOverlap(item, literal.rangesByPath));
   const duplicateConceptCandidates = concept.items.length - eligibleConcept.length;
   const selectedConcept = [];
@@ -8508,8 +8517,8 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
       ...literal.reasons,
       ...selectionReason ? [selectionReason] : []
     ],
-    filesRead: (concept.filesRead ?? 0) + access2.filesRead,
-    bytesRead: (concept.bytesRead ?? 0) + access2.bytesRead,
+    filesRead: (concept.filesRead ?? 0) + access.filesRead,
+    bytesRead: (concept.bytesRead ?? 0) + access.bytesRead,
     counts: {
       ...concept.counts,
       literalMatchingLinesFound: scan.totalMatches,
@@ -8692,11 +8701,11 @@ class EvidenceService {
   #queue = new SyntaxQueue;
   #analyses = new AnalysisStore;
   #continuations = new SourceContinuations;
-  constructor(runner, snapshots, structure, runConceptSearch2 = conceptSearch) {
+  constructor(runner, snapshots, structure, runConceptSearch = conceptSearch) {
     this.#runner = runner;
     this.#snapshots = snapshots;
     this.#structure = structure;
-    this.#conceptSearch = runConceptSearch2;
+    this.#conceptSearch = runConceptSearch;
   }
   clear() {
     this.#analyses.clear();
@@ -8721,15 +8730,15 @@ class EvidenceService {
     const contentCandidates = new Set(scan.fileCounts.keys());
     return files.filter((path) => isLikelyTestPath(path) || contentCandidates.has(workspaceRelativePath(cwd, path)));
   }
-  async#candidates(request, input, access2) {
+  async#candidates(request, input, access) {
     const collect = (candidateRequest) => collectEvidenceCandidates({
       request: candidateRequest,
       ...input.changes ? { changes: input.changes } : {},
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      access: access2,
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      access,
       runRipgrep: this.#runner,
-      maxFiles: access2.maxFiles
+      maxFiles: access.maxFiles
     });
     const candidates = await collect(request);
     if (input.changes || request.scope === "strict" || request.path === undefined || candidates.files.length > 0 || candidates.partial) {
@@ -8746,10 +8755,10 @@ class EvidenceService {
       throw new SignalGrepError("modifiedAfter and modifiedBefore apply to worktree searches and cannot be combined with changes");
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
-    const access2 = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+    const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
     if (isSemanticMode(input.mode)) {
       rejectFields(input, [...searchFields, ...inspectFields, "cursor", "matchIndex"], `mode=${input.mode}`);
-      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access)));
     }
     if (input.column !== undefined)
       throw new SignalGrepError("column requires semantic navigation");
@@ -8770,12 +8779,12 @@ class EvidenceService {
         "symbol",
         "maxFilesToParse"
       ], "Source continuation", true);
-      return continueSource(input.sourceCursor, access2, this.#continuations);
+      return continueSource(input.sourceCursor, access, this.#continuations);
     }
     if (input.mode === "inspect") {
       rejectFields(input, [...searchFields, "paths", "symbol", "maxFilesToParse"], "mode=inspect");
       const targets = this.#inspectionTargets(input, cwd);
-      return inspectDocuments(targets, access2, this.#continuations, this.#structure);
+      return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
     if (input.mode === "concept") {
       rejectFields(input, [
@@ -8786,7 +8795,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=concept", false, "use only mode, query, path, glob, exclude, hidden and redact");
-      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access)));
     }
     if (input.mode === "hybrid") {
       rejectFields(input, [
@@ -8817,17 +8826,15 @@ class EvidenceService {
       await runOwnedParallel((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
-          this.#runner(literalRequest, cwd, groupSignal).then((result2) => {
-            literalResult = result2;
+          this.#runner(literalRequest, cwd, groupSignal).then((result) => {
+            literalResult = result;
             return;
           }),
-          this.#conceptSearch(input, conceptAccess).then((result2) => {
-            conceptResult = result2;
+          this.#conceptSearch(input, conceptAccess).then((result) => {
+            conceptResult = result;
             return;
           }).catch((error) => {
             if (signal?.aborted || groupSignal.aborted)
-              throw error;
-            if (!(error instanceof ConceptUnavailableError))
               throw error;
             conceptFailure = error;
             return;
@@ -8864,7 +8871,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=structure");
-      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access)));
     }
     if (input.mode === "files") {
       rejectFields(input, [
@@ -8891,7 +8898,7 @@ class EvidenceService {
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
     }
     if (input.mode === "impact")
-      return this.#impact(input, access2);
+      return this.#impact(input, access);
     if (input.cursor?.includes(".analysis") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       this.#analyses.resolve(input.cursor);
       rejectFields(input, [
@@ -8908,7 +8915,7 @@ class EvidenceService {
       return this.#analyses.page(input.cursor);
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
-      return this.#navigate(input, access2);
+      return this.#navigate(input, access);
     rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search", false, "a new search accepts one path; split multiple paths into separate requests without widening their scope");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
@@ -8918,18 +8925,18 @@ class EvidenceService {
         throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
       const chunks = Array.from({ length: Math.ceil(anyOf.length / MAX_ANY_OF_TERMS) }, (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS));
       const { path: _inputPath, ...unscopedInput } = input;
-      let chunkAccess = access2;
+      let chunkAccess = access;
       const runChunks = async (expandedFromPath) => runOwnedParallel((groupSignal) => {
         chunkAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return chunks.map(async (chunk) => {
-          const request2 = normalizeRequest({
+          const request = normalizeRequest({
             ...expandedFromPath === undefined ? input : unscopedInput,
             pattern: chunk.map(escapeRegexLiteral).join("|"),
             literal: false,
             ignoreCase: false
           });
-          const effectiveRequest = expandedFromPath === undefined ? request2 : { ...request2, expandedFromPath };
-          const candidates2 = await collectEvidenceCandidates({
+          const effectiveRequest = expandedFromPath === undefined ? request : { ...request, expandedFromPath };
+          const candidates = await collectEvidenceCandidates({
             request: effectiveRequest,
             ...input.changes ? { changes: input.changes } : {},
             cwd,
@@ -8938,11 +8945,11 @@ class EvidenceService {
             runRipgrep: this.#runner,
             maxFiles: fileLimit
           });
-          return { chunk, request: effectiveRequest, candidates: candidates2 };
+          return { chunk, request: effectiveRequest, candidates };
         });
       }, signal);
       let chunkResults = await runChunks();
-      if (!input.changes && input.path !== undefined && input.scope !== "strict" && chunkResults.every(({ candidates: candidates2 }) => !candidates2.partial && candidates2.files.length === 0)) {
+      if (!input.changes && input.path !== undefined && input.scope !== "strict" && chunkResults.every(({ candidates }) => !candidates.partial && candidates.files.length === 0)) {
         chunkResults = await runChunks(input.path.replace(/^@/, ""));
       }
       const reasons = new Set;
@@ -8950,12 +8957,12 @@ class EvidenceService {
       let changes;
       const candidateFiles = new Map;
       const invalidatedPaths = new Set;
-      for (const { candidates: candidates2 } of chunkResults) {
-        partial ||= candidates2.partial;
-        changes ??= candidates2.changes;
-        for (const reason of candidates2.reasons)
+      for (const { candidates } of chunkResults) {
+        partial ||= candidates.partial;
+        changes ??= candidates.changes;
+        for (const reason of candidates.reasons)
           reasons.add(reason);
-        for (const file of candidates2.files) {
+        for (const file of candidates.files) {
           if (invalidatedPaths.has(file.document.path))
             continue;
           const existing = candidateFiles.get(file.document.path);
@@ -8978,7 +8985,7 @@ class EvidenceService {
         literal: false,
         ignoreCase: false
       }));
-      const result2 = {
+      const result = {
         kind: "any-of",
         unit: "occurrences",
         items: expanded.items,
@@ -8997,7 +9004,7 @@ class EvidenceService {
         coverage: { exactOccurrences: partial ? "partial" : "complete" },
         redact: input.redact ?? false
       };
-      return this.#analyses.page(this.#analyses.create(result2, (retainedItems) => ({
+      return this.#analyses.page(this.#analyses.create(result, (retainedItems) => ({
         termCounts: retainedTermCounts(anyOf, retainedItems)
       })));
     }
@@ -9020,7 +9027,7 @@ class EvidenceService {
       literal: false,
       ignoreCase: false
     } : input);
-    const selected = await this.#candidates(request, input, access2);
+    const selected = await this.#candidates(request, input, access);
     const candidates = selected.candidates;
     const kind = terms ? input.within === "function" ? "function-and" : "file-and" : input.roles ? "roles" : "changes";
     const result = {
@@ -9055,7 +9062,7 @@ class EvidenceService {
         } else if (terms || input.roles) {
           if (syntaxLanguage(file.document.path))
             syntaxCapableFiles += 1;
-          const syntax = await access2.syntax(file.document);
+          const syntax = await access.syntax(file.document);
           const classified = terms ? findFunctionConjunctions(file.document, syntax, terms, input.changes?.scope === "lines" ? file.changedRanges : undefined) : filterRoleOccurrences(file.document, syntax, file.occurrences, input.roles ?? []);
           result.items.push(...classified.items);
           result.partial ||= classified.partial;
@@ -9083,7 +9090,7 @@ class EvidenceService {
         result.reasons.push(error.message);
         return;
       } finally {
-        access2.releaseSyntax(file.document);
+        access.releaseSyntax(file.document);
       }
       await processFile(index + 1);
     };
@@ -9095,9 +9102,9 @@ class EvidenceService {
     if (terms || input.roles) {
       result.stats = {
         filesEnumerated: candidates.files.length,
-        filesParsed: access2.syntaxParses,
+        filesParsed: access.syntaxParses,
         filesSkipped: Math.max(0, candidates.files.length - syntaxCapableFiles),
-        cacheHits: access2.syntaxCacheHits,
+        cacheHits: access.syntaxCacheHits,
         parseMs: Math.round(performance.now() - analysisStarted),
         budgetExhausted: result.reasons.some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       };
@@ -9144,7 +9151,7 @@ class EvidenceService {
       ...input.matchIndex !== undefined ? { matchIndex: input.matchIndex } : {}
     };
   }
-  async#impact(input, access2) {
+  async#impact(input, access) {
     const impactStarted = performance.now();
     rejectFields(input, [...searchFields.filter((field) => !navigationFilterFields.has(field)), ...inspectFields], "mode=impact");
     const filters = navigationFilters(input);
@@ -9156,12 +9163,12 @@ class EvidenceService {
         throw new CursorError("Impact requires an ordinary search snapshot, not an analysis cursor");
       if (input.matchIndex === undefined || input.path !== undefined || input.line !== undefined || input.symbol !== undefined)
         throw new SignalGrepError("Snapshot impact requires cursor+matchIndex instead of path, line, or symbol");
-      const selected = resolveInspectionTarget(input, access2.cwd, this.#snapshots);
+      const selected = resolveInspectionTarget(input, access.cwd, this.#snapshots);
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       path = selected.path;
       line = selected.line;
-      document2 = await access2.load(path);
+      document2 = await access.load(path);
       if (selected.expectedRevision && (document2.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, document2.reference.origin.revision)))
         throw new SignalGrepError("Source changed; refresh the search");
     } else {
@@ -9170,12 +9177,12 @@ class EvidenceService {
       if (!input.path || input.line === undefined && input.symbol === undefined)
         throw new SignalGrepError("Direct impact requires path and at least one of symbol or line");
       path = input.path;
-      document2 = await access2.load(path);
+      document2 = await access.load(path);
     }
     if (document2.reference.origin.kind !== "worktree")
       throw new SignalGrepError("Impact currently supports worktree sources only");
-    const root = await navigationRoot(access2.cwd, document2.path, access2.signal);
-    const targetSyntax = await access2.syntax(document2);
+    const root = await navigationRoot(access.cwd, document2.path, access.signal);
+    const targetSyntax = await access.syntax(document2);
     let target;
     try {
       target = selectImpactTarget(document2, targetSyntax, {
@@ -9183,7 +9190,7 @@ class EvidenceService {
         ...input.symbol !== undefined ? { symbol: input.symbol } : {}
       });
     } finally {
-      access2.releaseSyntax(document2);
+      access.releaseSyntax(document2);
     }
     const request = normalizeRequest({
       pattern: target.symbol.name,
@@ -9196,14 +9203,14 @@ class EvidenceService {
     });
     const candidates = await collectEvidenceCandidates({
       request,
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      access: access2,
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      access,
       runRipgrep: this.#runner,
-      maxFiles: access2.maxFiles
+      maxFiles: access.maxFiles
     });
-    const occurrences = await classifyImpactOccurrences(candidates.files, target, access2);
-    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access2);
+    const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
+    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access);
     occurrences.items = bound.items;
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
@@ -9217,33 +9224,33 @@ class EvidenceService {
       partial = true;
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
-      const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+      const files = await listWorkspaceFiles(access.cwd, access.signal, {
         path: root,
         glob: filters.glob,
         exclude: filters.exclude,
         hidden: filters.hidden
       });
-      const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
-      const primaryPath = resolve21(access2.cwd, document2.path);
+      const allowed = new Set(files.paths.map((file) => resolve21(access.cwd, file)));
+      const primaryPath = resolve21(access.cwd, document2.path);
       allowed.add(primaryPath);
       const host = {
-        cwd: access2.cwd,
-        ...access2.signal ? { signal: access2.signal } : {},
-        normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
+        cwd: access.cwd,
+        ...access.signal ? { signal: access.signal } : {},
+        normalizePath: (file) => workspaceRelativePath(access.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve21(access2.cwd, file);
+          const absolutePath = resolve21(access.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
             return document2;
-          return expected ? access2.refresh(file, expected) : access2.load(file);
+          return expected ? access.refresh(file, expected) : access.load(file);
         },
-        syntax: (source) => access2.syntax(source),
-        releaseSyntax: (source) => access2.releaseSyntax(source),
+        syntax: (source) => access.syntax(source),
+        releaseSyntax: (source) => access.releaseSyntax(source),
         listFiles: async () => files,
-        maxFilesToParse: access2.maxFiles
+        maxFilesToParse: access.maxFiles
       };
-      const entryPaths = await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal);
+      const entryPaths = await this.#testEntryPaths(root, files.paths, access.cwd, filters, access.signal);
       const tests = await findRelatedTests(host, {
         path: document2.path,
         line: target.item.line,
@@ -9253,8 +9260,8 @@ class EvidenceService {
       testStats = {
         filesEnumerated: files.paths.length,
         ...tests.stats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits
       };
       relatedTestsCoverage = tests.partial || files.partial ? "partial" : "complete";
       partial ||= tests.partial || files.partial;
@@ -9267,12 +9274,12 @@ class EvidenceService {
       items: mergeImpactItems(target.item, occurrences.items, testItems),
       partial,
       reasons: [...reasons],
-      filesRead: access2.filesRead,
-      bytesRead: access2.bytesRead,
+      filesRead: access.filesRead,
+      bytesRead: access.bytesRead,
       stats: {
         ...testStats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits,
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits,
         parseMs: testStats?.parseMs ?? Math.round(performance.now() - impactStarted),
         budgetExhausted: testStats?.budgetExhausted ?? [...reasons].some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       },
@@ -9282,12 +9289,12 @@ class EvidenceService {
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage
       },
-      scope: navigationScope(access2.cwd, root, document2.path, filters),
+      scope: navigationScope(access.cwd, root, document2.path, filters),
       redact: input.redact ?? false
     };
     return this.#analyses.page(this.#analyses.create(result, (items) => retainedImpactCounts(items), impactRetentionPriority));
   }
-  async#navigate(input, access2) {
+  async#navigate(input, access) {
     const navigationStarted = performance.now();
     const allowsFilters = input.mode === "imports" || input.mode === "tests";
     rejectFields(input, [
@@ -9301,14 +9308,14 @@ class EvidenceService {
     if (input.cursor) {
       if (input.path !== undefined || input.line !== undefined || input.matchIndex === undefined)
         throw new SignalGrepError("Snapshot navigation requires cursor+matchIndex instead of path/line");
-      const selected = this.#singleTarget(input, access2.cwd);
+      const selected = this.#singleTarget(input, access.cwd);
       path = selected.path;
       line = selected.line;
       reference = selected.reference;
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       if (selected.expectedRevision) {
-        const doc = await access2.load(path);
+        const doc = await access.load(path);
         if (doc.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, doc.reference.origin.revision))
           throw new SignalGrepError("Source changed; refresh the search");
         reference = doc.reference;
@@ -9318,14 +9325,14 @@ class EvidenceService {
       throw new SignalGrepError("matchIndex requires a cursor");
     if (!path)
       throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
-    const document2 = loaded ?? await access2.load(path, reference);
+    const document2 = loaded ?? await access.load(path, reference);
     const language = syntaxLanguage(document2.path);
     const isPython = /\.py$/iu.test(document2.path);
     if (!language && !isPython || language === "go") {
       throw new SignalGrepError(`${input.mode} requires reliable JS/TS/TSX or Python outline syntax (${language ?? "unsupported"})`);
     }
     if (input.mode === "outline") {
-      const syntax = isPython ? undefined : await access2.syntax(document2);
+      const syntax = isPython ? undefined : await access.syntax(document2);
       const supported = isPython || syntax?.status === "ok" && syntax.language !== "go";
       const items = supported ? isPython ? parsePythonOutline(document2).map((symbol) => ({
         path: document2.path,
@@ -9378,13 +9385,13 @@ class EvidenceService {
         ] : [] : [
           `Outline requires reliable JS/TS/TSX or Python syntax (${syntax?.language ?? "unsupported"}: ${syntax?.status ?? "unsupported"})`
         ],
-        filesRead: access2.filesRead,
-        bytesRead: access2.bytesRead,
+        filesRead: access.filesRead,
+        bytesRead: access.bytesRead,
         stats: {
           filesEnumerated: 1,
-          filesParsed: isPython ? 0 : access2.syntaxParses,
+          filesParsed: isPython ? 0 : access.syntaxParses,
           filesSkipped: 0,
-          cacheHits: isPython ? 0 : access2.syntaxCacheHits,
+          cacheHits: isPython ? 0 : access.syntaxCacheHits,
           parseMs: Math.round(performance.now() - navigationStarted),
           budgetExhausted: false
         },
@@ -9401,7 +9408,7 @@ class EvidenceService {
           "Import and related-test navigation currently support worktree sources only; historical sources are not switched to the worktree"
         ]
       }));
-    const root = await navigationRoot(access2.cwd, document2.path, access2.signal);
+    const root = await navigationRoot(access.cwd, document2.path, access.signal);
     const filters = navigationFilters(input);
     if (input.mode === "tests" && isPython)
       return this.#analyses.page(this.#analyses.create({
@@ -9412,8 +9419,8 @@ class EvidenceService {
         reasons: [
           'Python related-test navigation is not supported; use mode="outline" for Python source structure'
         ],
-        filesRead: access2.filesRead,
-        bytesRead: access2.bytesRead,
+        filesRead: access.filesRead,
+        bytesRead: access.bytesRead,
         stats: {
           filesEnumerated: 0,
           filesParsed: 0,
@@ -9423,34 +9430,34 @@ class EvidenceService {
           budgetExhausted: false
         },
         coverage: { navigation: "not-applicable" },
-        scope: navigationScope(access2.cwd, root, document2.path, filters),
+        scope: navigationScope(access.cwd, root, document2.path, filters),
         redact: input.redact ?? false
       }));
-    const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+    const files = await listWorkspaceFiles(access.cwd, access.signal, {
       path: root,
       glob: filters.glob,
       exclude: filters.exclude,
       hidden: filters.hidden
     });
-    const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
-    const primaryPath = resolve21(access2.cwd, document2.path);
+    const allowed = new Set(files.paths.map((file) => resolve21(access.cwd, file)));
+    const primaryPath = resolve21(access.cwd, document2.path);
     allowed.add(primaryPath);
     const host = {
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      normalizePath: (file) => workspaceRelativePath(access.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve21(access2.cwd, file);
+        const absolutePath = resolve21(access.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
           return document2;
-        return expected ? access2.refresh(file, expected) : access2.load(file);
+        return expected ? access.refresh(file, expected) : access.load(file);
       },
-      syntax: (doc) => access2.syntax(doc),
-      releaseSyntax: (doc) => access2.releaseSyntax(doc),
+      syntax: (doc) => access.syntax(doc),
+      releaseSyntax: (doc) => access.releaseSyntax(doc),
       listFiles: async () => files,
-      maxFilesToParse: access2.maxFiles
+      maxFilesToParse: access.maxFiles
     };
     const request = {
       path: document2.path,
@@ -9458,7 +9465,7 @@ class EvidenceService {
       ...input.symbol !== undefined ? { symbol: input.symbol } : {}
     };
     const result = input.mode === "imports" ? await navigateImports(host, request) : await findRelatedTests(host, request, {
-      entryPaths: await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal)
+      entryPaths: await this.#testEntryPaths(root, files.paths, access.cwd, filters, access.signal)
     });
     return this.#analyses.page(this.#analyses.create({
       ...result,
@@ -9472,10 +9479,10 @@ class EvidenceService {
       stats: {
         filesEnumerated: files.paths.length,
         ...result.stats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits
       },
-      scope: navigationScope(access2.cwd, root, document2.path, filters),
+      scope: navigationScope(access.cwd, root, document2.path, filters),
       redact: input.redact ?? false
     }));
   }
@@ -9534,9 +9541,9 @@ async function loadContextLines(match, expectedRevision, cache, signal) {
     if (signal?.aborted)
       throw abortError();
     if (!expectedRevision || expectedRevision.size > MAX_SOURCE_FILE_BYTES) {
-      const unavailable2 = { status: "unavailable" };
-      cache.set(match.absolutePath, unavailable2);
-      return unavailable2;
+      const unavailable = { status: "unavailable" };
+      cache.set(match.absolutePath, unavailable);
+      return unavailable;
     }
     const beforeRevision = await getSourceRevision(match.absolutePath);
     if (!beforeRevision || !sameSourceRevision(expectedRevision, beforeRevision)) {
@@ -9562,9 +9569,9 @@ async function loadContextLines(match, expectedRevision, cache, signal) {
     if (signal?.aborted || error instanceof Error && error.name === "AbortError") {
       throw abortError();
     }
-    const unavailable2 = { status: "unavailable" };
-    cache.set(match.absolutePath, unavailable2);
-    return unavailable2;
+    const unavailable = { status: "unavailable" };
+    cache.set(match.absolutePath, unavailable);
+    return unavailable;
   }
 }
 function matchContextWindows(snapshot, include) {
@@ -9887,17 +9894,17 @@ function redactInPlace(value, seen) {
     return 0;
   seen.add(value);
   if (Array.isArray(value)) {
-    let count2 = 0;
+    let count = 0;
     for (let index = 0;index < value.length; index += 1) {
       const item = value[index];
       if (typeof item === "string") {
         const redacted = redactString(item);
         value[index] = redacted.value;
-        count2 += redacted.count;
+        count += redacted.count;
       } else
-        count2 += redactInPlace(item, seen);
+        count += redactInPlace(item, seen);
     }
-    return count2;
+    return count;
   }
   let count = 0;
   for (const [key, item] of Object.entries(value)) {
@@ -10354,14 +10361,14 @@ class SignalGrepService {
       }
       return this.#summary(snapshot, mode, cwd, signal, offset);
     }
-    const selection2 = cursorPathSelection(input, cwd);
-    const requestedSelectionKey = selection2?.key ?? "all";
+    const selection = cursorPathSelection(input, cwd);
+    const requestedSelectionKey = selection?.key ?? "all";
     if (kind === "matches" && selectionKey !== requestedSelectionKey) {
       throw new CursorError("A match cursor must continue with the same path selection.", "E_CURSOR_OPTIONS_CONFLICT");
     }
     const pageOffset = kind === "summary" ? 0 : offset;
-    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection2);
-    return this.#finalize(snapshot, result, kind === "summary" || selection2 !== undefined);
+    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection);
+    return this.#finalize(snapshot, result, kind === "summary" || selection !== undefined);
   }
   #finalize(snapshot, result, retainSnapshot = false) {
     if (!result.details.cursor && !retainSnapshot && !this.#reusableSummarySnapshots.has(snapshot)) {
@@ -10420,35 +10427,35 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsTex
       }
     };
   }
-  async#page(snapshot, offset, mode, signal, selection2) {
+  async#page(snapshot, offset, mode, signal, selection) {
     if (offset === snapshot.matches.length) {
       throw new CursorError("Cursor is already at the end of the retained snapshot.");
     }
-    const pageOptions = selection2 ? {
-      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection2.labels })),
-      include: (match) => selection2.absolutePaths.has(match.absolutePath)
+    const pageOptions = selection ? {
+      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection.labels })),
+      include: (match) => selection.absolutePaths.has(match.absolutePath)
     } : {};
     const page = await formatMatchPage(snapshot, offset, signal, pageOptions);
-    if (page.returnedMatches === 0 && selection2) {
+    if (page.returnedMatches === 0 && selection) {
       throw new CursorError("No retained matches exist for the selected paths.");
     }
     const missingPaths = [];
-    if (selection2) {
+    if (selection) {
       const matchedAbsolutePaths = new Set;
       for (const match of snapshot.matches) {
-        if (selection2.absolutePaths.has(match.absolutePath)) {
+        if (selection.absolutePaths.has(match.absolutePath)) {
           matchedAbsolutePaths.add(match.absolutePath);
         }
       }
-      const selectedAbsolutePaths = [...selection2.absolutePaths];
-      for (const [index, label] of selection2.labels.entries()) {
+      const selectedAbsolutePaths = [...selection.absolutePaths];
+      for (const [index, label] of selection.labels.entries()) {
         const absolutePath = selectedAbsolutePaths[index];
         if (absolutePath !== undefined && !matchedAbsolutePaths.has(absolutePath)) {
           missingPaths.push(label);
         }
       }
     }
-    return this.#pageResult(snapshot, offset, mode, page, selection2?.labels, missingPaths, selection2?.key ?? "all");
+    return this.#pageResult(snapshot, offset, mode, page, selection?.labels, missingPaths, selection?.key ?? "all");
   }
   #pageResult(snapshot, offset, mode, page, selectedPaths, selectionMissingPaths = [], selectionKey = "all") {
     if (page.returnedMatches === 0) {
@@ -10458,7 +10465,7 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsTex
     const firstMatch = page.firstMatchIndex ?? offset;
     const lastMatch = page.lastMatchIndex ?? firstMatch;
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
-    const selection2 = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
+    const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor ? `
 
 Continue with cursor="${cursor}".
@@ -10483,7 +10490,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
     return {
       text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}
 
-[Matches ${range} of ${snapshot.totalMatches}${selection2}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
+[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
       details: {
         ...details,
         returnedMatches: page.returnedMatches,
@@ -11470,7 +11477,7 @@ var L = class {
     return e;
   }
 };
-var b = class l2 {
+var b = class l {
   options;
   renderer;
   textRenderer;
@@ -11478,10 +11485,10 @@ var b = class l2 {
     this.options = e || T, this.options.renderer = this.options.renderer || new y, this.renderer = this.options.renderer, this.renderer.options = this.options, this.renderer.parser = this, this.textRenderer = new L;
   }
   static parse(e, t) {
-    return new l2(t).parse(e);
+    return new l(t).parse(e);
   }
   static parseInline(e, t) {
-    return new l2(t).parseInline(e);
+    return new l(t).parseInline(e);
   }
   parse(e) {
     this.renderer.parser = this;
@@ -11832,19 +11839,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
   }
 };
 var z = new q;
-function g(l3, e) {
-  return z.parse(l3, e);
+function g(l, e) {
+  return z.parse(l, e);
 }
-g.options = g.setOptions = function(l3) {
-  return z.setOptions(l3), g.defaults = z.defaults, N(g.defaults), g;
+g.options = g.setOptions = function(l) {
+  return z.setOptions(l), g.defaults = z.defaults, N(g.defaults), g;
 };
 g.getDefaults = M;
 g.defaults = T;
-g.use = function(...l3) {
-  return z.use(...l3), g.defaults = z.defaults, N(g.defaults), g;
+g.use = function(...l) {
+  return z.use(...l), g.defaults = z.defaults, N(g.defaults), g;
 };
-g.walkTokens = function(l3, e) {
-  return z.walkTokens(l3, e);
+g.walkTokens = function(l, e) {
+  return z.walkTokens(l, e);
 };
 g.parseInline = z.parseInline;
 g.Parser = b;
@@ -11991,17 +11998,17 @@ function truncateFragmentToWidth(text, maxWidth) {
   const hasAnsi = text.includes("\x1B");
   const hasTabs = text.includes("\t");
   if (!hasAnsi && !hasTabs) {
-    let result2 = "";
-    let width2 = 0;
+    let result = "";
+    let width = 0;
     for (const { segment } of graphemeSegmenter.segment(text)) {
-      const w2 = graphemeWidth(segment);
-      if (width2 + w2 > maxWidth) {
+      const w = graphemeWidth(segment);
+      if (width + w > maxWidth) {
         break;
       }
-      result2 += segment;
-      width2 += w2;
+      result += segment;
+      width += w;
     }
-    return { text: result2, width: width2 };
+    return { text: result, width };
   }
   let result = "";
   let width = 0;
@@ -12036,8 +12043,8 @@ function truncateFragmentToWidth(text, maxWidth) {
       end++;
     }
     for (const { segment } of graphemeSegmenter.segment(text.slice(i2, end))) {
-      const w2 = graphemeWidth(segment);
-      if (width + w2 > maxWidth) {
+      const w = graphemeWidth(segment);
+      if (width + w > maxWidth) {
         return { text: result, width };
       }
       if (pendingAnsi) {
@@ -12045,7 +12052,7 @@ function truncateFragmentToWidth(text, maxWidth) {
         pendingAnsi = "";
       }
       result += segment;
-      width += w2;
+      width += w;
     }
     i2 = end;
   }
@@ -12147,125 +12154,37 @@ function visibleWidth(str) {
   widthCache.set(str, width);
   return width;
 }
-function stripTerminalSequences(str) {
-  if (!str.includes("\x1B"))
-    return str;
-  let result = "";
-  let i2 = 0;
-  while (i2 < str.length) {
-    const ansi = extractAnsiCode(str, i2);
-    if (ansi) {
-      i2 += ansi.length;
-      continue;
-    }
-    result += str[i2];
-    i2++;
-  }
-  return result;
-}
-function getGraphemeCellRange(line, column) {
-  let currentCol = 0;
-  let i2 = 0;
-  while (i2 < line.length) {
-    const ansi = extractAnsiCode(line, i2);
-    if (ansi) {
-      i2 += ansi.length;
-      continue;
-    }
-    let textEnd = i2;
-    while (textEnd < line.length && !extractAnsiCode(line, textEnd))
-      textEnd++;
-    for (const { segment } of graphemeSegmenter.segment(line.slice(i2, textEnd))) {
-      const width = graphemeWidth(segment);
-      if (width > 0 && column >= currentCol && column < currentCol + width) {
-        return { start: currentCol, end: currentCol + width };
-      }
-      currentCol += width;
-    }
-    i2 = textEnd;
-  }
-  return;
-}
-function getOsc8LinkAtColumn(line, column) {
-  let activeUrl;
-  let currentCol = 0;
-  let i2 = 0;
-  while (i2 < line.length) {
-    const ansi = extractAnsiCode(line, i2);
-    if (ansi) {
-      const hyperlink = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\)$/.exec(ansi.code);
-      if (hyperlink)
-        activeUrl = hyperlink[1] || undefined;
-      i2 += ansi.length;
-      continue;
-    }
-    let textEnd = i2;
-    while (textEnd < line.length && !extractAnsiCode(line, textEnd))
-      textEnd++;
-    for (const { segment } of graphemeSegmenter.segment(line.slice(i2, textEnd))) {
-      const width = segment === "\t" ? 3 : graphemeWidth(segment);
-      if (column >= currentCol && column < currentCol + width)
-        return activeUrl;
-      currentCol += width;
-    }
-    i2 = textEnd;
-  }
-  return;
-}
-var THAI_LAO_AM_REGEX = /[\u0e33\u0eb3]/;
-var THAI_LAO_AM_GLOBAL_REGEX = /[\u0e33\u0eb3]/g;
-function normalizeTerminalOutput(str) {
-  let normalized = str;
-  if (THAI_LAO_AM_REGEX.test(normalized)) {
-    normalized = normalized.replace(THAI_LAO_AM_GLOBAL_REGEX, (char) => char === "\u0E33" ? "\u0E4D\u0E32" : "\u0ECD\u0EB2");
-  }
-  if (!normalized.includes("\t"))
-    return normalized;
-  let result = "";
-  let i2 = 0;
-  while (i2 < normalized.length) {
-    const ansi = extractAnsiCode(normalized, i2);
-    if (ansi) {
-      result += ansi.code;
-      i2 += ansi.length;
-      continue;
-    }
-    result += normalized[i2] === "\t" ? "   " : normalized[i2];
-    i2++;
-  }
-  return result;
-}
 function extractAnsiCode(str, pos) {
   if (pos >= str.length || str[pos] !== "\x1B")
     return null;
   const next = str[pos + 1];
   if (next === "[") {
-    let j2 = pos + 2;
-    while (j2 < str.length && !/[mGKHJ]/.test(str[j2]))
-      j2++;
-    if (j2 < str.length)
-      return { code: str.substring(pos, j2 + 1), length: j2 + 1 - pos };
+    let j = pos + 2;
+    while (j < str.length && !/[mGKHJ]/.test(str[j]))
+      j++;
+    if (j < str.length)
+      return { code: str.substring(pos, j + 1), length: j + 1 - pos };
     return null;
   }
   if (next === "]") {
-    let j2 = pos + 2;
-    while (j2 < str.length) {
-      if (str[j2] === "\x07")
-        return { code: str.substring(pos, j2 + 1), length: j2 + 1 - pos };
-      if (str[j2] === "\x1B" && str[j2 + 1] === "\\")
-        return { code: str.substring(pos, j2 + 2), length: j2 + 2 - pos };
-      j2++;
+    let j = pos + 2;
+    while (j < str.length) {
+      if (str[j] === "\x07")
+        return { code: str.substring(pos, j + 1), length: j + 1 - pos };
+      if (str[j] === "\x1B" && str[j + 1] === "\\")
+        return { code: str.substring(pos, j + 2), length: j + 2 - pos };
+      j++;
     }
     return null;
   }
   if (next === "_") {
-    let j2 = pos + 2;
-    while (j2 < str.length) {
-      if (str[j2] === "\x07")
-        return { code: str.substring(pos, j2 + 1), length: j2 + 1 - pos };
-      if (str[j2] === "\x1B" && str[j2 + 1] === "\\")
-        return { code: str.substring(pos, j2 + 2), length: j2 + 2 - pos };
-      j2++;
+    let j = pos + 2;
+    while (j < str.length) {
+      if (str[j] === "\x07")
+        return { code: str.substring(pos, j + 1), length: j + 1 - pos };
+      if (str[j] === "\x1B" && str[j + 1] === "\\")
+        return { code: str.substring(pos, j + 2), length: j + 2 - pos };
+      j++;
     }
     return null;
   }
@@ -12645,11 +12564,7 @@ function wrapSingleLine(line, width) {
   if (currentLine) {
     wrapped.push(currentLine);
   }
-  return wrapped.length > 0 ? wrapped.map((line2) => line2.trimEnd()) : [""];
-}
-var PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
-function isWhitespaceChar(char) {
-  return /\s/.test(char);
+  return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
 }
 function breakLongWord(word, width, tracker) {
   const lines = [];
@@ -12686,8 +12601,8 @@ function breakLongWord(word, width, tracker) {
     const grapheme = seg.value;
     if (!grapheme)
       continue;
-    const graphemeWidth2 = visibleWidth(grapheme);
-    if (currentWidth + graphemeWidth2 > width) {
+    const graphemeWidth = visibleWidth(grapheme);
+    if (currentWidth + graphemeWidth > width) {
       const lineEndReset = tracker.getLineEndReset();
       if (lineEndReset) {
         currentLine += lineEndReset;
@@ -12697,7 +12612,7 @@ function breakLongWord(word, width, tracker) {
       currentWidth = 0;
     }
     currentLine += grapheme;
-    currentWidth += graphemeWidth2;
+    currentWidth += graphemeWidth;
   }
   if (currentLine) {
     lines.push(currentLine);
@@ -12734,8 +12649,8 @@ function truncateToWidth(text, maxWidth, ellipsis = "...", pad = false) {
     if (text.length <= maxWidth) {
       return pad ? text + " ".repeat(maxWidth - text.length) : text;
     }
-    const targetWidth2 = maxWidth - ellipsisWidth;
-    return finalizeTruncatedResult(text.slice(0, targetWidth2), targetWidth2, ellipsis, ellipsisWidth, maxWidth, pad);
+    const targetWidth = maxWidth - ellipsisWidth;
+    return finalizeTruncatedResult(text.slice(0, targetWidth), targetWidth, ellipsis, ellipsisWidth, maxWidth, pad);
   }
   const targetWidth = maxWidth - ellipsisWidth;
   let result = "";
@@ -12831,104 +12746,8 @@ function truncateToWidth(text, maxWidth, ellipsis = "...", pad = false) {
   }
   return finalizeTruncatedResult(result, keptWidth, ellipsis, ellipsisWidth, maxWidth, pad);
 }
-function sliceByColumn(line, startCol, length, strict = false) {
-  return sliceWithWidth(line, startCol, length, strict).text;
-}
-function sliceWithWidth(line, startCol, length, strict = false) {
-  if (length <= 0)
-    return { text: "", width: 0 };
-  const endCol = startCol + length;
-  let result = "", resultWidth = 0, currentCol = 0, i2 = 0, pendingAnsi = "";
-  while (i2 < line.length) {
-    const ansi = extractAnsiCode(line, i2);
-    if (ansi) {
-      if (currentCol >= startCol && currentCol < endCol)
-        result += ansi.code;
-      else if (currentCol < startCol)
-        pendingAnsi += ansi.code;
-      i2 += ansi.length;
-      continue;
-    }
-    let textEnd = i2;
-    while (textEnd < line.length && !extractAnsiCode(line, textEnd))
-      textEnd++;
-    for (const { segment } of graphemeSegmenter.segment(line.slice(i2, textEnd))) {
-      const w2 = graphemeWidth(segment);
-      const inRange = currentCol >= startCol && currentCol < endCol;
-      const fits = !strict || currentCol + w2 <= endCol;
-      if (inRange && fits) {
-        if (pendingAnsi) {
-          result += pendingAnsi;
-          pendingAnsi = "";
-        }
-        result += segment;
-        resultWidth += w2;
-      }
-      currentCol += w2;
-      if (currentCol >= endCol)
-        break;
-    }
-    i2 = textEnd;
-    if (currentCol >= endCol)
-      break;
-  }
-  return { text: result, width: resultWidth };
-}
 var pooledStyleTracker = new AnsiCodeTracker;
-function extractSegments(line, beforeEnd, afterStart, afterLen, strictAfter = false) {
-  let before = "", beforeWidth = 0, after = "", afterWidth = 0;
-  let currentCol = 0, i2 = 0;
-  let pendingAnsiBefore = "";
-  let afterStarted = false;
-  const afterEnd = afterStart + afterLen;
-  pooledStyleTracker.clear();
-  while (i2 < line.length) {
-    const ansi = extractAnsiCode(line, i2);
-    if (ansi) {
-      pooledStyleTracker.process(ansi.code);
-      if (currentCol < beforeEnd) {
-        pendingAnsiBefore += ansi.code;
-      } else if (currentCol >= afterStart && currentCol < afterEnd && afterStarted) {
-        after += ansi.code;
-      }
-      i2 += ansi.length;
-      continue;
-    }
-    let textEnd = i2;
-    while (textEnd < line.length && !extractAnsiCode(line, textEnd))
-      textEnd++;
-    for (const { segment } of graphemeSegmenter.segment(line.slice(i2, textEnd))) {
-      const w2 = graphemeWidth(segment);
-      if (currentCol < beforeEnd && currentCol + w2 <= beforeEnd) {
-        if (pendingAnsiBefore) {
-          before += pendingAnsiBefore;
-          pendingAnsiBefore = "";
-        }
-        before += segment;
-        beforeWidth += w2;
-      } else if (currentCol >= afterStart && currentCol < afterEnd) {
-        const fits = !strictAfter || currentCol + w2 <= afterEnd;
-        if (fits) {
-          if (!afterStarted) {
-            after += pooledStyleTracker.getActiveCodes();
-            afterStarted = true;
-          }
-          after += segment;
-          afterWidth += w2;
-        }
-      }
-      currentCol += w2;
-      if (afterLen <= 0 ? currentCol >= beforeEnd : currentCol >= afterEnd)
-        break;
-    }
-    i2 = textEnd;
-    if (afterLen <= 0 ? currentCol >= beforeEnd : currentCol >= afterEnd)
-      break;
-  }
-  return { before, beforeWidth, after, afterWidth };
-}
 // node_modules/@earendil-works/pi-tui/dist/keys.js
-var _kittyProtocolActive = false;
 var SYMBOL_KEYS = new Set([
   "`",
   "-",
@@ -12969,14 +12788,6 @@ var MODIFIERS = {
   super: 8
 };
 var LOCK_MASK = 64 + 128;
-var CODEPOINTS = {
-  escape: 27,
-  tab: 9,
-  enter: 13,
-  space: 32,
-  backspace: 127,
-  kpEnter: 57414
-};
 var ARROW_CODEPOINTS = {
   up: -1,
   down: -2,
@@ -13020,728 +12831,7 @@ var KITTY_FUNCTIONAL_KEY_EQUIVALENTS = new Map([
   [57425, FUNCTIONAL_CODEPOINTS.insert],
   [57426, FUNCTIONAL_CODEPOINTS.delete]
 ]);
-function normalizeKittyFunctionalCodepoint(codepoint) {
-  return KITTY_FUNCTIONAL_KEY_EQUIVALENTS.get(codepoint) ?? codepoint;
-}
-function normalizeShiftedLetterIdentityCodepoint(codepoint, modifier) {
-  const effectiveModifier = modifier & ~LOCK_MASK;
-  if ((effectiveModifier & MODIFIERS.shift) !== 0 && codepoint >= 65 && codepoint <= 90) {
-    return codepoint + 32;
-  }
-  return codepoint;
-}
-var LEGACY_KEY_SEQUENCES = {
-  up: ["\x1B[A", "\x1BOA"],
-  down: ["\x1B[B", "\x1BOB"],
-  right: ["\x1B[C", "\x1BOC"],
-  left: ["\x1B[D", "\x1BOD"],
-  home: ["\x1B[H", "\x1BOH", "\x1B[1~", "\x1B[7~"],
-  end: ["\x1B[F", "\x1BOF", "\x1B[4~", "\x1B[8~"],
-  insert: ["\x1B[2~"],
-  delete: ["\x1B[3~"],
-  pageUp: ["\x1B[5~", "\x1B[[5~"],
-  pageDown: ["\x1B[6~", "\x1B[[6~"],
-  clear: ["\x1B[E", "\x1BOE"],
-  f1: ["\x1BOP", "\x1B[11~", "\x1B[[A"],
-  f2: ["\x1BOQ", "\x1B[12~", "\x1B[[B"],
-  f3: ["\x1BOR", "\x1B[13~", "\x1B[[C"],
-  f4: ["\x1BOS", "\x1B[14~", "\x1B[[D"],
-  f5: ["\x1B[15~", "\x1B[[E"],
-  f6: ["\x1B[17~"],
-  f7: ["\x1B[18~"],
-  f8: ["\x1B[19~"],
-  f9: ["\x1B[20~"],
-  f10: ["\x1B[21~"],
-  f11: ["\x1B[23~"],
-  f12: ["\x1B[24~"]
-};
-var LEGACY_SHIFT_SEQUENCES = {
-  up: ["\x1B[a"],
-  down: ["\x1B[b"],
-  right: ["\x1B[c"],
-  left: ["\x1B[d"],
-  clear: ["\x1B[e"],
-  insert: ["\x1B[2$"],
-  delete: ["\x1B[3$"],
-  pageUp: ["\x1B[5$"],
-  pageDown: ["\x1B[6$"],
-  home: ["\x1B[7$"],
-  end: ["\x1B[8$"]
-};
-var LEGACY_CTRL_SEQUENCES = {
-  up: ["\x1BOa"],
-  down: ["\x1BOb"],
-  right: ["\x1BOc"],
-  left: ["\x1BOd"],
-  clear: ["\x1BOe"],
-  insert: ["\x1B[2^"],
-  delete: ["\x1B[3^"],
-  pageUp: ["\x1B[5^"],
-  pageDown: ["\x1B[6^"],
-  home: ["\x1B[7^"],
-  end: ["\x1B[8^"]
-};
-var matchesLegacySequence = (data, sequences) => sequences.includes(data);
-var matchesLegacyModifierSequence = (data, key, modifier) => {
-  if (modifier === MODIFIERS.shift) {
-    return matchesLegacySequence(data, LEGACY_SHIFT_SEQUENCES[key]);
-  }
-  if (modifier === MODIFIERS.ctrl) {
-    return matchesLegacySequence(data, LEGACY_CTRL_SEQUENCES[key]);
-  }
-  return false;
-};
-var _lastEventType = "press";
-function isKeyRelease(data) {
-  if (data.includes("\x1B[200~")) {
-    return false;
-  }
-  if (data.includes(":3u") || data.includes(":3~") || data.includes(":3A") || data.includes(":3B") || data.includes(":3C") || data.includes(":3D") || data.includes(":3H") || data.includes(":3F")) {
-    return true;
-  }
-  return false;
-}
-function parseEventType(eventTypeStr) {
-  if (!eventTypeStr)
-    return "press";
-  const eventType = parseInt(eventTypeStr, 10);
-  if (eventType === 2)
-    return "repeat";
-  if (eventType === 3)
-    return "release";
-  return "press";
-}
-function parseKittySequence(data) {
-  const csiUMatch = data.match(/^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$/);
-  if (csiUMatch) {
-    const codepoint = parseInt(csiUMatch[1], 10);
-    const shiftedKey = csiUMatch[2] && csiUMatch[2].length > 0 ? parseInt(csiUMatch[2], 10) : undefined;
-    const baseLayoutKey = csiUMatch[3] ? parseInt(csiUMatch[3], 10) : undefined;
-    const modValue = csiUMatch[4] ? parseInt(csiUMatch[4], 10) : 1;
-    const eventType = parseEventType(csiUMatch[5]);
-    _lastEventType = eventType;
-    return { codepoint, shiftedKey, baseLayoutKey, modifier: modValue - 1, eventType };
-  }
-  const arrowMatch = data.match(/^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$/);
-  if (arrowMatch) {
-    const modValue = parseInt(arrowMatch[1], 10);
-    const eventType = parseEventType(arrowMatch[2]);
-    const arrowCodes = { A: -1, B: -2, C: -3, D: -4 };
-    _lastEventType = eventType;
-    return { codepoint: arrowCodes[arrowMatch[3]], modifier: modValue - 1, eventType };
-  }
-  const funcMatch = data.match(/^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?~$/);
-  if (funcMatch) {
-    const keyNum = parseInt(funcMatch[1], 10);
-    const modValue = funcMatch[2] ? parseInt(funcMatch[2], 10) : 1;
-    const eventType = parseEventType(funcMatch[3]);
-    const funcCodes = {
-      2: FUNCTIONAL_CODEPOINTS.insert,
-      3: FUNCTIONAL_CODEPOINTS.delete,
-      5: FUNCTIONAL_CODEPOINTS.pageUp,
-      6: FUNCTIONAL_CODEPOINTS.pageDown,
-      7: FUNCTIONAL_CODEPOINTS.home,
-      8: FUNCTIONAL_CODEPOINTS.end
-    };
-    const codepoint = funcCodes[keyNum];
-    if (codepoint !== undefined) {
-      _lastEventType = eventType;
-      return { codepoint, modifier: modValue - 1, eventType };
-    }
-  }
-  const homeEndMatch = data.match(/^\x1b\[1;(\d+)(?::(\d+))?([HF])$/);
-  if (homeEndMatch) {
-    const modValue = parseInt(homeEndMatch[1], 10);
-    const eventType = parseEventType(homeEndMatch[2]);
-    const codepoint = homeEndMatch[3] === "H" ? FUNCTIONAL_CODEPOINTS.home : FUNCTIONAL_CODEPOINTS.end;
-    _lastEventType = eventType;
-    return { codepoint, modifier: modValue - 1, eventType };
-  }
-  return null;
-}
-function matchesKittySequence(data, expectedCodepoint, expectedModifier) {
-  const parsed = parseKittySequence(data);
-  if (!parsed)
-    return false;
-  const actualMod = parsed.modifier & ~LOCK_MASK;
-  const expectedMod = expectedModifier & ~LOCK_MASK;
-  if (actualMod !== expectedMod)
-    return false;
-  const normalizedCodepoint = normalizeShiftedLetterIdentityCodepoint(normalizeKittyFunctionalCodepoint(parsed.codepoint), parsed.modifier);
-  const normalizedExpectedCodepoint = normalizeShiftedLetterIdentityCodepoint(normalizeKittyFunctionalCodepoint(expectedCodepoint), expectedModifier);
-  if (normalizedCodepoint === normalizedExpectedCodepoint)
-    return true;
-  if (parsed.baseLayoutKey !== undefined && parsed.baseLayoutKey === expectedCodepoint) {
-    const cp = normalizedCodepoint;
-    const isLatinLetter = cp >= 97 && cp <= 122;
-    const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(cp));
-    if (!isLatinLetter && !isKnownSymbol)
-      return true;
-  }
-  return false;
-}
-function parseModifyOtherKeysSequence(data) {
-  const match = data.match(/^\x1b\[27;(\d+);(\d+)~$/);
-  if (!match)
-    return null;
-  const modValue = parseInt(match[1], 10);
-  const codepoint = parseInt(match[2], 10);
-  return { codepoint, modifier: modValue - 1 };
-}
-function matchesModifyOtherKeys(data, expectedKeycode, expectedModifier) {
-  const parsed = parseModifyOtherKeysSequence(data);
-  if (!parsed)
-    return false;
-  return parsed.codepoint === expectedKeycode && parsed.modifier === expectedModifier;
-}
-function isWindowsTerminalSession() {
-  return Boolean(process.env.WT_SESSION) && !process.env.SSH_CONNECTION && !process.env.SSH_CLIENT && !process.env.SSH_TTY;
-}
-function matchesRawBackspace(data, expectedModifier) {
-  if (data === "\x7F")
-    return expectedModifier === 0;
-  if (data !== "\b")
-    return false;
-  return isWindowsTerminalSession() ? expectedModifier === MODIFIERS.ctrl : expectedModifier === 0;
-}
-function rawCtrlChar(key) {
-  const char = key.toLowerCase();
-  const code = char.charCodeAt(0);
-  if (code >= 97 && code <= 122 || char === "[" || char === "\\" || char === "]" || char === "_") {
-    return String.fromCharCode(code & 31);
-  }
-  if (char === "-") {
-    return String.fromCharCode(31);
-  }
-  return null;
-}
-function isDigitKey(key) {
-  return key >= "0" && key <= "9";
-}
-function matchesPrintableModifyOtherKeys(data, expectedKeycode, expectedModifier) {
-  if (expectedModifier === 0)
-    return false;
-  const parsed = parseModifyOtherKeysSequence(data);
-  if (!parsed || parsed.modifier !== expectedModifier)
-    return false;
-  return normalizeShiftedLetterIdentityCodepoint(parsed.codepoint, parsed.modifier) === normalizeShiftedLetterIdentityCodepoint(expectedKeycode, expectedModifier);
-}
-function parseKeyId(keyId) {
-  const parts2 = keyId.toLowerCase().split("+");
-  const key = parts2[parts2.length - 1];
-  if (!key)
-    return null;
-  return {
-    key,
-    ctrl: parts2.includes("ctrl"),
-    shift: parts2.includes("shift"),
-    alt: parts2.includes("alt"),
-    super: parts2.includes("super")
-  };
-}
-function matchesKey(data, keyId) {
-  const parsed = parseKeyId(keyId);
-  if (!parsed)
-    return false;
-  const { key, ctrl, shift, alt, super: superModifier } = parsed;
-  let modifier = 0;
-  if (shift)
-    modifier |= MODIFIERS.shift;
-  if (alt)
-    modifier |= MODIFIERS.alt;
-  if (ctrl)
-    modifier |= MODIFIERS.ctrl;
-  if (superModifier)
-    modifier |= MODIFIERS.super;
-  switch (key) {
-    case "escape":
-    case "esc":
-      if (modifier !== 0)
-        return false;
-      return data === "\x1B" || matchesKittySequence(data, CODEPOINTS.escape, 0) || matchesModifyOtherKeys(data, CODEPOINTS.escape, 0);
-    case "space":
-      if (!_kittyProtocolActive) {
-        if (modifier === MODIFIERS.ctrl && data === "\x00") {
-          return true;
-        }
-        if (modifier === MODIFIERS.alt && data === "\x1B ") {
-          return true;
-        }
-      }
-      if (modifier === 0) {
-        return data === " " || matchesKittySequence(data, CODEPOINTS.space, 0) || matchesModifyOtherKeys(data, CODEPOINTS.space, 0);
-      }
-      return matchesKittySequence(data, CODEPOINTS.space, modifier) || matchesModifyOtherKeys(data, CODEPOINTS.space, modifier);
-    case "tab":
-      if (modifier === MODIFIERS.shift) {
-        return data === "\x1B[Z" || matchesKittySequence(data, CODEPOINTS.tab, MODIFIERS.shift) || matchesModifyOtherKeys(data, CODEPOINTS.tab, MODIFIERS.shift);
-      }
-      if (modifier === 0) {
-        return data === "\t" || matchesKittySequence(data, CODEPOINTS.tab, 0);
-      }
-      return matchesKittySequence(data, CODEPOINTS.tab, modifier) || matchesModifyOtherKeys(data, CODEPOINTS.tab, modifier);
-    case "enter":
-    case "return":
-      if (modifier === MODIFIERS.shift) {
-        if (matchesKittySequence(data, CODEPOINTS.enter, MODIFIERS.shift) || matchesKittySequence(data, CODEPOINTS.kpEnter, MODIFIERS.shift)) {
-          return true;
-        }
-        if (matchesModifyOtherKeys(data, CODEPOINTS.enter, MODIFIERS.shift)) {
-          return true;
-        }
-        if (_kittyProtocolActive) {
-          return data === "\x1B\r" || data === `
-`;
-        }
-        return false;
-      }
-      if (modifier === MODIFIERS.alt) {
-        if (matchesKittySequence(data, CODEPOINTS.enter, MODIFIERS.alt) || matchesKittySequence(data, CODEPOINTS.kpEnter, MODIFIERS.alt)) {
-          return true;
-        }
-        if (matchesModifyOtherKeys(data, CODEPOINTS.enter, MODIFIERS.alt)) {
-          return true;
-        }
-        if (!_kittyProtocolActive) {
-          return data === "\x1B\r";
-        }
-        return false;
-      }
-      if (modifier === 0) {
-        return data === "\r" || !_kittyProtocolActive && data === `
-` || data === "\x1BOM" || matchesKittySequence(data, CODEPOINTS.enter, 0) || matchesKittySequence(data, CODEPOINTS.kpEnter, 0);
-      }
-      return matchesKittySequence(data, CODEPOINTS.enter, modifier) || matchesKittySequence(data, CODEPOINTS.kpEnter, modifier) || matchesModifyOtherKeys(data, CODEPOINTS.enter, modifier);
-    case "backspace":
-      if (modifier === MODIFIERS.alt) {
-        if (data === "\x1B\x7F" || data === "\x1B\b") {
-          return true;
-        }
-        return matchesKittySequence(data, CODEPOINTS.backspace, MODIFIERS.alt) || matchesModifyOtherKeys(data, CODEPOINTS.backspace, MODIFIERS.alt);
-      }
-      if (modifier === MODIFIERS.ctrl) {
-        if (matchesRawBackspace(data, MODIFIERS.ctrl))
-          return true;
-        return matchesKittySequence(data, CODEPOINTS.backspace, MODIFIERS.ctrl) || matchesModifyOtherKeys(data, CODEPOINTS.backspace, MODIFIERS.ctrl);
-      }
-      if (modifier === 0) {
-        return matchesRawBackspace(data, 0) || matchesKittySequence(data, CODEPOINTS.backspace, 0) || matchesModifyOtherKeys(data, CODEPOINTS.backspace, 0);
-      }
-      return matchesKittySequence(data, CODEPOINTS.backspace, modifier) || matchesModifyOtherKeys(data, CODEPOINTS.backspace, modifier);
-    case "insert":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.insert) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.insert, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "insert", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.insert, modifier);
-    case "delete":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.delete) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.delete, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "delete", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.delete, modifier);
-    case "clear":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.clear);
-      }
-      return matchesLegacyModifierSequence(data, "clear", modifier);
-    case "home":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.home) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.home, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "home", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.home, modifier);
-    case "end":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.end) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.end, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "end", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.end, modifier);
-    case "pageup":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.pageUp) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.pageUp, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "pageUp", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.pageUp, modifier);
-    case "pagedown":
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.pageDown) || matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.pageDown, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "pageDown", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.pageDown, modifier);
-    case "up":
-      if (modifier === MODIFIERS.alt) {
-        return data === "\x1Bp" || matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt);
-      }
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.up) || matchesKittySequence(data, ARROW_CODEPOINTS.up, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "up", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, ARROW_CODEPOINTS.up, modifier);
-    case "down":
-      if (modifier === MODIFIERS.alt) {
-        return data === "\x1Bn" || matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt);
-      }
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.down) || matchesKittySequence(data, ARROW_CODEPOINTS.down, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "down", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, ARROW_CODEPOINTS.down, modifier);
-    case "left":
-      if (modifier === MODIFIERS.alt) {
-        return data === "\x1B[1;3D" || !_kittyProtocolActive && data === "\x1BB" || data === "\x1Bb" || matchesKittySequence(data, ARROW_CODEPOINTS.left, MODIFIERS.alt);
-      }
-      if (modifier === MODIFIERS.ctrl) {
-        return data === "\x1B[1;5D" || matchesLegacyModifierSequence(data, "left", MODIFIERS.ctrl) || matchesKittySequence(data, ARROW_CODEPOINTS.left, MODIFIERS.ctrl);
-      }
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.left) || matchesKittySequence(data, ARROW_CODEPOINTS.left, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "left", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, ARROW_CODEPOINTS.left, modifier);
-    case "right":
-      if (modifier === MODIFIERS.alt) {
-        return data === "\x1B[1;3C" || !_kittyProtocolActive && data === "\x1BF" || data === "\x1Bf" || matchesKittySequence(data, ARROW_CODEPOINTS.right, MODIFIERS.alt);
-      }
-      if (modifier === MODIFIERS.ctrl) {
-        return data === "\x1B[1;5C" || matchesLegacyModifierSequence(data, "right", MODIFIERS.ctrl) || matchesKittySequence(data, ARROW_CODEPOINTS.right, MODIFIERS.ctrl);
-      }
-      if (modifier === 0) {
-        return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES.right) || matchesKittySequence(data, ARROW_CODEPOINTS.right, 0);
-      }
-      if (matchesLegacyModifierSequence(data, "right", modifier)) {
-        return true;
-      }
-      return matchesKittySequence(data, ARROW_CODEPOINTS.right, modifier);
-    case "f1":
-    case "f2":
-    case "f3":
-    case "f4":
-    case "f5":
-    case "f6":
-    case "f7":
-    case "f8":
-    case "f9":
-    case "f10":
-    case "f11":
-    case "f12": {
-      if (modifier !== 0) {
-        return false;
-      }
-      const functionKey = key;
-      return matchesLegacySequence(data, LEGACY_KEY_SEQUENCES[functionKey]);
-    }
-  }
-  if (key.length === 1 && (key >= "a" && key <= "z" || isDigitKey(key) || SYMBOL_KEYS.has(key))) {
-    const codepoint = key.charCodeAt(0);
-    const rawCtrl = rawCtrlChar(key);
-    const isLetter = key >= "a" && key <= "z";
-    const isDigit = isDigitKey(key);
-    if (modifier === MODIFIERS.ctrl + MODIFIERS.alt && !_kittyProtocolActive && rawCtrl) {
-      if (data === `\x1B${rawCtrl}`)
-        return true;
-    }
-    if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit || SYMBOL_KEYS.has(key))) {
-      if (data === `\x1B${key}`)
-        return true;
-    }
-    if (modifier === MODIFIERS.ctrl) {
-      if (rawCtrl && data === rawCtrl)
-        return true;
-      return matchesKittySequence(data, codepoint, MODIFIERS.ctrl) || matchesPrintableModifyOtherKeys(data, codepoint, MODIFIERS.ctrl);
-    }
-    if (modifier === MODIFIERS.shift + MODIFIERS.ctrl) {
-      return matchesKittySequence(data, codepoint, MODIFIERS.shift + MODIFIERS.ctrl) || matchesPrintableModifyOtherKeys(data, codepoint, MODIFIERS.shift + MODIFIERS.ctrl);
-    }
-    if (modifier === MODIFIERS.shift) {
-      if (isLetter && data === key.toUpperCase())
-        return true;
-      return matchesKittySequence(data, codepoint, MODIFIERS.shift) || matchesPrintableModifyOtherKeys(data, codepoint, MODIFIERS.shift);
-    }
-    if (modifier !== 0) {
-      return matchesKittySequence(data, codepoint, modifier) || matchesPrintableModifyOtherKeys(data, codepoint, modifier);
-    }
-    return data === key || matchesKittySequence(data, codepoint, 0);
-  }
-  return false;
-}
-var KITTY_CSI_U_REGEX = /^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$/;
 var KITTY_PRINTABLE_ALLOWED_MODIFIERS = MODIFIERS.shift | LOCK_MASK;
-function decodeKittyPrintable(data) {
-  const match = data.match(KITTY_CSI_U_REGEX);
-  if (!match)
-    return;
-  const codepoint = Number.parseInt(match[1] ?? "", 10);
-  if (!Number.isFinite(codepoint))
-    return;
-  const shiftedKey = match[2] && match[2].length > 0 ? Number.parseInt(match[2], 10) : undefined;
-  const modValue = match[4] ? Number.parseInt(match[4], 10) : 1;
-  const modifier = Number.isFinite(modValue) ? modValue - 1 : 0;
-  if ((modifier & ~KITTY_PRINTABLE_ALLOWED_MODIFIERS) !== 0)
-    return;
-  if (modifier & (MODIFIERS.alt | MODIFIERS.ctrl))
-    return;
-  let effectiveCodepoint = codepoint;
-  if (modifier & MODIFIERS.shift && typeof shiftedKey === "number") {
-    effectiveCodepoint = shiftedKey;
-  }
-  effectiveCodepoint = normalizeKittyFunctionalCodepoint(effectiveCodepoint);
-  if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32)
-    return;
-  try {
-    return String.fromCodePoint(effectiveCodepoint);
-  } catch {
-    return;
-  }
-}
-
-// node_modules/@earendil-works/pi-tui/dist/keybindings.js
-var TUI_KEYBINDINGS = {
-  "tui.editor.cursorUp": { defaultKeys: "up", description: "Move cursor up" },
-  "tui.editor.cursorDown": { defaultKeys: "down", description: "Move cursor down" },
-  "tui.editor.historyPrevious": {
-    defaultKeys: [],
-    description: "Select previous prompt history entry"
-  },
-  "tui.editor.historyNext": {
-    defaultKeys: [],
-    description: "Select next prompt history entry"
-  },
-  "tui.editor.cursorLeft": {
-    defaultKeys: ["left", "ctrl+b"],
-    description: "Move cursor left"
-  },
-  "tui.editor.cursorRight": {
-    defaultKeys: ["right", "ctrl+f"],
-    description: "Move cursor right"
-  },
-  "tui.editor.cursorWordLeft": {
-    defaultKeys: ["alt+left", "ctrl+left", "alt+b"],
-    description: "Move cursor word left"
-  },
-  "tui.editor.cursorWordRight": {
-    defaultKeys: ["alt+right", "ctrl+right", "alt+f"],
-    description: "Move cursor word right"
-  },
-  "tui.editor.cursorLineStart": {
-    defaultKeys: ["home", "ctrl+home", "ctrl+a"],
-    description: "Move to line start"
-  },
-  "tui.editor.cursorLineEnd": {
-    defaultKeys: ["end", "ctrl+end", "ctrl+e"],
-    description: "Move to line end"
-  },
-  "tui.editor.jumpForward": {
-    defaultKeys: "ctrl+]",
-    description: "Jump forward to character"
-  },
-  "tui.editor.jumpBackward": {
-    defaultKeys: "ctrl+alt+]",
-    description: "Jump backward to character"
-  },
-  "tui.editor.pageUp": { defaultKeys: ["pageUp", "ctrl+pageUp"], description: "Page up" },
-  "tui.editor.pageDown": { defaultKeys: ["pageDown", "ctrl+pageDown"], description: "Page down" },
-  "tui.editor.deleteCharBackward": {
-    defaultKeys: "backspace",
-    description: "Delete character backward"
-  },
-  "tui.editor.deleteCharForward": {
-    defaultKeys: ["delete", "ctrl+d"],
-    description: "Delete character forward"
-  },
-  "tui.editor.deleteWordBackward": {
-    defaultKeys: ["ctrl+w", "alt+backspace"],
-    description: "Delete word backward"
-  },
-  "tui.editor.deleteWordForward": {
-    defaultKeys: ["alt+d", "alt+delete"],
-    description: "Delete word forward"
-  },
-  "tui.editor.deleteToLineStart": {
-    defaultKeys: "ctrl+u",
-    description: "Delete to line start"
-  },
-  "tui.editor.deleteToLineEnd": {
-    defaultKeys: "ctrl+k",
-    description: "Delete to line end"
-  },
-  "tui.editor.yank": { defaultKeys: "ctrl+y", description: "Yank" },
-  "tui.editor.yankPop": { defaultKeys: "alt+y", description: "Yank pop" },
-  "tui.editor.undo": { defaultKeys: "ctrl+-", description: "Undo" },
-  "tui.input.newLine": { defaultKeys: ["shift+enter", "ctrl+j"], description: "Insert newline" },
-  "tui.input.submit": { defaultKeys: "enter", description: "Submit input" },
-  "tui.input.tab": { defaultKeys: "tab", description: "Tab / autocomplete" },
-  "tui.input.copy": { defaultKeys: "ctrl+c", description: "Copy selection" },
-  "tui.select.up": { defaultKeys: "up", description: "Move selection up" },
-  "tui.select.down": { defaultKeys: "down", description: "Move selection down" },
-  "tui.select.pageUp": { defaultKeys: "pageUp", description: "Selection page up" },
-  "tui.select.pageDown": {
-    defaultKeys: "pageDown",
-    description: "Selection page down"
-  },
-  "tui.select.confirm": { defaultKeys: "enter", description: "Confirm selection" },
-  "tui.select.cancel": {
-    defaultKeys: ["escape", "ctrl+c"],
-    description: "Cancel selection"
-  },
-  "tui.altScreen.pageUp": {
-    defaultKeys: "pageUp",
-    description: "Scroll viewport up one page"
-  },
-  "tui.altScreen.pageDown": {
-    defaultKeys: "pageDown",
-    description: "Scroll viewport down one page"
-  },
-  "tui.altScreen.halfPageUp": {
-    defaultKeys: [],
-    description: "Scroll viewport up half a page"
-  },
-  "tui.altScreen.halfPageDown": {
-    defaultKeys: [],
-    description: "Scroll viewport down half a page"
-  },
-  "tui.altScreen.lineUp": {
-    defaultKeys: [],
-    description: "Scroll viewport up one line"
-  },
-  "tui.altScreen.lineDown": {
-    defaultKeys: [],
-    description: "Scroll viewport down one line"
-  },
-  "tui.altScreen.previousPrompt": {
-    defaultKeys: ["ctrl+shift+up", "ctrl+up"],
-    description: "Jump to previous semantic prompt"
-  },
-  "tui.altScreen.nextPrompt": {
-    defaultKeys: ["ctrl+shift+down", "ctrl+down"],
-    description: "Jump to next semantic prompt"
-  },
-  "tui.altScreen.search": {
-    defaultKeys: "ctrl+shift+f",
-    description: "Search the primary scroll view"
-  },
-  "tui.altScreen.searchNext": {
-    defaultKeys: ["enter", "ctrl+g"],
-    description: "Select the next search match"
-  },
-  "tui.altScreen.searchPrevious": {
-    defaultKeys: ["shift+enter", "ctrl+shift+g"],
-    description: "Select the previous search match"
-  },
-  "tui.altScreen.searchClose": {
-    defaultKeys: "escape",
-    description: "Close transcript search"
-  },
-  "tui.altScreen.top": { defaultKeys: "home", description: "Scroll viewport to top" },
-  "tui.altScreen.bottom": { defaultKeys: "end", description: "Scroll viewport to bottom" }
-};
-function normalizeKeys(keys) {
-  if (keys === undefined)
-    return [];
-  const keyList = Array.isArray(keys) ? keys : [keys];
-  const seen = new Set;
-  const result = [];
-  for (const key of keyList) {
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(key);
-    }
-  }
-  return result;
-}
-
-class KeybindingsManager {
-  definitions;
-  userBindings;
-  keysById = new Map;
-  conflicts = [];
-  constructor(definitions, userBindings = {}) {
-    this.definitions = definitions;
-    this.userBindings = userBindings;
-    this.rebuild();
-  }
-  rebuild() {
-    this.keysById.clear();
-    this.conflicts = [];
-    const userClaims = new Map;
-    for (const [keybinding, keys] of Object.entries(this.userBindings)) {
-      if (!(keybinding in this.definitions))
-        continue;
-      for (const key of normalizeKeys(keys)) {
-        const claimants = userClaims.get(key) ?? new Set;
-        claimants.add(keybinding);
-        userClaims.set(key, claimants);
-      }
-    }
-    for (const [key, keybindings] of userClaims) {
-      if (keybindings.size > 1) {
-        this.conflicts.push({ key, keybindings: [...keybindings] });
-      }
-    }
-    for (const [id, definition] of Object.entries(this.definitions)) {
-      const userKeys = this.userBindings[id];
-      const keys = userKeys === undefined ? normalizeKeys(definition.defaultKeys) : normalizeKeys(userKeys);
-      this.keysById.set(id, keys);
-    }
-  }
-  matches(data, keybinding) {
-    const keys = this.keysById.get(keybinding) ?? [];
-    for (const key of keys) {
-      if (matchesKey(data, key))
-        return true;
-    }
-    return false;
-  }
-  getKeys(keybinding) {
-    return [...this.keysById.get(keybinding) ?? []];
-  }
-  getDefinition(keybinding) {
-    return this.definitions[keybinding];
-  }
-  getConflicts() {
-    return this.conflicts.map((conflict) => ({ ...conflict, keybindings: [...conflict.keybindings] }));
-  }
-  setUserBindings(userBindings) {
-    this.userBindings = userBindings;
-    this.rebuild();
-  }
-  getUserBindings() {
-    return { ...this.userBindings };
-  }
-  getResolvedBindings() {
-    const resolved2 = {};
-    for (const id of Object.keys(this.definitions)) {
-      const keys = this.keysById.get(id) ?? [];
-      resolved2[id] = keys.length === 1 ? keys[0] : [...keys];
-    }
-    return resolved2;
-  }
-}
-var globalKeybindings = null;
-function getKeybindings() {
-  if (!globalKeybindings) {
-    globalKeybindings = new KeybindingsManager(TUI_KEYBINDINGS);
-  }
-  return globalKeybindings;
-}
 
 // node_modules/@earendil-works/pi-tui/dist/components/text.js
 class Text {
@@ -13780,11 +12870,11 @@ class Text {
       return this.cachedLines;
     }
     if (!this.text || this.text.trim() === "") {
-      const result2 = [];
+      const result = [];
       this.cachedText = this.text;
       this.cachedWidth = width;
-      this.cachedLines = result2;
-      return result2;
+      this.cachedLines = result;
+      return result;
     }
     const normalizedText = this.text.replace(/\t/g, "   ");
     const paddingX = Math.min(this.paddingX, Math.max(0, Math.floor((width - 1) / 2)));
@@ -13816,208 +12906,8 @@ class Text {
     return result.length > 0 ? result : [""];
   }
 }
-// node_modules/@earendil-works/pi-tui/dist/kill-ring.js
-class KillRing {
-  ring = [];
-  push(text, opts) {
-    if (!text)
-      return;
-    if (opts.accumulate && this.ring.length > 0) {
-      const last = this.ring.pop();
-      this.ring.push(opts.prepend ? text + last : last + text);
-    } else {
-      this.ring.push(text);
-    }
-  }
-  peek() {
-    return this.ring.length > 0 ? this.ring[this.ring.length - 1] : undefined;
-  }
-  rotate() {
-    if (this.ring.length > 1) {
-      const last = this.ring.pop();
-      this.ring.unshift(last);
-    }
-  }
-  get length() {
-    return this.ring.length;
-  }
-}
-
-// node_modules/@earendil-works/pi-tui/dist/tui.js
-import * as os from "os";
-import * as path from "path";
-import { performance as performance2 } from "perf_hooks";
-
-// node_modules/@earendil-works/pi-tui/dist/terminal-colors.js
-function hexToRgb(hex) {
-  const normalized = hex.startsWith("#") ? hex.slice(1) : hex;
-  const r = parseInt(normalized.slice(0, 2), 16);
-  const g2 = parseInt(normalized.slice(2, 4), 16);
-  const b2 = parseInt(normalized.slice(4, 6), 16);
-  return { r, g: g2, b: b2 };
-}
-function parseOscHexChannel(channel) {
-  if (!/^[0-9a-f]+$/i.test(channel)) {
-    return;
-  }
-  const max = 16 ** channel.length - 1;
-  if (max <= 0) {
-    return;
-  }
-  return Math.round(parseInt(channel, 16) / max * 255);
-}
-var OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN = /^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$/i;
-var COLOR_SCHEME_REPORT_PATTERN = /^(?:\x1b\[\?997;(1|2)n)+$/;
-function isOsc11BackgroundColorResponse(data) {
-  return OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN.test(data);
-}
-function parseOsc11BackgroundColor(data) {
-  const match = data.match(OSC11_BACKGROUND_COLOR_RESPONSE_PATTERN);
-  if (!match) {
-    return;
-  }
-  const value = match[1].trim();
-  if (value.startsWith("#")) {
-    const hex = value.slice(1);
-    if (/^[0-9a-f]{6}$/i.test(hex)) {
-      return hexToRgb(value);
-    }
-    if (/^[0-9a-f]{12}$/i.test(hex)) {
-      const r2 = parseOscHexChannel(hex.slice(0, 4));
-      const g3 = parseOscHexChannel(hex.slice(4, 8));
-      const b3 = parseOscHexChannel(hex.slice(8, 12));
-      return r2 !== undefined && g3 !== undefined && b3 !== undefined ? { r: r2, g: g3, b: b3 } : undefined;
-    }
-    return;
-  }
-  const rgbValue = value.replace(/^rgba?:/i, "");
-  const [red, green, blue] = rgbValue.split("/");
-  if (red === undefined || green === undefined || blue === undefined) {
-    return;
-  }
-  const r = parseOscHexChannel(red);
-  const g2 = parseOscHexChannel(green);
-  const b2 = parseOscHexChannel(blue);
-  return r !== undefined && g2 !== undefined && b2 !== undefined ? { r, g: g2, b: b2 } : undefined;
-}
-function parseTerminalColorSchemeReport(data) {
-  const match = data.match(COLOR_SCHEME_REPORT_PATTERN);
-  if (!match) {
-    return;
-  }
-  return match[1] === "2" ? "light" : "dark";
-}
-
 // node_modules/@earendil-works/pi-tui/dist/terminal-image.js
-import { execSync } from "child_process";
-var cachedCapabilities = null;
-var cellDimensions = { widthPx: 9, heightPx: 18 };
-function setCellDimensions(dims) {
-  cellDimensions = dims;
-}
-function probeTmuxHyperlinks() {
-  try {
-    const termfeatures = execSync("tmux display-message -p '#{client_termfeatures}'", {
-      encoding: "utf8",
-      timeout: 250,
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    return termfeatures.split(",").map((feature) => feature.trim()).includes("hyperlinks");
-  } catch {
-    return false;
-  }
-}
-function detectCapabilities(tmuxForwardsHyperlink = probeTmuxHyperlinks) {
-  const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
-  const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
-  const term = process.env.TERM?.toLowerCase() || "";
-  const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
-  const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
-  const isWindowsConsole = process.platform === "win32";
-  if (process.env.TMUX || term.startsWith("tmux")) {
-    return { images: null, trueColor: hasTrueColorHint, hyperlinks: tmuxForwardsHyperlink() };
-  }
-  if (term.startsWith("screen")) {
-    return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
-  }
-  if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
-    return { images: "kitty", trueColor: true, hyperlinks: true };
-  }
-  if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
-    return { images: "kitty", trueColor: true, hyperlinks: true };
-  }
-  if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
-    return { images: "kitty", trueColor: true, hyperlinks: true };
-  }
-  if (termProgram === "warpterminal" || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID) {
-    return { images: "kitty", trueColor: true, hyperlinks: true };
-  }
-  if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
-    return { images: "iterm2", trueColor: true, hyperlinks: true };
-  }
-  if (process.env.WT_SESSION) {
-    return { images: null, trueColor: true, hyperlinks: true };
-  }
-  if (termProgram === "vscode") {
-    return { images: null, trueColor: true, hyperlinks: true };
-  }
-  if (termProgram === "alacritty") {
-    return { images: null, trueColor: true, hyperlinks: true };
-  }
-  if (terminalEmulator === "jetbrains-jediterm") {
-    return { images: null, trueColor: true, hyperlinks: false };
-  }
-  if (isWindowsConsole) {
-    return { images: null, trueColor: true, hyperlinks: false };
-  }
-  return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
-}
-function getCapabilities() {
-  if (!cachedCapabilities) {
-    cachedCapabilities = detectCapabilities();
-  }
-  return cachedCapabilities;
-}
-function setCapabilities(caps) {
-  cachedCapabilities = caps;
-}
-var KITTY_PREFIX = "\x1B_G";
-var ITERM2_PREFIX = "\x1B]1337;File=";
-function isImageLine(line) {
-  if (line.startsWith(KITTY_PREFIX) || line.startsWith(ITERM2_PREFIX)) {
-    return true;
-  }
-  return line.includes(KITTY_PREFIX) || line.includes(ITERM2_PREFIX);
-}
-function deleteKittyImage(imageId) {
-  return `\x1B_Ga=d,d=I,i=${imageId},q=2\x1B\\`;
-}
-function deleteAllKittyImages() {
-  return "\x1B_Ga=d,d=A,q=2\x1B\\";
-}
-function deleteAllKittyPlacements() {
-  return "\x1B_Ga=d,d=a,q=2\x1B\\";
-}
 var kittyImageMetadata = new Map;
-function getRegisteredKittyImageMetadata(line) {
-  const controls = /\x1b_G([^;]*);/.exec(line)?.[1];
-  if (!controls)
-    return;
-  const imageId = /(?:^|,)i=(\d+)(?:,|$)/.exec(controls)?.[1];
-  return imageId === undefined ? undefined : kittyImageMetadata.get(Number.parseInt(imageId, 10));
-}
-function getKittyImageMetadata(line) {
-  const metadata2 = getRegisteredKittyImageMetadata(line);
-  if (!metadata2)
-    return;
-  return {
-    imageId: metadata2.imageId,
-    columns: metadata2.columns,
-    rows: metadata2.rows,
-    widthPx: metadata2.widthPx,
-    heightPx: metadata2.heightPx
-  };
-}
 var KITTY_PLACEMENT_CONTROL_KEYS = new Set([
   "i",
   "p",
@@ -14037,1353 +12927,20 @@ var KITTY_PLACEMENT_CONTROL_KEYS = new Set([
   "H",
   "V"
 ]);
-function getKittyImagePlacement(line) {
-  const match = /\x1b_G([^;]*);/.exec(line);
-  const metadata2 = getRegisteredKittyImageMetadata(line);
-  if (!match || !metadata2)
-    return;
-  let commandStart = match.index;
-  let commandControls = match[1];
-  let transmissionEnd;
-  while (true) {
-    const terminator = line.indexOf("\x1B\\", commandStart + KITTY_PREFIX.length);
-    if (terminator === -1)
-      return;
-    transmissionEnd = terminator + 2;
-    if (!/(?:^|,)m=1(?:,|$)/.test(commandControls))
-      break;
-    commandStart = transmissionEnd;
-    if (!line.startsWith(KITTY_PREFIX, commandStart))
-      return;
-    const controlsEnd = line.indexOf(";", commandStart + KITTY_PREFIX.length);
-    if (controlsEnd === -1)
-      return;
-    commandControls = line.slice(commandStart + KITTY_PREFIX.length, controlsEnd);
-  }
-  const controls = match[1].split(",").filter((control) => KITTY_PLACEMENT_CONTROL_KEYS.has(control.split("=", 1)[0] ?? ""));
-  const sequence = `\x1B_Ga=p,q=2,${controls.join(",")}\x1B\\`;
-  return {
-    imageId: metadata2.imageId,
-    transmissionGeneration: metadata2.transmissionGeneration,
-    transmissionBytes: transmissionEnd - match.index,
-    estimatedDecodedBytes: metadata2.widthPx * metadata2.heightPx * 4,
-    sequence,
-    replacementLine: `${line.slice(0, match.index)}${sequence}${line.slice(transmissionEnd)}`
-  };
-}
-function cropKittyImageLine(line, hiddenRows, visibleRows) {
-  const metadata2 = getKittyImageMetadata(line);
-  const match = /\x1b_G([^;]*);/.exec(line);
-  if (!metadata2 || !match || hiddenRows < 0 || hiddenRows >= metadata2.rows || visibleRows <= 0)
-    return line;
-  const croppedRows = Math.min(visibleRows, metadata2.rows - hiddenRows);
-  if (hiddenRows === 0 && croppedRows === metadata2.rows)
-    return line;
-  const sourceY = Math.floor(metadata2.heightPx * hiddenRows / metadata2.rows);
-  const sourceEnd = Math.ceil(metadata2.heightPx * (hiddenRows + croppedRows) / metadata2.rows);
-  const sourceHeight = Math.max(1, Math.min(metadata2.heightPx, sourceEnd) - sourceY);
-  const controls = match[1].split(",").filter((control) => !/^[yhr]=/.test(control));
-  controls.push(`y=${sourceY}`, `h=${sourceHeight}`, `r=${croppedRows}`);
-  return `${line.slice(0, match.index)}\x1B_G${controls.join(",")};${line.slice(match.index + match[0].length)}`;
-}
 
 // node_modules/@earendil-works/pi-tui/dist/tui.js
-function isFocusable(component) {
-  return component !== null && "focused" in component;
-}
-var CURSOR_MARKER = "\x1B_pi:c\x07";
-function parseSizeValue(value, referenceSize) {
-  if (value === undefined)
-    return;
-  if (typeof value === "number")
-    return value;
-  const match = value.match(/^(\d+(?:\.\d+)?)%$/);
-  if (match) {
-    return Math.floor(referenceSize * parseFloat(match[1]) / 100);
-  }
-  return;
-}
-
-class Container {
-  children = [];
-  addChild(component) {
-    this.children.push(component);
-  }
-  removeChild(component) {
-    const index = this.children.indexOf(component);
-    if (index !== -1) {
-      this.children.splice(index, 1);
-    }
-  }
-  clear() {
-    this.children = [];
-  }
-  invalidate() {
-    for (const child of this.children) {
-      child.invalidate?.();
-    }
-  }
-  render(width) {
-    const lines = [];
-    for (const child of this.children) {
-      const childLines = child.render(width);
-      for (const line of childLines) {
-        lines.push(line);
-      }
-    }
-    return lines;
-  }
-}
-var SEGMENT_RESET = "\x1B[0m\x1B]8;;\x07";
-function compositeTuiLine(baseLine, overlayLine, startCol, overlayWidth, totalWidth) {
-  if (isImageLine(baseLine))
-    return baseLine;
-  const afterStart = startCol + overlayWidth;
-  const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
-  const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
-  const beforePad = Math.max(0, startCol - base.beforeWidth);
-  const overlayPad = Math.max(0, overlayWidth - overlay.width);
-  const actualBeforeWidth = Math.max(startCol, base.beforeWidth);
-  const actualOverlayWidth = Math.max(overlayWidth, overlay.width);
-  const afterTarget = Math.max(0, totalWidth - actualBeforeWidth - actualOverlayWidth);
-  const afterPad = Math.max(0, afterTarget - base.afterWidth);
-  const result = base.before + " ".repeat(beforePad) + SEGMENT_RESET + overlay.text + " ".repeat(overlayPad) + SEGMENT_RESET + base.after + " ".repeat(afterPad);
-  return visibleWidth(result) <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
-}
 var VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
-class TuiBase extends Container {
-  terminal;
-  focusedComponent = null;
-  inputListeners = new Set;
-  onDebug;
-  renderRequested = false;
-  immediateRenderScheduled = false;
-  renderTimer;
-  lastRenderAt = 0;
-  static MIN_RENDER_INTERVAL_MS = 16;
-  showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
-  clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1";
-  fullRedrawCount = 0;
-  stopped = false;
-  pendingOsc11BackgroundReplies = 0;
-  pendingOsc11BackgroundQueries = [];
-  terminalColorSchemeListeners = new Set;
-  terminalColorSchemeNotificationsEnabled = false;
-  logDirectory;
-  focusOrderCounter = 0;
-  overlayStack = [];
-  get hasOverlayEntries() {
-    return this.overlayStack.length > 0;
-  }
-  overlayFocusRestore = { status: "inactive" };
-  constructor(terminal, showHardwareCursor, logDirectory) {
-    super();
-    this.terminal = terminal;
-    this.logDirectory = logDirectory ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
-    if (showHardwareCursor !== undefined) {
-      this.showHardwareCursor = showHardwareCursor;
-    }
-  }
-  resetRenderState() {}
-  beforeTerminalStart() {}
-  afterTerminalStart() {}
-  beforeTerminalStop(_options) {}
-  afterTerminalStop(_options) {}
-  get fullRedraws() {
-    return this.fullRedrawCount;
-  }
-  getShowHardwareCursor() {
-    return this.showHardwareCursor;
-  }
-  setShowHardwareCursor(enabled) {
-    if (this.showHardwareCursor === enabled)
-      return;
-    this.showHardwareCursor = enabled;
-    if (!enabled) {
-      this.terminal.hideCursor();
-    }
-    this.requestRender();
-  }
-  getClearOnShrink() {
-    return this.clearOnShrink;
-  }
-  setClearOnShrink(enabled) {
-    this.clearOnShrink = enabled;
-  }
-  getFocusedComponent() {
-    return this.focusedComponent;
-  }
-  setFocus(component) {
-    this.setFocusInternal({ component, overlayFocusRestore: "clear" });
-  }
-  setFocusInternal({ component, overlayFocusRestore }) {
-    const previousFocus = this.focusedComponent;
-    let nextFocus = component;
-    const previousFocusedOverlay = previousFocus ? this.overlayStack.find((entry) => entry.component === previousFocus && this.isOverlayVisible(entry)) : undefined;
-    const nextFocusIsOverlay = nextFocus ? this.overlayStack.some((entry) => entry.component === nextFocus) : false;
-    const restoreState = this.getVisibleOverlayFocusRestore();
-    if (nextFocus && !nextFocusIsOverlay) {
-      if (restoreState.status === "blocked" && restoreState.blockedBy === previousFocus) {
-        if (restoreState.resume.status === "focus-target" || !this.isComponentMounted(restoreState.blockedBy)) {
-          nextFocus = this.resolveBlockedOverlayFocusResume(restoreState);
-        } else {
-          this.overlayFocusRestore = {
-            status: "blocked",
-            overlay: restoreState.overlay,
-            blockedBy: nextFocus,
-            resume: restoreState.resume
-          };
-        }
-      } else if (previousFocusedOverlay && restoreState.status !== "inactive" && restoreState.overlay === previousFocusedOverlay && !this.isOverlayFocusAncestor(previousFocusedOverlay, nextFocus)) {
-        this.overlayFocusRestore = {
-          status: "blocked",
-          overlay: previousFocusedOverlay,
-          blockedBy: nextFocus,
-          resume: { status: "restore-overlay" }
-        };
-      }
-    } else if (nextFocus === null) {
-      if (restoreState.status === "blocked" && restoreState.blockedBy === previousFocus) {
-        nextFocus = this.resolveBlockedOverlayFocusResume(restoreState);
-      } else if (overlayFocusRestore === "clear") {
-        this.clearOverlayFocusRestore();
-      }
-    }
-    if (isFocusable(this.focusedComponent)) {
-      this.focusedComponent.focused = false;
-    }
-    this.focusedComponent = nextFocus;
-    if (isFocusable(nextFocus)) {
-      nextFocus.focused = true;
-    }
-    const focusedOverlay = nextFocus ? this.overlayStack.find((entry) => entry.component === nextFocus && this.isOverlayVisible(entry)) : undefined;
-    if (focusedOverlay) {
-      this.overlayFocusRestore = { status: "eligible", overlay: focusedOverlay };
-    }
-  }
-  clearOverlayFocusRestore() {
-    this.overlayFocusRestore = { status: "inactive" };
-  }
-  clearOverlayFocusRestoreFor(overlay) {
-    if (this.overlayFocusRestore.status !== "inactive" && this.overlayFocusRestore.overlay === overlay) {
-      this.clearOverlayFocusRestore();
-    }
-  }
-  resolveBlockedOverlayFocusResume(restoreState) {
-    if (restoreState.resume.status === "restore-overlay")
-      return restoreState.overlay.component;
-    this.clearOverlayFocusRestore();
-    return restoreState.resume.target;
-  }
-  getVisibleOverlayFocusRestore() {
-    const restoreState = this.overlayFocusRestore;
-    if (restoreState.status === "inactive")
-      return restoreState;
-    if (!this.overlayStack.includes(restoreState.overlay) || !this.isOverlayVisible(restoreState.overlay)) {
-      return { status: "inactive" };
-    }
-    return restoreState;
-  }
-  isOverlayFocusAncestor(entry, component) {
-    const visited = new Set;
-    let current = entry.preFocus;
-    while (current && !visited.has(current)) {
-      visited.add(current);
-      if (current === component)
-        return true;
-      current = this.overlayStack.find((overlay) => overlay.component === current)?.preFocus ?? null;
-    }
-    return false;
-  }
-  retargetOverlayPreFocus(removed) {
-    for (const overlay of this.overlayStack) {
-      if (overlay !== removed && overlay.preFocus === removed.component) {
-        overlay.preFocus = removed.preFocus;
-      }
-    }
-  }
-  getMountedRoots() {
-    return this.children;
-  }
-  isComponentMounted(component) {
-    return this.getMountedRoots().some((child) => this.containsComponent(child, component));
-  }
-  containsComponent(root, target) {
-    if (root === target)
-      return true;
-    if (!(root instanceof Container))
-      return false;
-    return root.children.some((child) => this.containsComponent(child, target));
-  }
-  showOverlay(component, options) {
-    const entry = {
-      component,
-      ...options === undefined ? {} : { options },
-      preFocus: this.focusedComponent,
-      hidden: false,
-      focusOrder: ++this.focusOrderCounter
-    };
-    this.overlayStack.push(entry);
-    if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
-      this.setFocus(component);
-    }
-    this.terminal.hideCursor();
-    this.requestRender();
-    return {
-      hide: () => {
-        const index = this.overlayStack.indexOf(entry);
-        if (index !== -1) {
-          this.clearOverlayFocusRestoreFor(entry);
-          this.retargetOverlayPreFocus(entry);
-          this.overlayStack.splice(index, 1);
-          if (this.focusedComponent === component) {
-            const topVisible = this.getTopmostVisibleOverlay();
-            this.setFocus(topVisible?.component ?? entry.preFocus);
-          }
-          if (this.overlayStack.length === 0)
-            this.terminal.hideCursor();
-          this.requestRender();
-        }
-      },
-      setHidden: (hidden) => {
-        if (entry.hidden === hidden)
-          return;
-        entry.hidden = hidden;
-        if (hidden) {
-          this.clearOverlayFocusRestoreFor(entry);
-          if (this.focusedComponent === component) {
-            const topVisible = this.getTopmostVisibleOverlay();
-            this.setFocus(topVisible?.component ?? entry.preFocus);
-          }
-        } else {
-          if (!options?.nonCapturing && this.isOverlayVisible(entry)) {
-            entry.focusOrder = ++this.focusOrderCounter;
-            this.setFocus(component);
-          }
-        }
-        this.requestRender();
-      },
-      isHidden: () => entry.hidden,
-      focus: () => {
-        if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry))
-          return;
-        entry.focusOrder = ++this.focusOrderCounter;
-        this.setFocus(component);
-        this.requestRender();
-      },
-      unfocus: (unfocusOptions) => {
-        const isFocused = this.focusedComponent === component;
-        const restoreState = this.overlayFocusRestore;
-        const hasPendingRestore = restoreState.status !== "inactive" && restoreState.overlay === entry;
-        if (!isFocused && !hasPendingRestore)
-          return;
-        if (restoreState.status === "blocked" && restoreState.overlay === entry && this.focusedComponent === restoreState.blockedBy) {
-          if (unfocusOptions) {
-            this.overlayFocusRestore = {
-              status: "blocked",
-              overlay: entry,
-              blockedBy: restoreState.blockedBy,
-              resume: { status: "focus-target", target: unfocusOptions.target }
-            };
-          } else {
-            this.clearOverlayFocusRestore();
-          }
-          this.requestRender();
-          return;
-        }
-        this.clearOverlayFocusRestoreFor(entry);
-        if (isFocused || unfocusOptions) {
-          const topVisible = this.getTopmostVisibleOverlay();
-          const fallbackTarget = topVisible && topVisible !== entry ? topVisible.component : entry.preFocus;
-          this.setFocus(unfocusOptions ? unfocusOptions.target : fallbackTarget);
-        }
-        this.requestRender();
-      },
-      isFocused: () => this.focusedComponent === component
-    };
-  }
-  hideOverlay() {
-    const overlay = this.overlayStack[this.overlayStack.length - 1];
-    if (!overlay)
-      return;
-    this.clearOverlayFocusRestoreFor(overlay);
-    this.retargetOverlayPreFocus(overlay);
-    this.overlayStack.pop();
-    if (this.focusedComponent === overlay.component) {
-      const topVisible = this.getTopmostVisibleOverlay();
-      this.setFocus(topVisible?.component ?? overlay.preFocus);
-    }
-    if (this.overlayStack.length === 0)
-      this.terminal.hideCursor();
-    this.requestRender();
-  }
-  hasOverlay() {
-    return this.overlayStack.some((o) => this.isOverlayVisible(o));
-  }
-  isOverlayFocused() {
-    return this.overlayStack.some((entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry));
-  }
-  isOverlayVisible(entry) {
-    if (entry.hidden)
-      return false;
-    if (entry.options?.visible) {
-      return entry.options.visible(this.terminal.columns, this.terminal.rows);
-    }
-    return true;
-  }
-  getTopmostVisibleOverlay() {
-    let topmost;
-    for (const overlay of this.overlayStack) {
-      if (overlay.options?.nonCapturing || !this.isOverlayVisible(overlay))
-        continue;
-      if (!topmost || overlay.focusOrder > topmost.focusOrder) {
-        topmost = overlay;
-      }
-    }
-    return topmost;
-  }
-  invalidate() {
-    for (const root of this.getMountedRoots())
-      root.invalidate();
-    for (const overlay of this.overlayStack)
-      overlay.component.invalidate();
-  }
-  start() {
-    this.stopped = false;
-    this.beforeTerminalStart();
-    this.terminal.start((data) => this.handleTerminalInput(data), () => this.requestRender());
-    this.afterTerminalStart();
-    this.terminal.hideCursor();
-    if (this.terminalColorSchemeNotificationsEnabled) {
-      this.terminal.write("\x1B[?2031h");
-    }
-    this.queryCellSize();
-    this.requestRender();
-  }
-  addInputListener(listener) {
-    this.inputListeners.add(listener);
-    return () => {
-      this.inputListeners.delete(listener);
-    };
-  }
-  removeInputListener(listener) {
-    this.inputListeners.delete(listener);
-  }
-  onTerminalColorSchemeChange(listener) {
-    this.terminalColorSchemeListeners.add(listener);
-    return () => {
-      this.terminalColorSchemeListeners.delete(listener);
-    };
-  }
-  setTerminalColorSchemeNotifications(enabled) {
-    if (this.terminalColorSchemeNotificationsEnabled === enabled) {
-      return;
-    }
-    this.terminalColorSchemeNotificationsEnabled = enabled;
-    if (!this.stopped) {
-      this.terminal.write(enabled ? "\x1B[?2031h" : "\x1B[?2031l");
-    }
-  }
-  queryCellSize() {
-    if (!getCapabilities().images) {
-      return;
-    }
-    this.terminal.write("\x1B[16t");
-  }
-  stop(options = {}) {
-    this.stopped = true;
-    this.cancelRenderTimer();
-    if (this.terminalColorSchemeNotificationsEnabled) {
-      this.terminal.write("\x1B[?2031l");
-    }
-    this.beforeTerminalStop(options);
-    this.terminal.showCursor();
-    this.terminal.stop();
-    this.afterTerminalStop(options);
-  }
-  renderNow(force = false) {
-    if (force)
-      this.resetRenderState();
-    this.renderRequested = false;
-    this.cancelRenderTimer();
-    this.lastRenderAt = performance2.now();
-    this.doRender();
-  }
-  requestRender(force = false) {
-    if (force) {
-      this.resetRenderState();
-      this.requestImmediateRender();
-      return;
-    }
-    if (this.renderRequested)
-      return;
-    this.renderRequested = true;
-    process.nextTick(() => this.scheduleRender());
-  }
-  requestImmediateRender() {
-    this.cancelRenderTimer();
-    this.renderRequested = true;
-    if (this.immediateRenderScheduled)
-      return;
-    this.immediateRenderScheduled = true;
-    process.nextTick(() => {
-      this.immediateRenderScheduled = false;
-      if (this.stopped || !this.renderRequested)
-        return;
-      this.cancelRenderTimer();
-      this.renderRequested = false;
-      this.lastRenderAt = performance2.now();
-      this.doRender();
-    });
-  }
-  cancelRenderTimer() {
-    if (!this.renderTimer)
-      return;
-    clearTimeout(this.renderTimer);
-    this.renderTimer = undefined;
-  }
-  scheduleRender() {
-    if (this.stopped || this.renderTimer || !this.renderRequested) {
-      return;
-    }
-    const elapsed = performance2.now() - this.lastRenderAt;
-    const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
-    this.renderTimer = setTimeout(() => {
-      this.renderTimer = undefined;
-      if (this.stopped || !this.renderRequested) {
-        return;
-      }
-      this.renderRequested = false;
-      this.lastRenderAt = performance2.now();
-      this.doRender();
-      if (this.renderRequested) {
-        this.scheduleRender();
-      }
-    }, delay);
-  }
-  handleTerminalInput(data) {
-    if (this.consumeOsc11BackgroundResponse(data)) {
-      return;
-    }
-    if (this.consumeTerminalColorSchemeReport(data)) {
-      return;
-    }
-    if (this.inputListeners.size > 0) {
-      let current = data;
-      for (const listener of this.inputListeners) {
-        const result = listener(current);
-        if (result?.consume) {
-          return;
-        }
-        if (result?.data !== undefined) {
-          current = result.data;
-        }
-      }
-      if (current.length === 0) {
-        return;
-      }
-      data = current;
-    }
-    if (this.consumeCellSizeResponse(data)) {
-      return;
-    }
-    if (matchesKey(data, "shift+ctrl+d") && this.onDebug) {
-      this.onDebug();
-      return;
-    }
-    const focusedOverlay = this.overlayStack.find((o) => o.component === this.focusedComponent);
-    if (focusedOverlay && !this.isOverlayVisible(focusedOverlay)) {
-      const topVisible = this.getTopmostVisibleOverlay();
-      if (topVisible) {
-        this.setFocus(topVisible.component);
-      } else {
-        this.setFocusInternal({ component: focusedOverlay.preFocus, overlayFocusRestore: "preserve" });
-      }
-    }
-    const focusIsOverlay = this.overlayStack.some((o) => o.component === this.focusedComponent);
-    if (!focusIsOverlay) {
-      const restoreState = this.getVisibleOverlayFocusRestore();
-      if (restoreState.status === "eligible") {
-        this.setFocus(restoreState.overlay.component);
-      } else if (restoreState.status === "blocked" && restoreState.blockedBy !== this.focusedComponent) {
-        if (restoreState.resume.status === "restore-overlay") {
-          this.setFocus(restoreState.overlay.component);
-        } else {
-          this.clearOverlayFocusRestore();
-          this.setFocus(restoreState.resume.target);
-        }
-      }
-    }
-    if (this.focusedComponent?.handleInput) {
-      if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
-        return;
-      }
-      this.focusedComponent.handleInput(data);
-      this.requestImmediateRender();
-    }
-  }
-  consumeOsc11BackgroundResponse(data) {
-    if (this.pendingOsc11BackgroundReplies <= 0) {
-      return false;
-    }
-    if (!isOsc11BackgroundColorResponse(data)) {
-      return false;
-    }
-    const rgb = parseOsc11BackgroundColor(data);
-    this.pendingOsc11BackgroundReplies -= 1;
-    const query = this.pendingOsc11BackgroundQueries.shift();
-    if (query && !query.settled) {
-      query.settled = true;
-      if (query.timer) {
-        clearTimeout(query.timer);
-        query.timer = undefined;
-      }
-      query.resolve?.(rgb);
-      query.resolve = undefined;
-    }
-    return true;
-  }
-  consumeTerminalColorSchemeReport(data) {
-    const scheme = parseTerminalColorSchemeReport(data);
-    if (!scheme) {
-      return false;
-    }
-    for (const listener of this.terminalColorSchemeListeners) {
-      listener(scheme);
-    }
-    return true;
-  }
-  consumeCellSizeResponse(data) {
-    const match = data.match(/^\x1b\[6;(\d+);(\d+)t$/);
-    if (!match) {
-      return false;
-    }
-    const heightPx = parseInt(match[1], 10);
-    const widthPx = parseInt(match[2], 10);
-    if (heightPx <= 0 || widthPx <= 0) {
-      return true;
-    }
-    setCellDimensions({ widthPx, heightPx });
-    this.invalidate();
-    this.requestRender();
-    return true;
-  }
-  resolveOverlayLayout(options, overlayHeight, termWidth, termHeight) {
-    const opt = options ?? {};
-    const margin = typeof opt.margin === "number" ? { top: opt.margin, right: opt.margin, bottom: opt.margin, left: opt.margin } : opt.margin ?? {};
-    const marginTop = Math.max(0, margin.top ?? 0);
-    const marginRight = Math.max(0, margin.right ?? 0);
-    const marginBottom = Math.max(0, margin.bottom ?? 0);
-    const marginLeft = Math.max(0, margin.left ?? 0);
-    const availWidth = Math.max(1, termWidth - marginLeft - marginRight);
-    const availHeight = Math.max(1, termHeight - marginTop - marginBottom);
-    let width = parseSizeValue(opt.width, termWidth) ?? Math.min(80, availWidth);
-    if (opt.minWidth !== undefined) {
-      width = Math.max(width, opt.minWidth);
-    }
-    width = Math.max(1, Math.min(width, availWidth));
-    let maxHeight = parseSizeValue(opt.maxHeight, termHeight);
-    if (maxHeight !== undefined) {
-      maxHeight = Math.max(1, Math.min(maxHeight, availHeight));
-    }
-    const effectiveHeight = maxHeight !== undefined ? Math.min(overlayHeight, maxHeight) : overlayHeight;
-    let row;
-    let col;
-    if (opt.row !== undefined) {
-      if (typeof opt.row === "string") {
-        const match = opt.row.match(/^(\d+(?:\.\d+)?)%$/);
-        if (match) {
-          const maxRow = Math.max(0, availHeight - effectiveHeight);
-          const percent = parseFloat(match[1]) / 100;
-          row = marginTop + Math.floor(maxRow * percent);
-        } else {
-          row = this.resolveAnchorRow("center", effectiveHeight, availHeight, marginTop);
-        }
-      } else {
-        row = opt.row;
-      }
-    } else {
-      const anchor = opt.anchor ?? "center";
-      row = this.resolveAnchorRow(anchor, effectiveHeight, availHeight, marginTop);
-    }
-    if (opt.col !== undefined) {
-      if (typeof opt.col === "string") {
-        const match = opt.col.match(/^(\d+(?:\.\d+)?)%$/);
-        if (match) {
-          const maxCol = Math.max(0, availWidth - width);
-          const percent = parseFloat(match[1]) / 100;
-          col = marginLeft + Math.floor(maxCol * percent);
-        } else {
-          col = this.resolveAnchorCol("center", width, availWidth, marginLeft);
-        }
-      } else {
-        col = opt.col;
-      }
-    } else {
-      const anchor = opt.anchor ?? "center";
-      col = this.resolveAnchorCol(anchor, width, availWidth, marginLeft);
-    }
-    if (opt.offsetY !== undefined)
-      row += opt.offsetY;
-    if (opt.offsetX !== undefined)
-      col += opt.offsetX;
-    row = Math.max(marginTop, Math.min(row, termHeight - marginBottom - effectiveHeight));
-    col = Math.max(marginLeft, Math.min(col, termWidth - marginRight - width));
-    return { width, row, col, maxHeight };
-  }
-  resolveAnchorRow(anchor, height, availHeight, marginTop) {
-    switch (anchor) {
-      case "top-left":
-      case "top-center":
-      case "top-right":
-        return marginTop;
-      case "bottom-left":
-      case "bottom-center":
-      case "bottom-right":
-        return marginTop + availHeight - height;
-      case "left-center":
-      case "center":
-      case "right-center":
-        return marginTop + Math.floor((availHeight - height) / 2);
-    }
-  }
-  resolveAnchorCol(anchor, width, availWidth, marginLeft) {
-    switch (anchor) {
-      case "top-left":
-      case "left-center":
-      case "bottom-left":
-        return marginLeft;
-      case "top-right":
-      case "right-center":
-      case "bottom-right":
-        return marginLeft + availWidth - width;
-      case "top-center":
-      case "center":
-      case "bottom-center":
-        return marginLeft + Math.floor((availWidth - width) / 2);
-    }
-  }
-  compositeOverlays(lines, termWidth, termHeight) {
-    if (this.overlayStack.length === 0)
-      return lines;
-    const result = [...lines];
-    const rendered = [];
-    let minLinesNeeded = result.length;
-    const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
-    visibleEntries.sort((a, b2) => a.focusOrder - b2.focusOrder);
-    for (const entry of visibleEntries) {
-      const { component, options } = entry;
-      const { width, maxHeight } = this.resolveOverlayLayout(options, 0, termWidth, termHeight);
-      let overlayLines = component.render(width);
-      if (maxHeight !== undefined && overlayLines.length > maxHeight) {
-        overlayLines = overlayLines.slice(0, maxHeight);
-      }
-      const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
-      rendered.push({ overlayLines, row, col, w: width });
-      minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
-    }
-    const workingHeight = Math.max(result.length, termHeight, minLinesNeeded);
-    while (result.length < workingHeight) {
-      result.push("");
-    }
-    const viewportStart = Math.max(0, workingHeight - termHeight);
-    for (const { overlayLines, row, col, w: w2 } of rendered) {
-      for (let i2 = 0;i2 < overlayLines.length; i2++) {
-        const idx = viewportStart + row + i2;
-        if (idx >= 0 && idx < result.length) {
-          const truncatedOverlayLine = visibleWidth(overlayLines[i2]) > w2 ? sliceByColumn(overlayLines[i2], 0, w2, true) : overlayLines[i2];
-          result[idx] = this.compositeLineAt(result[idx], truncatedOverlayLine, col, w2, termWidth);
-        }
-      }
-    }
-    return result;
-  }
-  applyLineResets(lines) {
-    const reset = SEGMENT_RESET;
-    for (let i2 = 0;i2 < lines.length; i2++) {
-      const line = lines[i2];
-      if (!isImageLine(line)) {
-        lines[i2] = normalizeTerminalOutput(line) + reset;
-      }
-    }
-    return lines;
-  }
-  compositeLineAt(baseLine, overlayLine, startCol, overlayWidth, totalWidth) {
-    return compositeTuiLine(baseLine, overlayLine, startCol, overlayWidth, totalWidth);
-  }
-  extractCursorPosition(lines, height) {
-    const viewportTop = Math.max(0, lines.length - height);
-    for (let row = lines.length - 1;row >= viewportTop; row--) {
-      const line = lines[row];
-      const markerIndex = line.indexOf(CURSOR_MARKER);
-      if (markerIndex !== -1) {
-        const beforeMarker = line.slice(0, markerIndex);
-        const col = visibleWidth(beforeMarker);
-        lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
-        return { row, col };
-      }
-    }
-    return null;
-  }
-  queryTerminalBackgroundColor({ timeoutMs }) {
-    return new Promise((resolve23) => {
-      const query = {
-        settled: false,
-        resolve: resolve23,
-        timer: undefined
-      };
-      query.timer = setTimeout(() => {
-        if (query.settled) {
-          return;
-        }
-        query.settled = true;
-        query.timer = undefined;
-        query.resolve?.(undefined);
-        query.resolve = undefined;
-      }, timeoutMs);
-      this.pendingOsc11BackgroundQueries.push(query);
-      this.pendingOsc11BackgroundReplies += 1;
-      this.terminal.write("\x1B]11;?\x07");
-    });
-  }
-  queryTerminalColorScheme({ timeoutMs }) {
-    return new Promise((resolve23) => {
-      let settled = false;
-      let timer;
-      let unsubscribe = () => {};
-      const settle = (scheme) => {
-        if (settled)
-          return;
-        settled = true;
-        if (timer) {
-          clearTimeout(timer);
-          timer = undefined;
-        }
-        unsubscribe();
-        resolve23(scheme);
-      };
-      unsubscribe = this.onTerminalColorSchemeChange(settle);
-      timer = setTimeout(() => settle(undefined), timeoutMs);
-      this.terminal.write("\x1B[?996n");
-    });
-  }
-}
-
-// node_modules/@earendil-works/pi-tui/dist/undo-stack.js
-class UndoStack {
-  stack = [];
-  push(state) {
-    this.stack.push(structuredClone(state));
-  }
-  pop() {
-    return this.stack.pop();
-  }
-  clear() {
-    this.stack.length = 0;
-  }
-  get length() {
-    return this.stack.length;
-  }
-}
 
 // node_modules/@earendil-works/pi-tui/dist/word-navigation.js
 var wordSegmenter2 = getWordSegmenter();
-function findWordBackward(text, cursor, options) {
-  if (cursor <= 0)
-    return 0;
-  const textBeforeCursor = text.slice(0, cursor);
-  const segmentFn = options?.segment;
-  const isAtomic = options?.isAtomicSegment;
-  const segments = segmentFn ? [...segmentFn(textBeforeCursor)] : [...wordSegmenter2.segment(textBeforeCursor)];
-  let newCursor = cursor;
-  while (segments.length > 0 && !isAtomic?.(segments[segments.length - 1]?.segment || "") && isWhitespaceChar(segments[segments.length - 1]?.segment || "")) {
-    newCursor -= segments.pop()?.segment.length || 0;
-  }
-  if (segments.length === 0)
-    return newCursor;
-  const last = segments[segments.length - 1];
-  if (isAtomic?.(last.segment)) {
-    newCursor -= last.segment.length;
-  } else if (last.isWordLike) {
-    const segment = last.segment;
-    const matches = [...segment.matchAll(new RegExp(PUNCTUATION_REGEX, "g"))];
-    if (matches.length <= 0) {
-      newCursor -= segment.length;
-    } else {
-      const lastMatch = matches[matches.length - 1];
-      newCursor -= segment.length - (lastMatch.index + lastMatch[0].length);
-    }
-  } else {
-    while (segments.length > 0 && !isAtomic?.(segments[segments.length - 1]?.segment || "") && !segments[segments.length - 1]?.isWordLike && !isWhitespaceChar(segments[segments.length - 1]?.segment || "")) {
-      newCursor -= segments.pop()?.segment.length || 0;
-    }
-  }
-  return newCursor;
-}
-function findWordForward(text, cursor, options) {
-  if (cursor >= text.length)
-    return text.length;
-  const textAfterCursor = text.slice(cursor);
-  const segmentFn = options?.segment;
-  const isAtomic = options?.isAtomicSegment;
-  const segments = segmentFn ? segmentFn(textAfterCursor) : wordSegmenter2.segment(textAfterCursor);
-  const iterator = segments[Symbol.iterator]();
-  let next = iterator.next();
-  let newCursor = cursor;
-  while (!next.done && !isAtomic?.(next.value.segment) && isWhitespaceChar(next.value.segment)) {
-    newCursor += next.value.segment.length;
-    next = iterator.next();
-  }
-  if (next.done)
-    return newCursor;
-  if (isAtomic?.(next.value.segment)) {
-    newCursor += next.value.segment.length;
-  } else if (next.value.isWordLike) {
-    newCursor += PUNCTUATION_REGEX.exec(next.value.segment)?.index ?? next.value.segment.length;
-  } else {
-    while (!next.done && !isAtomic?.(next.value.segment) && !next.value.isWordLike && !isWhitespaceChar(next.value.segment)) {
-      newCursor += next.value.segment.length;
-      next = iterator.next();
-    }
-  }
-  return newCursor;
-}
 
 // node_modules/@earendil-works/pi-tui/dist/components/editor.js
 var graphemeSegmenter2 = getGraphemeSegmenter();
 var wordSegmenter3 = getWordSegmenter();
 // node_modules/@earendil-works/pi-tui/dist/layout-node.js
 var LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
-function getLayoutNode(component) {
-  const candidate = component;
-  return typeof candidate[LAYOUT_NODE] === "function" ? candidate[LAYOUT_NODE]() : undefined;
-}
-
-// node_modules/@earendil-works/pi-tui/dist/components/stack.js
-function isStackEntry(child) {
-  return !("render" in child);
-}
-function normalizeSize(value, fallback) {
-  return value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.floor(value));
-}
-
-class Stack extends Container {
-  entries = [];
-  gap;
-  align;
-  constructor(children = [], options = {}) {
-    super();
-    this.gap = normalizeSize(options.gap, 0);
-    this.align = options.align ?? "stretch";
-    for (const child of children) {
-      if (isStackEntry(child))
-        this.addChild(child.component, child);
-      else
-        this.addChild(child);
-    }
-  }
-  addChild(component, options = {}) {
-    super.addChild(component);
-    this.entries.push({
-      component,
-      ...options.basis === undefined ? {} : { basis: options.basis },
-      ...options.grow === undefined ? {} : { grow: normalizeSize(options.grow, 0) },
-      ...options.shrink === undefined ? {} : { shrink: normalizeSize(options.shrink, 1) },
-      ...options.minSize === undefined ? {} : { minSize: normalizeSize(options.minSize, 0) },
-      ...options.maxSize === undefined ? {} : { maxSize: normalizeSize(options.maxSize, Number.MAX_SAFE_INTEGER) },
-      ...options.visible === undefined ? {} : { visible: options.visible }
-    });
-  }
-  removeChild(component) {
-    super.removeChild(component);
-    const index = this.entries.findIndex((entry) => entry.component === component);
-    if (index !== -1)
-      this.entries.splice(index, 1);
-  }
-  clear() {
-    super.clear();
-    this.entries.length = 0;
-  }
-  [LAYOUT_NODE]() {
-    return {
-      type: this.layoutType,
-      entries: this.entries,
-      gap: this.gap,
-      align: this.align
-    };
-  }
-}
-function visibleStackEntries(entries, viewport) {
-  return entries.filter((entry) => entry.visible?.(viewport) ?? true);
-}
-function clampSize(size, entry) {
-  const min = Math.max(0, Math.floor(entry.minSize ?? 0));
-  const max = Math.max(min, Math.floor(entry.maxSize ?? Number.MAX_SAFE_INTEGER));
-  return Math.max(min, Math.min(max, Math.max(0, Math.floor(size))));
-}
-function distribute(sizes, entries, amount, mode) {
-  let remaining = amount;
-  while (remaining > 0) {
-    const candidates = entries.map((entry, index) => ({ entry, index })).filter(({ entry, index }) => {
-      if (mode === "grow") {
-        return (entry.grow ?? 0) > 0 && sizes[index] < (entry.maxSize ?? Number.MAX_SAFE_INTEGER);
-      }
-      return (entry.shrink ?? 1) > 0 && sizes[index] > (entry.minSize ?? 0);
-    });
-    if (candidates.length === 0)
-      return;
-    const totalWeight = candidates.reduce((sum, { entry, index }) => {
-      return sum + (mode === "grow" ? entry.grow ?? 0 : (entry.shrink ?? 1) * Math.max(1, sizes[index]));
-    }, 0);
-    let distributed = 0;
-    for (const { entry, index } of candidates) {
-      if (remaining <= 0)
-        break;
-      const weight = mode === "grow" ? entry.grow ?? 0 : (entry.shrink ?? 1) * Math.max(1, sizes[index]);
-      const proposed = Math.max(1, Math.floor(remaining * weight / totalWeight));
-      const capacity = mode === "grow" ? (entry.maxSize ?? Number.MAX_SAFE_INTEGER) - sizes[index] : sizes[index] - (entry.minSize ?? 0);
-      const delta = Math.min(remaining, proposed, capacity);
-      if (delta <= 0)
-        continue;
-      sizes[index] = sizes[index] + (mode === "grow" ? delta : -delta);
-      remaining -= delta;
-      distributed += delta;
-    }
-    if (distributed === 0)
-      return;
-  }
-}
-function allocateStackSizes(entries, intrinsicSizes, availableSize, gap) {
-  const sizes = entries.map((entry, index) => clampSize(entry.basis === undefined || entry.basis === "auto" ? intrinsicSizes[index] ?? 0 : entry.basis, entry));
-  if (availableSize === undefined)
-    return sizes;
-  const contentSize = Math.max(0, Math.floor(availableSize) - Math.max(0, entries.length - 1) * gap);
-  const total = sizes.reduce((sum, size) => sum + size, 0);
-  if (total < contentSize)
-    distribute(sizes, entries, contentSize - total, "grow");
-  else if (total > contentSize)
-    distribute(sizes, entries, total - contentSize, "shrink");
-  return sizes;
-}
 // node_modules/@earendil-works/pi-tui/dist/components/input.js
 var segmenter = getGraphemeSegmenter();
-
-class Input {
-  value = "";
-  cursor = 0;
-  onSubmit;
-  onEscape;
-  focused = false;
-  pasteBuffer = "";
-  isInPaste = false;
-  killRing = new KillRing;
-  lastAction = null;
-  undoStack = new UndoStack;
-  getValue() {
-    return this.value;
-  }
-  setValue(value) {
-    this.value = value;
-    this.cursor = Math.min(this.cursor, value.length);
-  }
-  handleInput(data) {
-    if (data.includes("\x1B[200~")) {
-      this.isInPaste = true;
-      this.pasteBuffer = "";
-      data = data.replace("\x1B[200~", "");
-    }
-    if (this.isInPaste) {
-      this.pasteBuffer += data;
-      const endIndex = this.pasteBuffer.indexOf("\x1B[201~");
-      if (endIndex !== -1) {
-        const pasteContent = this.pasteBuffer.substring(0, endIndex);
-        this.handlePaste(pasteContent);
-        this.isInPaste = false;
-        const remaining = this.pasteBuffer.substring(endIndex + 6);
-        this.pasteBuffer = "";
-        if (remaining) {
-          this.handleInput(remaining);
-        }
-      }
-      return;
-    }
-    const kb = getKeybindings();
-    if (kb.matches(data, "tui.select.cancel")) {
-      if (this.onEscape)
-        this.onEscape();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.undo")) {
-      this.undo();
-      return;
-    }
-    if (kb.matches(data, "tui.input.submit") || data === `
-`) {
-      if (this.onSubmit)
-        this.onSubmit(this.value);
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteCharBackward")) {
-      this.handleBackspace();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteCharForward")) {
-      this.handleForwardDelete();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteWordBackward")) {
-      this.deleteWordBackwards();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteWordForward")) {
-      this.deleteWordForward();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteToLineStart")) {
-      this.deleteToLineStart();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.deleteToLineEnd")) {
-      this.deleteToLineEnd();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.yank")) {
-      this.yank();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.yankPop")) {
-      this.yankPop();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorLeft")) {
-      this.lastAction = null;
-      if (this.cursor > 0) {
-        const beforeCursor = this.value.slice(0, this.cursor);
-        const graphemes2 = [...segmenter.segment(beforeCursor)];
-        const lastGrapheme = graphemes2[graphemes2.length - 1];
-        this.cursor -= lastGrapheme ? lastGrapheme.segment.length : 1;
-      }
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorRight")) {
-      this.lastAction = null;
-      if (this.cursor < this.value.length) {
-        const afterCursor = this.value.slice(this.cursor);
-        const graphemes2 = [...segmenter.segment(afterCursor)];
-        const firstGrapheme = graphemes2[0];
-        this.cursor += firstGrapheme ? firstGrapheme.segment.length : 1;
-      }
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorLineStart")) {
-      this.lastAction = null;
-      this.cursor = 0;
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorLineEnd")) {
-      this.lastAction = null;
-      this.cursor = this.value.length;
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorWordLeft")) {
-      this.moveWordBackwards();
-      return;
-    }
-    if (kb.matches(data, "tui.editor.cursorWordRight")) {
-      this.moveWordForwards();
-      return;
-    }
-    const kittyPrintable = decodeKittyPrintable(data);
-    if (kittyPrintable !== undefined) {
-      this.insertCharacter(kittyPrintable);
-      return;
-    }
-    const hasControlChars = [...data].some((ch) => {
-      const code = ch.charCodeAt(0);
-      return code < 32 || code === 127 || code >= 128 && code <= 159;
-    });
-    if (!hasControlChars) {
-      this.insertCharacter(data);
-    }
-  }
-  insertCharacter(char) {
-    if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
-      this.pushUndo();
-    }
-    this.lastAction = "type-word";
-    this.value = this.value.slice(0, this.cursor) + char + this.value.slice(this.cursor);
-    this.cursor += char.length;
-  }
-  handleBackspace() {
-    this.lastAction = null;
-    if (this.cursor > 0) {
-      this.pushUndo();
-      const beforeCursor = this.value.slice(0, this.cursor);
-      const graphemes2 = [...segmenter.segment(beforeCursor)];
-      const lastGrapheme = graphemes2[graphemes2.length - 1];
-      const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
-      this.value = this.value.slice(0, this.cursor - graphemeLength) + this.value.slice(this.cursor);
-      this.cursor -= graphemeLength;
-    }
-  }
-  handleForwardDelete() {
-    this.lastAction = null;
-    if (this.cursor < this.value.length) {
-      this.pushUndo();
-      const afterCursor = this.value.slice(this.cursor);
-      const graphemes2 = [...segmenter.segment(afterCursor)];
-      const firstGrapheme = graphemes2[0];
-      const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
-      this.value = this.value.slice(0, this.cursor) + this.value.slice(this.cursor + graphemeLength);
-    }
-  }
-  deleteToLineStart() {
-    if (this.cursor === 0)
-      return;
-    this.pushUndo();
-    const deletedText = this.value.slice(0, this.cursor);
-    this.killRing.push(deletedText, { prepend: true, accumulate: this.lastAction === "kill" });
-    this.lastAction = "kill";
-    this.value = this.value.slice(this.cursor);
-    this.cursor = 0;
-  }
-  deleteToLineEnd() {
-    if (this.cursor >= this.value.length)
-      return;
-    this.pushUndo();
-    const deletedText = this.value.slice(this.cursor);
-    this.killRing.push(deletedText, { prepend: false, accumulate: this.lastAction === "kill" });
-    this.lastAction = "kill";
-    this.value = this.value.slice(0, this.cursor);
-  }
-  deleteWordBackwards() {
-    if (this.cursor === 0)
-      return;
-    const wasKill = this.lastAction === "kill";
-    this.pushUndo();
-    const oldCursor = this.cursor;
-    this.moveWordBackwards();
-    const deleteFrom = this.cursor;
-    this.cursor = oldCursor;
-    const deletedText = this.value.slice(deleteFrom, this.cursor);
-    this.killRing.push(deletedText, { prepend: true, accumulate: wasKill });
-    this.lastAction = "kill";
-    this.value = this.value.slice(0, deleteFrom) + this.value.slice(this.cursor);
-    this.cursor = deleteFrom;
-  }
-  deleteWordForward() {
-    if (this.cursor >= this.value.length)
-      return;
-    const wasKill = this.lastAction === "kill";
-    this.pushUndo();
-    const oldCursor = this.cursor;
-    this.moveWordForwards();
-    const deleteTo = this.cursor;
-    this.cursor = oldCursor;
-    const deletedText = this.value.slice(this.cursor, deleteTo);
-    this.killRing.push(deletedText, { prepend: false, accumulate: wasKill });
-    this.lastAction = "kill";
-    this.value = this.value.slice(0, this.cursor) + this.value.slice(deleteTo);
-  }
-  yank() {
-    const text = this.killRing.peek();
-    if (!text)
-      return;
-    this.pushUndo();
-    this.value = this.value.slice(0, this.cursor) + text + this.value.slice(this.cursor);
-    this.cursor += text.length;
-    this.lastAction = "yank";
-  }
-  yankPop() {
-    if (this.lastAction !== "yank" || this.killRing.length <= 1)
-      return;
-    this.pushUndo();
-    const prevText = this.killRing.peek() || "";
-    this.value = this.value.slice(0, this.cursor - prevText.length) + this.value.slice(this.cursor);
-    this.cursor -= prevText.length;
-    this.killRing.rotate();
-    const text = this.killRing.peek() || "";
-    this.value = this.value.slice(0, this.cursor) + text + this.value.slice(this.cursor);
-    this.cursor += text.length;
-    this.lastAction = "yank";
-  }
-  pushUndo() {
-    this.undoStack.push({ value: this.value, cursor: this.cursor });
-  }
-  undo() {
-    const snapshot = this.undoStack.pop();
-    if (!snapshot)
-      return;
-    this.value = snapshot.value;
-    this.cursor = snapshot.cursor;
-    this.lastAction = null;
-  }
-  moveWordBackwards() {
-    if (this.cursor === 0)
-      return;
-    this.lastAction = null;
-    this.cursor = findWordBackward(this.value, this.cursor);
-  }
-  moveWordForwards() {
-    if (this.cursor >= this.value.length)
-      return;
-    this.lastAction = null;
-    this.cursor = findWordForward(this.value, this.cursor);
-  }
-  handlePaste(pastedText) {
-    this.lastAction = null;
-    this.pushUndo();
-    const cleanText = pastedText.replace(/\r\n/g, "").replace(/\r/g, "").replace(/\n/g, "").replace(/\t/g, "    ");
-    this.value = this.value.slice(0, this.cursor) + cleanText + this.value.slice(this.cursor);
-    this.cursor += cleanText.length;
-  }
-  invalidate() {}
-  render(width) {
-    const prompt = "> ";
-    const availableWidth = width - prompt.length;
-    if (availableWidth <= 0) {
-      return [prompt];
-    }
-    let visibleText = "";
-    let cursorDisplay = this.cursor;
-    const totalWidth = visibleWidth(this.value);
-    if (totalWidth < availableWidth) {
-      visibleText = this.value;
-    } else {
-      const scrollWidth = this.cursor === this.value.length ? availableWidth - 1 : availableWidth;
-      const cursorCol = visibleWidth(this.value.slice(0, this.cursor));
-      if (scrollWidth > 0) {
-        const halfWidth = Math.floor(scrollWidth / 2);
-        let startCol = 0;
-        if (cursorCol < halfWidth) {
-          startCol = 0;
-        } else if (cursorCol > totalWidth - halfWidth) {
-          startCol = Math.max(0, totalWidth - scrollWidth);
-        } else {
-          startCol = Math.max(0, cursorCol - halfWidth);
-        }
-        visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);
-        const beforeCursor2 = sliceByColumn(this.value, startCol, Math.max(0, cursorCol - startCol), true);
-        cursorDisplay = beforeCursor2.length;
-      } else {
-        visibleText = "";
-        cursorDisplay = 0;
-      }
-    }
-    const graphemes2 = [...segmenter.segment(visibleText.slice(cursorDisplay))];
-    const cursorGrapheme = graphemes2[0];
-    const beforeCursor = visibleText.slice(0, cursorDisplay);
-    const atCursor = cursorGrapheme?.segment ?? " ";
-    const afterCursor = visibleText.slice(cursorDisplay + atCursor.length);
-    const marker = this.focused ? CURSOR_MARKER : "";
-    const cursorChar = `\x1B[7m${atCursor}\x1B[27m`;
-    const textWithCursor = beforeCursor + marker + cursorChar + afterCursor;
-    const visualLength = visibleWidth(textWithCursor);
-    const padding = " ".repeat(Math.max(0, availableWidth - visualLength));
-    const line = prompt + textWithCursor + padding;
-    return [line];
-  }
-}
 // node_modules/@earendil-works/pi-tui/dist/latex.js
 var NAMED_OPERATORS = new Set([
   "arccos",
@@ -15720,190 +13277,6 @@ markdownParser.setOptions({
   tokenizer: new StrictStrikethroughTokenizer
 });
 markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS] });
-// node_modules/@earendil-works/pi-tui/dist/components/scroll-view.js
-class ScrollView extends Container {
-  child;
-  followEnd;
-  primary;
-  overscroll;
-  scrollbarStyle;
-  currentScrollbar;
-  scrollbarHideDelayMs;
-  currentScrollTop = 0;
-  contentHeight = 0;
-  currentViewportHeight = 0;
-  followingEnd;
-  followSuppressedAtEnd = false;
-  requestRenderCallback;
-  transientScrollbarVisible = false;
-  scrollbarActive = false;
-  scrollbarHideTimer;
-  constructor(component, options = {}) {
-    super();
-    if (options.axis !== undefined && options.axis !== "vertical") {
-      throw new Error(`Unsupported ScrollView axis: ${options.axis}`);
-    }
-    this.child = component;
-    this.children.push(component);
-    this.followEnd = (options.follow ?? "none") === "end";
-    this.followingEnd = this.followEnd;
-    this.primary = options.primary ?? false;
-    this.overscroll = options.overscroll ?? "chain";
-    this.currentScrollbar = options.scrollbar ?? "hidden";
-    this.scrollbarStyle = options.scrollbarStyle ?? ((text) => `\x1B[100m${text}\x1B[49m`);
-    this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
-  }
-  get scrollTop() {
-    return this.currentScrollTop;
-  }
-  get isFollowingEnd() {
-    return this.followingEnd;
-  }
-  get viewportHeight() {
-    return this.currentViewportHeight;
-  }
-  get scrollbar() {
-    return this.currentScrollbar;
-  }
-  get isScrollbarVisible() {
-    if (this.scrollbar === "always")
-      return this.currentViewportHeight > 0;
-    return this.scrollbar === "auto" && this.contentHeight > this.currentViewportHeight && this.transientScrollbarVisible;
-  }
-  setScrollbar(scrollbar) {
-    if (scrollbar === this.currentScrollbar)
-      return;
-    this.currentScrollbar = scrollbar;
-    if (scrollbar !== "auto")
-      this.hideTransientScrollbar();
-    else if (this.scrollbarActive)
-      this.markScrollbarActivity();
-    this.requestRenderCallback?.();
-  }
-  getContentWidth(width) {
-    return this.scrollbar === "always" && width > 1 ? width - 1 : width;
-  }
-  markScrollbarActivity() {
-    if (this.scrollbar !== "auto" || this.contentHeight <= this.currentViewportHeight)
-      return;
-    this.transientScrollbarVisible = true;
-    if (this.scrollbarHideTimer) {
-      clearTimeout(this.scrollbarHideTimer);
-      this.scrollbarHideTimer = undefined;
-    }
-    if (this.scrollbarActive)
-      return;
-    this.scrollbarHideTimer = setTimeout(() => {
-      this.scrollbarHideTimer = undefined;
-      this.transientScrollbarVisible = false;
-      this.requestRenderCallback?.();
-    }, this.scrollbarHideDelayMs);
-    this.scrollbarHideTimer.unref();
-  }
-  hideTransientScrollbar() {
-    this.transientScrollbarVisible = false;
-    if (!this.scrollbarHideTimer)
-      return;
-    clearTimeout(this.scrollbarHideTimer);
-    this.scrollbarHideTimer = undefined;
-  }
-  setScrollbarActive(active) {
-    if (active === this.scrollbarActive)
-      return;
-    this.scrollbarActive = active;
-    this.markScrollbarActivity();
-  }
-  scrollTo(scrollTop, options = {}) {
-    const requested = Number.isFinite(scrollTop) ? Math.trunc(scrollTop) : this.currentScrollTop;
-    const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
-    const next = Math.max(0, Math.min(maxScrollTop, requested));
-    const nextFollowSuppressedAtEnd = options.disableFollow === true && next === maxScrollTop;
-    const nextFollowingEnd = !nextFollowSuppressedAtEnd && this.followEnd && next === maxScrollTop;
-    if (next === this.currentScrollTop && nextFollowingEnd === this.followingEnd && nextFollowSuppressedAtEnd === this.followSuppressedAtEnd) {
-      return;
-    }
-    const moved = next !== this.currentScrollTop;
-    this.currentScrollTop = next;
-    this.followingEnd = nextFollowingEnd;
-    this.followSuppressedAtEnd = nextFollowSuppressedAtEnd;
-    if (moved)
-      this.markScrollbarActivity();
-    this.requestRenderCallback?.();
-  }
-  scrollBy(lines) {
-    const requested = Number.isFinite(lines) ? Math.trunc(lines) : 0;
-    if (requested === 0)
-      return 0;
-    const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
-    const start2 = this.followingEnd ? maxScrollTop : this.currentScrollTop;
-    const next = Math.max(0, Math.min(maxScrollTop, start2 + requested));
-    const moved = next - start2;
-    const wasFollowingEnd = this.followingEnd;
-    this.currentScrollTop = next;
-    this.followingEnd = this.followEnd && next === maxScrollTop;
-    this.followSuppressedAtEnd = false;
-    if (moved !== 0)
-      this.markScrollbarActivity();
-    if (moved !== 0 || this.followingEnd !== wasFollowingEnd)
-      this.requestRenderCallback?.();
-    return requested - moved;
-  }
-  scrollToStart() {
-    const changed = this.currentScrollTop !== 0 || this.followingEnd !== (this.followEnd && this.contentHeight <= this.currentViewportHeight);
-    this.currentScrollTop = 0;
-    this.followingEnd = this.followEnd && this.contentHeight <= this.currentViewportHeight;
-    this.followSuppressedAtEnd = false;
-    if (changed) {
-      this.markScrollbarActivity();
-      this.requestRenderCallback?.();
-    }
-  }
-  scrollToEnd() {
-    const next = Math.max(0, this.contentHeight - this.currentViewportHeight);
-    const changed = this.currentScrollTop !== next || this.followingEnd !== this.followEnd;
-    this.currentScrollTop = next;
-    this.followingEnd = this.followEnd;
-    this.followSuppressedAtEnd = false;
-    if (changed) {
-      this.markScrollbarActivity();
-      this.requestRenderCallback?.();
-    }
-  }
-  updateLayout(contentHeight, viewportHeight, requestRender) {
-    this.contentHeight = Math.max(0, Math.floor(contentHeight));
-    this.currentViewportHeight = Math.max(0, Math.floor(viewportHeight));
-    this.requestRenderCallback = requestRender;
-    const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
-    if (this.followingEnd)
-      this.currentScrollTop = maxScrollTop;
-    else
-      this.currentScrollTop = Math.max(0, Math.min(this.currentScrollTop, maxScrollTop));
-    if (this.currentScrollTop < maxScrollTop)
-      this.followSuppressedAtEnd = false;
-    if (this.followEnd && this.currentScrollTop === maxScrollTop && !this.followSuppressedAtEnd) {
-      this.followingEnd = true;
-    }
-    if (this.contentHeight <= this.currentViewportHeight)
-      this.hideTransientScrollbar();
-  }
-  addChild(_component) {
-    throw new Error("ScrollView has exactly one child");
-  }
-  removeChild(_component) {
-    throw new Error("ScrollView child cannot be removed");
-  }
-  clear() {
-    throw new Error("ScrollView child cannot be cleared");
-  }
-  render(width) {
-    const contentWidth = this.getContentWidth(width);
-    const lines = this.child.render(contentWidth);
-    return contentWidth === width ? lines : lines.map((line) => `${line} `);
-  }
-  [LAYOUT_NODE]() {
-    return { type: "scroll", component: this.child, state: this };
-  }
-}
 // node_modules/@earendil-works/pi-tui/dist/terminal.js
 import { createRequire as createRequire5 } from "module";
 
@@ -15923,1532 +13296,11 @@ var DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS = 7;
 var KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1B[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1B[?u\x1B[c`;
 // node_modules/@earendil-works/pi-tui/dist/alt-screen-search.js
 var segmenter2 = getGraphemeSegmenter();
-function appendMappedText(text, span, corpus) {
-  corpus.text += text;
-  for (let index = 0;index < text.length; index++)
-    corpus.source.push(span);
-}
-function buildSearchCorpus(lines) {
-  const corpus = { text: "", source: [] };
-  let pendingSeparator = false;
-  for (let row = 0;row < lines.length; row++) {
-    const line = stripTerminalSequences(lines[row] ?? "");
-    let column = 0;
-    for (const grapheme of segmenter2.segment(line)) {
-      const text = grapheme.segment;
-      const width = visibleWidth(text);
-      if (/^\s+$/u.test(text)) {
-        if (corpus.text.length > 0)
-          pendingSeparator = true;
-        column += width;
-        continue;
-      }
-      if (pendingSeparator) {
-        appendMappedText(" ", undefined, corpus);
-        pendingSeparator = false;
-      }
-      appendMappedText(text, { row, startCol: column, endCol: column + width }, corpus);
-      column += width;
-    }
-    if (corpus.text.length > 0)
-      pendingSeparator = true;
-  }
-  return corpus;
-}
-function normalizeQuery(query) {
-  return query.replace(/\s+/gu, " ").trim();
-}
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function findAltScreenSearchMatches(lines, query) {
-  const normalizedQuery = normalizeQuery(query);
-  if (!normalizedQuery)
-    return [];
-  const corpus = buildSearchCorpus(lines);
-  const expression = new RegExp(escapeRegExp(normalizedQuery), "giu");
-  const matches = [];
-  for (const match of corpus.text.matchAll(expression)) {
-    const start2 = match.index;
-    const end = start2 + match[0].length;
-    const segments = [];
-    for (let index = start2;index < end; index++) {
-      const span = corpus.source[index];
-      if (!span)
-        continue;
-      const previous = segments[segments.length - 1];
-      if (previous && previous.row === span.row && span.startCol <= previous.endCol) {
-        previous.endCol = Math.max(previous.endCol, span.endCol);
-      } else {
-        segments.push({ ...span });
-      }
-    }
-    if (segments.length > 0)
-      matches.push({ segments });
-  }
-  return matches;
-}
-function getAltScreenSearchMatchKey(match) {
-  const first = match.segments[0];
-  const last = match.segments[match.segments.length - 1];
-  return first && last ? `${first.row}:${first.startCol}:${last.row}:${last.endCol}` : "";
-}
-
-class AltScreenSearchComponent {
-  input = new Input;
-  onQueryChange;
-  resultCount = 0;
-  resultIndex = -1;
-  _focused = false;
-  constructor(onQueryChange) {
-    this.onQueryChange = onQueryChange;
-  }
-  get focused() {
-    return this._focused;
-  }
-  set focused(value) {
-    this._focused = value;
-    this.input.focused = value;
-  }
-  setResult(index, count) {
-    this.resultIndex = index;
-    this.resultCount = count;
-  }
-  handleInput(data) {
-    const previous = this.input.getValue();
-    this.input.handleInput(data);
-    const query = this.input.getValue();
-    if (query !== previous)
-      this.onQueryChange(query);
-  }
-  invalidate() {
-    this.input.invalidate();
-  }
-  render(width) {
-    const safeWidth = Math.max(1, width);
-    const label = " Find transcript";
-    const query = this.input.getValue();
-    const status = !query ? "" : this.resultCount === 0 ? "No matches " : `${this.resultIndex + 1}/${this.resultCount} `;
-    const labelWidth = visibleWidth(label);
-    const statusWidth = visibleWidth(status);
-    const gap = " ".repeat(Math.max(1, safeWidth - labelWidth - statusWidth));
-    const title = truncateToWidth(`${label}${gap}${status}`, safeWidth, "");
-    const padding = " ".repeat(Math.max(0, safeWidth - visibleWidth(title)));
-    return [`\x1B[7m${title}${padding}\x1B[27m`, ...this.input.render(safeWidth)];
-  }
-}
-
-// node_modules/@earendil-works/pi-tui/dist/components/alt-screen-flash.js
-var DEFAULT_DURATION_MS = 1000;
-
-class AltScreenFlashContainer {
-  entries = [];
-  nextId = 0;
-  requestRender;
-  constructor(requestRender) {
-    this.requestRender = requestRender;
-  }
-  flash(message, durationMs = DEFAULT_DURATION_MS) {
-    const id = this.nextId++;
-    const timer = setTimeout(() => {
-      const index = this.entries.findIndex((entry) => entry.id === id);
-      if (index === -1)
-        return;
-      this.entries.splice(index, 1);
-      this.requestRender();
-    }, Math.max(0, durationMs));
-    timer.unref();
-    this.entries.push({ id, message, timer });
-    this.requestRender();
-  }
-  dispose() {
-    for (const entry of this.entries)
-      clearTimeout(entry.timer);
-    this.entries.length = 0;
-  }
-  invalidate() {}
-  render(width) {
-    return this.entries.map((entry) => {
-      const message = truncateToWidth(` ${entry.message} `, width, "");
-      return `\x1B[7m${message}\x1B[27m`;
-    });
-  }
-}
-
-// node_modules/@earendil-works/pi-tui/dist/layout.js
-var OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
-function intersect2(a, b2) {
-  const x2 = Math.max(a.x, b2.x);
-  const y2 = Math.max(a.y, b2.y);
-  const right = Math.min(a.x + a.width, b2.x + b2.width);
-  const bottom = Math.min(a.y + a.height, b2.y + b2.height);
-  return { x: x2, y: y2, width: Math.max(0, right - x2), height: Math.max(0, bottom - y2) };
-}
-function renderCached(context, component, width) {
-  const safeWidth = Math.max(1, Math.floor(width));
-  let widths = context.renderCache.get(component);
-  if (!widths) {
-    widths = new Map;
-    context.renderCache.set(component, widths);
-  }
-  let lines = widths.get(safeWidth);
-  if (!lines) {
-    lines = component.render(safeWidth);
-    widths.set(safeWidth, lines);
-  }
-  return lines;
-}
-function measureHeight(context, component, width) {
-  return renderCached(context, component, width).length;
-}
-function measureWidth(context, component, width) {
-  return renderCached(context, component, width).reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
-}
-function withParent(box, parent) {
-  box.parent = parent;
-  return box;
-}
-function translateBox(box, deltaY) {
-  box.rect.y += deltaY;
-  for (const child of box.children)
-    translateBox(child, deltaY);
-}
-function updateClips(box, parentClip) {
-  box.clip = intersect2(parentClip, box.rect);
-  for (const child of box.children)
-    updateClips(child, box.clip);
-}
-function layoutComponent(context, component, x2, y2, width, height, clip) {
-  const safeWidth = Math.max(1, Math.floor(width));
-  const node = getLayoutNode(component);
-  if (!node) {
-    const lines = renderCached(context, component, safeWidth);
-    const allocatedHeight2 = height === undefined ? lines.length : Math.max(0, Math.floor(height));
-    let lineOffset = 0;
-    if (lines.length > allocatedHeight2 && allocatedHeight2 > 0) {
-      const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
-      if (cursorLine >= allocatedHeight2)
-        lineOffset = cursorLine - allocatedHeight2 + 1;
-    }
-    return {
-      component,
-      rect: { x: x2, y: y2, width: safeWidth, height: allocatedHeight2 },
-      clip: intersect2(clip, { x: x2, y: y2, width: safeWidth, height: allocatedHeight2 }),
-      children: [],
-      lines,
-      lineOffset,
-      layer: 0
-    };
-  }
-  if (node.type === "scroll") {
-    const previousScrollTop = node.state.scrollTop;
-    const contentWidth = node.state.getContentWidth(safeWidth);
-    const childBox = layoutComponent(context, node.component, x2, y2 - previousScrollTop, contentWidth, undefined, clip);
-    const contentHeight = childBox.rect.height;
-    const viewportHeight = height === undefined ? contentHeight : Math.max(0, Math.floor(height));
-    node.state.updateLayout(contentHeight, viewportHeight, context.requestRender);
-    translateBox(childBox, previousScrollTop - node.state.scrollTop);
-    const scrollView = node.state;
-    if (node.state.primary || !context.primaryScrollView)
-      context.primaryScrollView = scrollView;
-    const rect2 = { x: x2, y: y2, width: safeWidth, height: viewportHeight };
-    const childClip = intersect2(clip, rect2);
-    const box2 = {
-      component,
-      rect: rect2,
-      clip: childClip,
-      children: [childBox],
-      scrollView,
-      scrollContentLines: renderCached(context, node.component, contentWidth),
-      layer: 0
-    };
-    childBox.parent = box2;
-    updateClips(childBox, childClip);
-    return box2;
-  }
-  const entries = visibleStackEntries(node.entries, context.viewport);
-  const gapTotal = Math.max(0, entries.length - 1) * node.gap;
-  if (node.type === "vstack") {
-    const intrinsicHeights2 = entries.map((entry) => typeof entry.basis === "number" ? entry.basis : measureHeight(context, entry.component, safeWidth));
-    const sizes = allocateStackSizes(entries, intrinsicHeights2, height, node.gap);
-    const naturalHeight = sizes.reduce((sum, size) => sum + size, 0) + gapTotal;
-    const allocatedHeight2 = height === undefined ? naturalHeight : Math.max(0, Math.floor(height));
-    const rect2 = { x: x2, y: y2, width: safeWidth, height: allocatedHeight2 };
-    const box2 = {
-      component,
-      rect: rect2,
-      clip: intersect2(clip, rect2),
-      children: [],
-      layer: 0
-    };
-    let childY = y2;
-    for (let index = 0;index < entries.length; index++) {
-      box2.children.push(withParent(layoutComponent(context, entries[index].component, x2, childY, safeWidth, sizes[index], box2.clip), box2));
-      childY += sizes[index] + node.gap;
-    }
-    return box2;
-  }
-  const intrinsicWidths = entries.map((entry) => typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, safeWidth));
-  const widths = allocateStackSizes(entries, intrinsicWidths, safeWidth, node.gap);
-  const intrinsicHeights = entries.map((entry, index) => measureHeight(context, entry.component, Math.max(1, widths[index])));
-  const allocatedHeight = height === undefined ? intrinsicHeights.reduce((max, childHeight) => Math.max(max, childHeight), 0) : Math.max(0, height);
-  const rect = { x: x2, y: y2, width: safeWidth, height: allocatedHeight };
-  const box = {
-    component,
-    rect,
-    clip: intersect2(clip, rect),
-    children: [],
-    layer: 0
-  };
-  let childX = x2;
-  for (let index = 0;index < entries.length; index++) {
-    const naturalChildHeight = intrinsicHeights[index];
-    const childHeight = node.align === "stretch" ? allocatedHeight : Math.min(allocatedHeight, naturalChildHeight);
-    let childY = y2;
-    if (node.align === "center")
-      childY += Math.floor((allocatedHeight - childHeight) / 2);
-    else if (node.align === "end")
-      childY += allocatedHeight - childHeight;
-    const childWidth = widths[index];
-    if (childWidth === 0) {
-      box.children.push({
-        component: entries[index].component,
-        rect: { x: childX, y: childY, width: 0, height: childHeight },
-        clip: { x: childX, y: childY, width: 0, height: 0 },
-        children: [],
-        parent: box,
-        layer: 0
-      });
-    } else {
-      box.children.push(withParent(layoutComponent(context, entries[index].component, childX, childY, childWidth, childHeight, box.clip), box));
-    }
-    childX += childWidth + node.gap;
-  }
-  return box;
-}
-function styleScrollbarCell(line, column, totalWidth, style) {
-  if (isImageLine(line))
-    return line;
-  const graphemeRange = getGraphemeCellRange(line, column);
-  const start2 = graphemeRange?.start ?? column;
-  const end = graphemeRange?.end ?? column + 1;
-  const before = sliceByColumn(line, 0, start2, true);
-  const target = sliceByColumn(line, start2, end - start2, true);
-  const after = sliceByColumn(line, end, Math.max(0, totalWidth - end), true);
-  let targetPrefix = "";
-  let targetIndex = 0;
-  while (targetIndex < target.length) {
-    const ansi = extractAnsiCode(target, targetIndex);
-    if (!ansi)
-      break;
-    targetPrefix += ansi.code;
-    targetIndex += ansi.length;
-  }
-  const targetText = target.slice(targetIndex) || " ".repeat(end - start2);
-  const beforePadding = " ".repeat(Math.max(0, start2 - visibleWidth(before)));
-  return `${before}${beforePadding}${targetPrefix}${style(targetText)}${after}`;
-}
-function getScrollbarGeometry(box) {
-  if (!box.scrollView?.isScrollbarVisible || box.rect.width <= 0 || box.rect.height <= 0)
-    return;
-  const contentHeight = box.children[0]?.rect.height ?? box.scrollContentLines?.length ?? 0;
-  const trackHeight = box.rect.height;
-  const minThumbHeight = Math.min(2, trackHeight);
-  const thumbHeight = Math.max(minThumbHeight, Math.min(trackHeight, Math.round(trackHeight * trackHeight / contentHeight)));
-  const maxScrollTop = Math.max(0, contentHeight - trackHeight);
-  const maxThumbTop = trackHeight - thumbHeight;
-  const thumbOffset = maxScrollTop === 0 ? 0 : Math.round(box.scrollView.scrollTop / maxScrollTop * maxThumbTop);
-  const column = box.rect.x + box.rect.width - 1;
-  if (column < box.clip.x || column >= box.clip.x + box.clip.width)
-    return;
-  return {
-    column,
-    trackTop: box.rect.y,
-    trackHeight,
-    thumbTop: box.rect.y + thumbOffset,
-    thumbHeight,
-    maxScrollTop
-  };
-}
-function paintScrollbar(box, screen, totalWidth) {
-  const geometry = getScrollbarGeometry(box);
-  if (!geometry || !box.scrollView)
-    return;
-  for (let offset = 0;offset < geometry.thumbHeight; offset++) {
-    const row = geometry.thumbTop + offset;
-    if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length)
-      continue;
-    screen[row] = styleScrollbarCell(screen[row] ?? "", geometry.column, totalWidth, box.scrollView.scrollbarStyle);
-  }
-}
-function paintBox(box, screen, totalWidth) {
-  if (box.lines) {
-    const offset = box.lineOffset ?? 0;
-    const firstRow = Math.max(box.rect.y, box.clip.y, 0);
-    const lastRow = Math.min(box.rect.y + box.rect.height, box.clip.y + box.clip.height, screen.length);
-    for (let row = firstRow;row < lastRow; row++) {
-      const sourceLine = box.lines[offset + row - box.rect.y];
-      if (sourceLine === undefined)
-        continue;
-      let line = sourceLine.replace(OSC133_ZONE_PREFIX, "");
-      const imageMetadata = getKittyImageMetadata(line);
-      if (imageMetadata) {
-        const clipBottom = Math.min(screen.length, box.clip.y + box.clip.height);
-        const visibleRows = Math.min(imageMetadata.rows, clipBottom - row);
-        if (visibleRows < imageMetadata.rows)
-          line = cropKittyImageLine(line, 0, visibleRows);
-      }
-      if (box.rect.x === 0 && box.rect.width >= totalWidth && (isImageLine(line) || !screen[row])) {
-        screen[row] = line;
-      } else {
-        screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
-      }
-    }
-  }
-  for (const child of box.children)
-    paintBox(child, screen, totalWidth);
-  if (box.scrollView && box.scrollContentLines && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
-    for (let imageRow = box.scrollView.scrollTop - 1;imageRow >= 0; imageRow--) {
-      const imageLine = box.scrollContentLines[imageRow] ?? "";
-      const metadata2 = getKittyImageMetadata(imageLine);
-      if (metadata2) {
-        const hiddenRows = box.scrollView.scrollTop - imageRow;
-        if (hiddenRows < metadata2.rows) {
-          const visibleRows = Math.min(box.rect.height, metadata2.rows - hiddenRows);
-          const cropped = cropKittyImageLine(imageLine, hiddenRows, visibleRows);
-          if (box.rect.x === 0 && box.rect.width >= totalWidth)
-            screen[box.rect.y] = cropped;
-        }
-        break;
-      }
-      if (imageLine !== "")
-        break;
-    }
-  }
-  paintScrollbar(box, screen, totalWidth);
-}
-function renderLayoutFrame(root, width, height, requestRender) {
-  const safeWidth = Math.max(1, Math.floor(width));
-  const safeHeight = Math.max(1, Math.floor(height));
-  const context = {
-    viewport: { width: safeWidth, height: safeHeight },
-    renderCache: new Map,
-    requestRender,
-    primaryScrollView: undefined
-  };
-  const rootBox = layoutComponent(context, root, 0, 0, safeWidth, safeHeight, {
-    x: 0,
-    y: 0,
-    width: safeWidth,
-    height: safeHeight
-  });
-  const lines = Array.from({ length: safeHeight }, () => "");
-  paintBox(rootBox, lines, safeWidth);
-  return {
-    root: rootBox,
-    width: safeWidth,
-    height: safeHeight,
-    lines,
-    ...context.primaryScrollView === undefined ? {} : { primaryScrollView: context.primaryScrollView }
-  };
-}
-function containsPoint(rect, x2, y2) {
-  return x2 >= rect.x && x2 < rect.x + rect.width && y2 >= rect.y && y2 < rect.y + rect.height;
-}
-function getScrollViewBox(frame, scrollView) {
-  const visit = (box) => {
-    if (box.scrollView === scrollView)
-      return box;
-    for (const child of box.children) {
-      const match = visit(child);
-      if (match)
-        return match;
-    }
-    return;
-  };
-  return visit(frame.root);
-}
-function getScrollViewsAt(frame, x2, y2) {
-  const result = [];
-  const visit = (box, depth) => {
-    if (!containsPoint(box.clip, x2, y2))
-      return;
-    if (box.scrollView && containsPoint(box.rect, x2, y2))
-      result.push({ scrollView: box.scrollView, depth });
-    for (const child of box.children)
-      visit(child, depth + 1);
-  };
-  visit(frame.root, 0);
-  result.sort((a, b2) => b2.depth - a.depth);
-  return result.map((entry) => entry.scrollView);
-}
 
 // node_modules/@earendil-works/pi-tui/dist/tui-alt-screen.js
-var ENTER_ALT_SCREEN = "\x1B[?1049h";
-var EXIT_ALT_SCREEN = "\x1B[?1049l";
-var DISABLE_AUTOWRAP = "\x1B[?7l";
-var ENABLE_AUTOWRAP = "\x1B[?7h";
-var ENABLE_BUTTON_MOTION_MOUSE = "\x1B[?1000h\x1B[?1002h\x1B[?1004h\x1B[?1006h";
-var ENABLE_ALL_MOTION_MOUSE = "\x1B[?1000h\x1B[?1002h\x1B[?1003h\x1B[?1004h\x1B[?1006h";
-var DISABLE_MOUSE = "\x1B[?1006l\x1B[?1004l\x1B[?1003l\x1B[?1002l\x1B[?1000l";
-var FOCUS_IN = "\x1B[I";
-var FOCUS_OUT = "\x1B[O";
-var BEGIN_SYNCHRONIZED_OUTPUT = "\x1B[?2026h";
-var END_SYNCHRONIZED_OUTPUT = "\x1B[?2026l";
-var OSC133_ZONE_PREFIX2 = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
-var OSC133_PROMPT_START = /^\x1b\]133;A(?:\x07|\x1b\\)/;
-var PAGE_SCROLL_OVERLAP = 4;
-var MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
 var MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
 var MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
-var DOUBLE_CLICK_INTERVAL_MS = 500;
 var wordSegmenter4 = getWordSegmenter();
-
-class TuiAltScreen extends TuiBase {
-  mode = "fullscreen";
-  [VIEWPORT_TUI] = true;
-  previousScreen = [];
-  lastDocument = [];
-  previousScreenWidth = 0;
-  previousScreenHeight = 0;
-  layoutRoot;
-  currentLayout;
-  implicitDocument;
-  implicitScrollView;
-  flashes;
-  altScreenActive = false;
-  imageProtocol = null;
-  savedCapabilities;
-  uploadedKittyImages = new Map;
-  selectionAnchor;
-  selectionFocus;
-  selectionGranularity = "character";
-  selectionInitialRange;
-  lastClick;
-  selectionDragPointer;
-  selectionAutoScrollDirection = 0;
-  selectionAutoScrollTimer;
-  selectionPressActive = false;
-  scrollbarDrag;
-  scrollbarHover;
-  activeSearch;
-  pressedUrl;
-  selectionDragged = false;
-  wheelScrollLines;
-  mouseEnabled;
-  searchMatchStyle;
-  searchCurrentMatchStyle;
-  openUrl;
-  onRightClickPaste;
-  copySelection;
-  constructor(terminal, showHardwareCursor, logDirectory, options = {}) {
-    super(terminal, showHardwareCursor, logDirectory);
-    this.implicitDocument = {
-      render: (width) => super.render(width),
-      invalidate: () => {
-        for (const child of this.children)
-          child.invalidate();
-      }
-    };
-    this.implicitScrollView = new ScrollView(this.implicitDocument, { follow: "end", primary: true });
-    this.flashes = new AltScreenFlashContainer(() => this.requestRender());
-    this.wheelScrollLines = Math.max(1, Math.floor(options.wheelScrollLines ?? 1));
-    this.mouseEnabled = options.mouse ?? true;
-    this.searchMatchStyle = options.searchMatchStyle ?? ((text) => `\x1B[4m${text}\x1B[24m`);
-    this.searchCurrentMatchStyle = options.searchCurrentMatchStyle ?? ((text) => `\x1B[1;7m${text}\x1B[22;27m`);
-    this.openUrl = options.openUrl;
-    this.onRightClickPaste = options.onRightClickPaste;
-    this.copySelection = options.copySelection;
-    this.addInputListener((data) => this.handleViewportInput(data));
-  }
-  get viewportTop() {
-    return this.getPrimaryScrollView().scrollTop;
-  }
-  get isFollowingOutput() {
-    return this.getPrimaryScrollView().isFollowingEnd;
-  }
-  setLayoutRoot(component) {
-    if (this.layoutRoot === component)
-      return;
-    this.layoutRoot = component;
-    this.currentLayout = undefined;
-    this.requestRender();
-  }
-  render(width) {
-    return this.layoutRoot?.render(width) ?? super.render(width);
-  }
-  getMountedRoots() {
-    return this.layoutRoot ? [this.layoutRoot] : this.children;
-  }
-  getPrimaryScrollView() {
-    return this.currentLayout?.primaryScrollView ?? this.implicitScrollView;
-  }
-  beforeTerminalStart() {
-    this.stopSelectionAutoScroll();
-    this.selectionPressActive = false;
-    this.stopScrollbarHover();
-    this.stopScrollbarDrag();
-    this.flashes.dispose();
-    this.altScreenActive = true;
-    const capabilities = getCapabilities();
-    this.imageProtocol = capabilities.images;
-    this.uploadedKittyImages.clear();
-    if (capabilities.images === "iterm2") {
-      this.savedCapabilities = capabilities;
-      setCapabilities({ ...capabilities, images: null });
-      this.invalidate();
-    }
-    this.lastDocument = [];
-    this.selectionAnchor = undefined;
-    this.selectionFocus = undefined;
-    this.selectionGranularity = "character";
-    this.selectionInitialRange = undefined;
-    this.lastClick = undefined;
-    this.pressedUrl = undefined;
-    this.selectionDragged = false;
-    this.resetRenderState();
-    const term = process.env.TERM?.toLowerCase() ?? "";
-    const mouseSequence = process.env.TMUX !== undefined || process.env.ZELLIJ !== undefined || process.env.STY !== undefined || term.startsWith("tmux") || term.startsWith("screen") ? ENABLE_BUTTON_MOTION_MOUSE : ENABLE_ALL_MOTION_MOUSE;
-    this.terminal.write(`${ENTER_ALT_SCREEN}${DISABLE_AUTOWRAP}${this.mouseEnabled ? mouseSequence : ""}\x1B[2J\x1B[H\x1B[?25l`);
-  }
-  beforeTerminalStop(_options) {
-    this.closeSearch();
-    this.stopSelectionAutoScroll();
-    this.selectionPressActive = false;
-    this.stopScrollbarHover();
-    this.stopScrollbarDrag();
-    this.flashes.dispose();
-    if (!this.altScreenActive)
-      return;
-    this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${this.deleteKittyImages()}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${END_SYNCHRONIZED_OUTPUT}`);
-    this.uploadedKittyImages.clear();
-  }
-  afterTerminalStop(options) {
-    if (!this.altScreenActive)
-      return;
-    this.altScreenActive = false;
-    if (options.preserveScreen) {
-      this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1B[?25h${END_SYNCHRONIZED_OUTPUT}`);
-    } else {
-      const width = Math.max(1, this.terminal.columns);
-      const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX2, ""));
-      this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map((line) => isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true));
-      let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
-      for (let row = 0;row < this.lastDocument.length; row++) {
-        if (row > 0)
-          buffer += `\r
-`;
-        buffer += `\r\x1B[2K${this.lastDocument[row] ?? ""}`;
-      }
-      buffer += `\x1B[0m${ENABLE_AUTOWRAP}\r
-\x1B[?25h${END_SYNCHRONIZED_OUTPUT}`;
-      this.terminal.write(buffer);
-    }
-    if (this.savedCapabilities) {
-      setCapabilities(this.savedCapabilities);
-      this.savedCapabilities = undefined;
-    }
-  }
-  deleteKittyImages() {
-    return this.imageProtocol === "kitty" ? deleteAllKittyImages() : "";
-  }
-  prepareKittyScreen(screen) {
-    const visibleImageIds = new Set;
-    const lines = screen.map((line) => {
-      const placement = getKittyImagePlacement(line);
-      if (!placement)
-        return line;
-      visibleImageIds.add(placement.imageId);
-      const cachedImage = this.uploadedKittyImages.get(placement.imageId);
-      const nextCachedImage = {
-        transmissionGeneration: placement.transmissionGeneration,
-        transmissionBytes: placement.transmissionBytes,
-        estimatedDecodedBytes: placement.estimatedDecodedBytes
-      };
-      if (cachedImage)
-        this.uploadedKittyImages.delete(placement.imageId);
-      this.uploadedKittyImages.set(placement.imageId, nextCachedImage);
-      return cachedImage?.transmissionGeneration === placement.transmissionGeneration ? placement.replacementLine : line;
-    });
-    let cachedOffscreenImageCount = 0;
-    let cachedOffscreenTransmissionBytes = 0;
-    let cachedOffscreenDecodedBytes = 0;
-    for (const [imageId, cachedImage] of this.uploadedKittyImages) {
-      if (visibleImageIds.has(imageId))
-        continue;
-      cachedOffscreenImageCount += 1;
-      cachedOffscreenTransmissionBytes += cachedImage.transmissionBytes;
-      cachedOffscreenDecodedBytes += cachedImage.estimatedDecodedBytes;
-    }
-    let evictedImageDeletion = "";
-    for (const [imageId, cachedImage] of this.uploadedKittyImages) {
-      if (cachedOffscreenImageCount <= MAX_CACHED_OFFSCREEN_KITTY_IMAGES && cachedOffscreenTransmissionBytes <= MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES && cachedOffscreenDecodedBytes <= MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES) {
-        break;
-      }
-      if (visibleImageIds.has(imageId))
-        continue;
-      evictedImageDeletion += deleteKittyImage(imageId);
-      this.uploadedKittyImages.delete(imageId);
-      cachedOffscreenImageCount -= 1;
-      cachedOffscreenTransmissionBytes -= cachedImage.transmissionBytes;
-      cachedOffscreenDecodedBytes -= cachedImage.estimatedDecodedBytes;
-    }
-    return { lines, evictedImageDeletion };
-  }
-  resetRenderState() {
-    this.previousScreen = [];
-    this.previousScreenWidth = 0;
-    this.previousScreenHeight = 0;
-    this.currentLayout = undefined;
-  }
-  scrollBy(lines) {
-    this.getPrimaryScrollView().scrollBy(lines);
-    this.requestRender();
-  }
-  scrollToTop() {
-    this.getPrimaryScrollView().scrollToStart();
-    this.requestRender();
-  }
-  scrollToBottom() {
-    this.getPrimaryScrollView().scrollToEnd();
-    this.requestRender();
-  }
-  scrollToPrompt(direction) {
-    if (!this.currentLayout)
-      return;
-    const scrollView = this.getPrimaryScrollView();
-    const lines = getScrollViewBox(this.currentLayout, scrollView)?.scrollContentLines;
-    if (!lines)
-      return;
-    for (let row = scrollView.scrollTop + direction;row >= 0 && row < lines.length; row += direction) {
-      if (!OSC133_PROMPT_START.test(lines[row] ?? ""))
-        continue;
-      scrollView.scrollTo(row);
-      this.requestRender();
-      return;
-    }
-  }
-  openSearch() {
-    if (this.activeSearch) {
-      this.activeSearch.overlay?.focus();
-      return;
-    }
-    const component = new AltScreenSearchComponent((query) => this.updateSearchQuery(query));
-    const search = {
-      component,
-      query: "",
-      matches: [],
-      selectedIndex: -1,
-      anchorRow: this.getPrimaryScrollView().scrollTop,
-      selectionMode: "query"
-    };
-    this.activeSearch = search;
-    search.overlay = this.showOverlay(component, {
-      anchor: "top-right",
-      width: "40%",
-      minWidth: 24,
-      margin: 1
-    });
-  }
-  closeSearch() {
-    const search = this.activeSearch;
-    if (!search)
-      return;
-    this.activeSearch = undefined;
-    search.overlay?.hide();
-    this.requestRender();
-  }
-  updateSearchQuery(query) {
-    const search = this.activeSearch;
-    if (!search || query === search.query)
-      return;
-    const selected = search.matches[search.selectedIndex];
-    search.anchorRow = selected?.segments[0]?.row ?? this.getPrimaryScrollView().scrollTop;
-    search.query = query;
-    search.selectionMode = "query";
-    search.component.setResult(-1, 0);
-    this.requestRender();
-  }
-  navigateSearch(direction) {
-    const search = this.activeSearch;
-    if (!search?.query)
-      return;
-    search.selectionMode = direction < 0 ? "previous" : "next";
-    this.requestRender();
-  }
-  refreshSearch(layout) {
-    const search = this.activeSearch;
-    if (!search)
-      return false;
-    const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
-    const box = getScrollViewBox(layout, scrollView);
-    const lines = box?.scrollContentLines;
-    if (!lines || !search.query.trim()) {
-      search.matches = [];
-      search.selectedIndex = -1;
-      search.selectedKey = undefined;
-      search.selectionMode = "retain";
-      search.component.setResult(-1, 0);
-      return false;
-    }
-    const shouldRevealSelection = search.selectionMode !== "retain";
-    const matches = findAltScreenSearchMatches(lines, search.query);
-    const exactIndex = search.selectedKey ? matches.findIndex((match) => getAltScreenSearchMatchKey(match) === search.selectedKey) : -1;
-    let selectedIndex = -1;
-    if (matches.length > 0) {
-      if (search.selectionMode === "query") {
-        selectedIndex = matches.findIndex((match) => (match.segments[0]?.row ?? 0) >= search.anchorRow);
-        if (selectedIndex < 0)
-          selectedIndex = 0;
-      } else if (search.selectionMode === "next") {
-        const baseIndex = exactIndex >= 0 ? exactIndex : Math.min(search.selectedIndex, matches.length - 1);
-        selectedIndex = baseIndex < 0 ? 0 : (baseIndex + 1) % matches.length;
-      } else if (search.selectionMode === "previous") {
-        const baseIndex = exactIndex >= 0 ? exactIndex : Math.min(search.selectedIndex, matches.length - 1);
-        selectedIndex = baseIndex < 0 ? matches.length - 1 : (baseIndex - 1 + matches.length) % matches.length;
-      } else {
-        selectedIndex = exactIndex >= 0 ? exactIndex : Math.min(Math.max(0, search.selectedIndex), matches.length - 1);
-      }
-    }
-    search.matches = matches;
-    search.selectedIndex = selectedIndex;
-    search.selectedKey = selectedIndex >= 0 ? getAltScreenSearchMatchKey(matches[selectedIndex]) : undefined;
-    search.selectionMode = "retain";
-    search.component.setResult(selectedIndex, matches.length);
-    if (!shouldRevealSelection)
-      return false;
-    const selected = matches[selectedIndex];
-    const firstSegment = selected?.segments[0];
-    const lastSegment = selected?.segments[selected.segments.length - 1];
-    if (!box || !firstSegment || !lastSegment || scrollView.viewportHeight <= 0)
-      return false;
-    const before = scrollView.scrollTop;
-    const visibleBottom = before + scrollView.viewportHeight - 1;
-    let target = before;
-    if (firstSegment.row < before || lastSegment.row > visibleBottom) {
-      target = firstSegment.row - Math.floor(scrollView.viewportHeight / 3);
-    }
-    scrollView.scrollTo(target, { disableFollow: true });
-    return scrollView.scrollTop !== before;
-  }
-  flash(message, durationMs) {
-    this.flashes.flash(message, durationMs);
-  }
-  shouldDeferViewportInputToOverlay() {
-    return this.isOverlayFocused() && this.activeSearch?.overlay?.isFocused() !== true;
-  }
-  handleViewportInput(data) {
-    if (data === FOCUS_OUT) {
-      const hadActiveSelection = this.selectionPressActive;
-      const hadNonEmptyActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
-      this.selectionPressActive = false;
-      this.stopSelectionAutoScroll();
-      this.stopScrollbarHover();
-      this.stopScrollbarDrag();
-      this.pressedUrl = undefined;
-      this.selectionDragged = false;
-      if (hadActiveSelection) {
-        this.selectionAnchor = undefined;
-        this.selectionFocus = undefined;
-        this.selectionGranularity = "character";
-        this.selectionInitialRange = undefined;
-        if (hadNonEmptyActiveSelection)
-          this.requestRender();
-      }
-      this.lastClick = undefined;
-      return { consume: true };
-    }
-    if (data === FOCUS_IN)
-      return { consume: true };
-    const wheelEvent = this.parseWheelEvent(data);
-    if (wheelEvent) {
-      if (this.shouldDeferViewportInputToOverlay())
-        return;
-      this.routeWheel(wheelEvent);
-      return { consume: true };
-    }
-    const mouseEvent = this.parseSgrMouseEvent(data);
-    if (mouseEvent) {
-      if (this.handleRightClickPaste(mouseEvent))
-        return { consume: true };
-      const handled = this.handleScrollbarMouseEvent(mouseEvent);
-      if (!this.scrollbarDrag)
-        this.updateScrollbarHover(mouseEvent.x, mouseEvent.y);
-      if (!handled)
-        this.handleSelectionMouseEvent(mouseEvent);
-      return { consume: true };
-    }
-    if (this.isMouseSequence(data))
-      return { consume: true };
-    const keybindings = getKeybindings();
-    const isRelease = isKeyRelease(data);
-    if (keybindings.matches(data, "tui.altScreen.search")) {
-      if (!isRelease)
-        this.openSearch();
-      return { consume: true };
-    }
-    if (this.activeSearch?.overlay?.isFocused()) {
-      if (keybindings.matches(data, "tui.altScreen.searchNext")) {
-        if (!isRelease)
-          this.navigateSearch(1);
-        return { consume: true };
-      }
-      if (keybindings.matches(data, "tui.altScreen.searchPrevious")) {
-        if (!isRelease)
-          this.navigateSearch(-1);
-        return { consume: true };
-      }
-      if (keybindings.matches(data, "tui.altScreen.searchClose")) {
-        if (!isRelease)
-          this.closeSearch();
-        return { consume: true };
-      }
-    }
-    if (this.shouldDeferViewportInputToOverlay())
-      return;
-    if (keybindings.matches(data, "tui.altScreen.pageUp")) {
-      if (!isRelease) {
-        this.scrollBy(-Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));
-      }
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.pageDown")) {
-      if (!isRelease) {
-        this.scrollBy(Math.max(1, this.getPrimaryScrollView().viewportHeight - PAGE_SCROLL_OVERLAP));
-      }
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.halfPageUp")) {
-      if (!isRelease)
-        this.scrollBy(-Math.max(1, Math.floor(this.getPrimaryScrollView().viewportHeight / 2)));
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.halfPageDown")) {
-      if (!isRelease)
-        this.scrollBy(Math.max(1, Math.floor(this.getPrimaryScrollView().viewportHeight / 2)));
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.lineUp")) {
-      if (!isRelease)
-        this.scrollBy(-1);
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.lineDown")) {
-      if (!isRelease)
-        this.scrollBy(1);
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.previousPrompt")) {
-      if (!isRelease)
-        this.scrollToPrompt(-1);
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.nextPrompt")) {
-      if (!isRelease)
-        this.scrollToPrompt(1);
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.top")) {
-      if (!isRelease)
-        this.scrollToTop();
-      return { consume: true };
-    }
-    if (keybindings.matches(data, "tui.altScreen.bottom")) {
-      if (!isRelease)
-        this.scrollToBottom();
-      return { consume: true };
-    }
-    return;
-  }
-  parseWheelEvent(data) {
-    const sgr = /^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/.exec(data);
-    if (sgr) {
-      const button = Number.parseInt(sgr[1], 10);
-      if ((button & 64) === 0)
-        return;
-      const direction = button & 3;
-      if (direction !== 0 && direction !== 1)
-        return;
-      return {
-        direction: direction === 0 ? -1 : 1,
-        x: Number.parseInt(sgr[2], 10) - 1,
-        y: Number.parseInt(sgr[3], 10) - 1
-      };
-    }
-    if (data.length === 6 && data.startsWith("\x1B[M")) {
-      const button = data.charCodeAt(3) - 32;
-      if ((button & 64) === 0)
-        return;
-      const direction = button & 3;
-      if (direction !== 0 && direction !== 1)
-        return;
-      return {
-        direction: direction === 0 ? -1 : 1,
-        x: data.charCodeAt(4) - 33,
-        y: data.charCodeAt(5) - 33
-      };
-    }
-    return;
-  }
-  routeWheel(event) {
-    let remaining = event.direction * this.wheelScrollLines;
-    const seen = new Set;
-    for (const scrollView of this.currentLayout ? getScrollViewsAt(this.currentLayout, event.x, event.y) : []) {
-      seen.add(scrollView);
-      remaining = scrollView.scrollBy(remaining);
-      if (remaining === 0 || scrollView.overscroll === "contain")
-        break;
-    }
-    const primary = this.getPrimaryScrollView();
-    if (remaining !== 0 && !seen.has(primary))
-      primary.scrollBy(remaining);
-    this.updateScrollbarHover(event.x, event.y);
-    this.requestRender();
-  }
-  parseSgrMouseEvent(data) {
-    const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
-    if (!match)
-      return;
-    return {
-      button: Number.parseInt(match[1], 10),
-      x: Number.parseInt(match[2], 10) - 1,
-      y: Number.parseInt(match[3], 10) - 1,
-      release: match[4] === "m"
-    };
-  }
-  handleRightClickPaste(event) {
-    if (!this.onRightClickPaste || process.platform !== "win32" || process.env.TERM_PROGRAM?.toLowerCase() === "vscode" || event.release || event.button !== 2) {
-      return false;
-    }
-    try {
-      this.onRightClickPaste();
-    } catch {}
-    return true;
-  }
-  getScrollbarTargetAt(x2, y2) {
-    if (this.hasOverlay() || !this.currentLayout)
-      return;
-    for (const scrollView of getScrollViewsAt(this.currentLayout, x2, y2)) {
-      const box = getScrollViewBox(this.currentLayout, scrollView);
-      const geometry = box ? getScrollbarGeometry(box) : undefined;
-      if (geometry && x2 === geometry.column && y2 >= geometry.thumbTop && y2 < geometry.thumbTop + geometry.thumbHeight) {
-        return { scrollView, geometry };
-      }
-    }
-    return;
-  }
-  setScrollbarHover(scrollView) {
-    if (scrollView === this.scrollbarHover)
-      return;
-    this.scrollbarHover?.setScrollbarActive(false);
-    this.scrollbarHover = scrollView;
-    this.scrollbarHover?.setScrollbarActive(true);
-  }
-  updateScrollbarHover(x2, y2) {
-    this.setScrollbarHover(this.getScrollbarTargetAt(x2, y2)?.scrollView);
-  }
-  stopScrollbarHover() {
-    this.setScrollbarHover(undefined);
-  }
-  handleScrollbarMouseEvent(event) {
-    if (this.scrollbarDrag) {
-      if (event.release) {
-        this.stopScrollbarDrag();
-        return true;
-      }
-      const box = this.currentLayout ? getScrollViewBox(this.currentLayout, this.scrollbarDrag.scrollView) : undefined;
-      const geometry = box ? getScrollbarGeometry(box) : undefined;
-      if (geometry) {
-        const maxThumbOffset = geometry.trackHeight - geometry.thumbHeight;
-        const thumbOffset = Math.max(0, Math.min(maxThumbOffset, event.y - geometry.trackTop - this.scrollbarDrag.grabOffset));
-        const scrollTop = maxThumbOffset === 0 ? 0 : Math.round(thumbOffset / maxThumbOffset * geometry.maxScrollTop);
-        this.scrollbarDrag.scrollView.scrollTo(scrollTop);
-      }
-      return true;
-    }
-    if (event.release || (event.button & 32) !== 0 || (event.button & 3) !== 0)
-      return false;
-    const target = this.getScrollbarTargetAt(event.x, event.y);
-    if (!target)
-      return false;
-    this.stopSelectionAutoScroll();
-    this.selectionPressActive = false;
-    this.selectionAnchor = undefined;
-    this.selectionFocus = undefined;
-    this.selectionGranularity = "character";
-    this.selectionInitialRange = undefined;
-    this.lastClick = undefined;
-    this.pressedUrl = undefined;
-    this.selectionDragged = false;
-    this.setScrollbarHover(target.scrollView);
-    this.scrollbarDrag = {
-      scrollView: target.scrollView,
-      grabOffset: event.y - target.geometry.thumbTop
-    };
-    return true;
-  }
-  stopScrollbarDrag() {
-    this.scrollbarDrag = undefined;
-  }
-  getScrollSelectionPoint(scrollView, x2, y2) {
-    if (!this.currentLayout)
-      return;
-    const box = getScrollViewBox(this.currentLayout, scrollView);
-    if (!box || box.rect.height <= 0 || box.clip.height <= 0)
-      return;
-    const visibleTop = Math.max(0, box.rect.y, box.clip.y);
-    const visibleBottom = Math.min(this.terminal.rows - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
-    if (visibleBottom < visibleTop)
-      return;
-    const pointerRow = Math.max(visibleTop, Math.min(visibleBottom, y2));
-    const maxContentRow = Math.max(0, (box.scrollContentLines?.length ?? 1) - 1);
-    return {
-      row: Math.max(0, Math.min(maxContentRow, scrollView.scrollTop + pointerRow - box.rect.y)),
-      col: Math.max(0, Math.min(box.rect.width - 1, x2 - box.rect.x)),
-      scrollView
-    };
-  }
-  getSelectionPoint(event, scrollView) {
-    if (scrollView) {
-      const point = this.getScrollSelectionPoint(scrollView, event.x, event.y);
-      if (point)
-        return point;
-    }
-    return {
-      row: Math.max(0, Math.min(this.terminal.rows - 1, event.y)),
-      col: Math.max(0, Math.min(this.terminal.columns - 1, event.x))
-    };
-  }
-  getSelectionSourceLine(point) {
-    if (point.scrollView && this.currentLayout) {
-      const lines = getScrollViewBox(this.currentLayout, point.scrollView)?.scrollContentLines;
-      if (lines)
-        return lines[point.row] ?? "";
-    }
-    return this.previousScreen[point.row] ?? "";
-  }
-  getWordSelection(point) {
-    const line = stripTerminalSequences(this.getSelectionSourceLine(point));
-    let start2 = 0;
-    for (const segment of wordSegmenter4.segment(line)) {
-      const end = start2 + visibleWidth(segment.segment);
-      if (point.col >= start2 && point.col < end) {
-        return {
-          start: { ...point, col: start2 },
-          end: { ...point, col: end, boundary: true }
-        };
-      }
-      start2 = end;
-    }
-    return;
-  }
-  getLineSelection(point) {
-    return {
-      start: { ...point, col: 0 },
-      end: { ...point, col: visibleWidth(this.getSelectionSourceLine(point)), boundary: true }
-    };
-  }
-  updateSelectionFocus(point) {
-    if (this.selectionGranularity === "character" || !this.selectionInitialRange) {
-      this.selectionFocus = point;
-      return;
-    }
-    const range = this.selectionGranularity === "word" ? this.getWordSelection(point) : this.getLineSelection(point);
-    if (!range)
-      return;
-    const initial = this.selectionInitialRange;
-    const targetBeforeInitial = range.start.row < initial.start.row || range.start.row === initial.start.row && range.start.col < initial.start.col;
-    if (targetBeforeInitial) {
-      this.selectionAnchor = initial.end;
-      this.selectionFocus = range.start;
-    } else {
-      this.selectionAnchor = initial.start;
-      this.selectionFocus = range.end;
-    }
-  }
-  getClickCount(point, word) {
-    const now = Date.now();
-    const previous = this.lastClick;
-    const count = word && previous && now - previous.timestamp <= DOUBLE_CLICK_INTERVAL_MS && previous.row === point.row && previous.scrollView === point.scrollView && previous.wordStart === word.start.col && previous.wordEnd === word.end.col ? previous.count % 3 + 1 : 1;
-    this.lastClick = word ? {
-      timestamp: now,
-      count,
-      row: point.row,
-      scrollView: point.scrollView,
-      wordStart: word.start.col,
-      wordEnd: word.end.col
-    } : undefined;
-    return count;
-  }
-  updateSelectionAutoScroll(event) {
-    const scrollView = this.selectionAnchor?.scrollView;
-    if (!scrollView || !this.currentLayout) {
-      this.stopSelectionAutoScroll();
-      return;
-    }
-    const box = getScrollViewBox(this.currentLayout, scrollView);
-    if (!box || box.rect.height <= 0 || box.clip.height <= 0) {
-      this.stopSelectionAutoScroll();
-      return;
-    }
-    const visibleTop = Math.max(0, box.rect.y, box.clip.y);
-    const visibleBottom = Math.min(this.terminal.rows - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
-    this.selectionDragPointer = { x: event.x, y: event.y };
-    this.selectionAutoScrollDirection = event.y <= visibleTop ? -1 : event.y >= visibleBottom ? 1 : 0;
-    if (this.selectionAutoScrollDirection === 0) {
-      this.stopSelectionAutoScroll();
-      return;
-    }
-    if (this.selectionAutoScrollTimer)
-      return;
-    this.selectionAutoScrollTimer = setInterval(() => this.autoScrollSelection(), 50);
-    this.selectionAutoScrollTimer.unref();
-  }
-  autoScrollSelection() {
-    const scrollView = this.selectionAnchor?.scrollView;
-    const pointer = this.selectionDragPointer;
-    const direction = this.selectionAutoScrollDirection;
-    if (!scrollView || !pointer || direction === 0) {
-      this.stopSelectionAutoScroll();
-      return;
-    }
-    const remaining = scrollView.scrollBy(direction);
-    if (remaining === direction) {
-      this.stopSelectionAutoScroll();
-      return;
-    }
-    const point = this.getScrollSelectionPoint(scrollView, pointer.x, pointer.y);
-    if (point)
-      this.updateSelectionFocus(point);
-    this.requestRender();
-  }
-  stopSelectionAutoScroll() {
-    if (this.selectionAutoScrollTimer) {
-      clearInterval(this.selectionAutoScrollTimer);
-      this.selectionAutoScrollTimer = undefined;
-    }
-    this.selectionAutoScrollDirection = 0;
-    this.selectionDragPointer = undefined;
-  }
-  handleSelectionMouseEvent(event) {
-    const button = event.button & 3;
-    if (button !== 0 && !(event.release && button === 3))
-      return;
-    const anchorScrollView = this.selectionAnchor?.scrollView;
-    const point = this.getSelectionPoint(event, anchorScrollView);
-    if (event.release) {
-      if (!this.selectionPressActive)
-        return;
-      this.selectionPressActive = false;
-      this.stopSelectionAutoScroll();
-      if (!this.selectionAnchor)
-        return;
-      this.updateSelectionFocus(point);
-      const clickedUrl = !this.selectionDragged && this.selectionAnchor.scrollView === point.scrollView && this.selectionAnchor.row === point.row && this.selectionAnchor.col === point.col ? this.pressedUrl : undefined;
-      this.pressedUrl = undefined;
-      if (clickedUrl && this.openUrl) {
-        this.selectionAnchor = undefined;
-        this.selectionFocus = undefined;
-        try {
-          this.openUrl(clickedUrl);
-        } catch {}
-        this.requestRender();
-        return;
-      }
-      this.copySelectionToClipboard();
-      this.requestRender();
-      return;
-    }
-    if ((event.button & 32) !== 0) {
-      if (!this.selectionPressActive || !this.selectionAnchor)
-        return;
-      this.selectionDragged = true;
-      this.lastClick = undefined;
-      this.pressedUrl = undefined;
-      this.updateSelectionFocus(point);
-      this.updateSelectionAutoScroll(event);
-      this.requestRender();
-      return;
-    }
-    this.stopSelectionAutoScroll();
-    this.selectionPressActive = true;
-    const scrollView = !this.hasOverlay() && this.currentLayout ? getScrollViewsAt(this.currentLayout, event.x, event.y)[0] : undefined;
-    const anchor = this.getSelectionPoint(event, scrollView);
-    const word = this.getWordSelection(anchor);
-    const clickCount = this.getClickCount(anchor, word);
-    const range = clickCount === 2 ? word : clickCount === 3 ? this.getLineSelection(anchor) : undefined;
-    this.selectionGranularity = range ? clickCount === 2 ? "word" : "line" : "character";
-    this.selectionInitialRange = range;
-    this.selectionAnchor = range?.start ?? anchor;
-    this.selectionFocus = range?.end ?? anchor;
-    this.selectionDragged = false;
-    this.pressedUrl = range ? undefined : getOsc8LinkAtColumn(this.previousScreen[Math.max(0, Math.min(this.terminal.rows - 1, event.y))] ?? "", Math.max(0, Math.min(this.terminal.columns - 1, event.x)));
-    this.requestRender();
-  }
-  getSelectionBounds() {
-    if (!this.selectionAnchor || !this.selectionFocus)
-      return;
-    if (this.selectionAnchor.scrollView !== this.selectionFocus.scrollView)
-      return;
-    const anchorBeforeFocus = this.selectionAnchor.row < this.selectionFocus.row || this.selectionAnchor.row === this.selectionFocus.row && this.selectionAnchor.col < this.selectionFocus.col;
-    if (this.selectionAnchor.row === this.selectionFocus.row && this.selectionAnchor.col === this.selectionFocus.col) {
-      return;
-    }
-    return anchorBeforeFocus ? { start: this.selectionAnchor, end: this.selectionFocus } : { start: this.selectionFocus, end: this.selectionAnchor };
-  }
-  getSelectionColumns(line, row, selection2, minColumn = 0, maxColumn = visibleWidth(line)) {
-    const lineWidth = visibleWidth(line);
-    let start2 = Math.max(0, minColumn);
-    let end = Math.min(lineWidth, maxColumn);
-    if (row === selection2.start.row) {
-      start2 = getGraphemeCellRange(line, selection2.start.col)?.start ?? Math.min(selection2.start.col, lineWidth);
-    }
-    if (row === selection2.end.row) {
-      end = selection2.end.boundary ? Math.min(selection2.end.col, lineWidth) : getGraphemeCellRange(line, selection2.end.col)?.end ?? Math.min(selection2.end.col + 1, lineWidth);
-    }
-    return { start: Math.max(minColumn, start2), end: Math.min(maxColumn, end) };
-  }
-  async copySelectionToClipboard() {
-    const selection2 = this.getSelectionBounds();
-    if (!selection2)
-      return;
-    let sourceLines2 = this.previousScreen;
-    if (selection2.start.scrollView) {
-      if (!this.currentLayout)
-        return;
-      const box = getScrollViewBox(this.currentLayout, selection2.start.scrollView);
-      if (!box?.scrollContentLines)
-        return;
-      sourceLines2 = box.scrollContentLines;
-    }
-    const lines = [];
-    for (let row = selection2.start.row;row <= selection2.end.row; row++) {
-      const line = sourceLines2[row] ?? "";
-      const columns = this.getSelectionColumns(line, row, selection2);
-      lines.push(stripTerminalSequences(sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true)).trimEnd());
-    }
-    const text = lines.join(`
-`);
-    if (text.length === 0)
-      return;
-    if (this.copySelection) {
-      const ok = await this.copySelection(text);
-      this.flash(ok ? "Copied!" : "Copy failed");
-      return;
-    }
-    this.terminal.write(`\x1B]52;c;${Buffer.from(text).toString("base64")}\x07`);
-    this.flash("Copied!");
-  }
-  applySearchTextHighlight(text, current) {
-    const style = current ? this.searchCurrentMatchStyle : this.searchMatchStyle;
-    let result = "";
-    let plainStart = 0;
-    let index = 0;
-    while (index < text.length) {
-      const ansi = extractAnsiCode(text, index);
-      if (!ansi) {
-        index += 1;
-        continue;
-      }
-      if (index > plainStart)
-        result += style(text.slice(plainStart, index));
-      result += ansi.code;
-      index += ansi.length;
-      plainStart = index;
-    }
-    if (plainStart < text.length)
-      result += style(text.slice(plainStart));
-    return result;
-  }
-  applySearchHighlights(screen, layout) {
-    const search = this.activeSearch;
-    if (!search || search.selectedIndex < 0 || search.matches.length === 0)
-      return screen;
-    const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
-    const box = getScrollViewBox(layout, scrollView);
-    if (!box)
-      return screen;
-    const rangesByRow = new Map;
-    const scrollbarColumn = getScrollbarGeometry(box)?.column;
-    const minRow = Math.max(0, box.rect.y, box.clip.y);
-    const maxRow = Math.min(screen.length, box.rect.y + box.rect.height, box.clip.y + box.clip.height);
-    const minColumn = Math.max(0, box.rect.x, box.clip.x);
-    const maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width, scrollbarColumn ?? Number.POSITIVE_INFINITY);
-    for (let matchIndex = 0;matchIndex < search.matches.length; matchIndex++) {
-      for (const segment of search.matches[matchIndex].segments) {
-        const row = box.rect.y + segment.row - scrollView.scrollTop;
-        if (row < minRow || row >= maxRow)
-          continue;
-        const startCol = Math.max(minColumn, box.rect.x + segment.startCol);
-        const endCol = Math.min(maxColumn, box.rect.x + segment.endCol);
-        if (endCol <= startCol)
-          continue;
-        const ranges = rangesByRow.get(row) ?? [];
-        ranges.push({ startCol, endCol, current: matchIndex === search.selectedIndex });
-        rangesByRow.set(row, ranges);
-      }
-    }
-    const result = [...screen];
-    for (const [row, ranges] of rangesByRow) {
-      let line = result[row] ?? "";
-      if (isImageLine(line))
-        continue;
-      const lineWidth = visibleWidth(line);
-      for (const range of ranges.sort((a, b2) => b2.startCol - a.startCol)) {
-        const startCol = Math.min(range.startCol, lineWidth);
-        const endCol = Math.min(range.endCol, lineWidth);
-        if (endCol <= startCol)
-          continue;
-        const before = sliceByColumn(line, 0, startCol, true);
-        const highlighted = sliceByColumn(line, startCol, endCol - startCol, true);
-        const after = sliceByColumn(line, endCol, Math.max(0, lineWidth - endCol), true);
-        line = `${before}${this.applySearchTextHighlight(highlighted, range.current)}${after}`;
-      }
-      result[row] = line;
-    }
-    return result;
-  }
-  applySelectionHighlight(text) {
-    let result = "\x1B[7m";
-    let index = 0;
-    while (index < text.length) {
-      const ansi = extractAnsiCode(text, index);
-      if (!ansi) {
-        result += text[index];
-        index += 1;
-        continue;
-      }
-      result += ansi.code;
-      if (ansi.code.endsWith("m"))
-        result += "\x1B[7m";
-      index += ansi.length;
-    }
-    return `${result}\x1B[27m`;
-  }
-  applySelection(screen, layout = this.currentLayout) {
-    const selection2 = this.getSelectionBounds();
-    if (!selection2)
-      return screen;
-    let screenSelection = selection2;
-    let minRow = 0;
-    let maxRow = screen.length - 1;
-    let minColumn = 0;
-    let maxColumn = this.terminal.columns;
-    if (selection2.start.scrollView) {
-      if (!layout)
-        return screen;
-      const box = getScrollViewBox(layout, selection2.start.scrollView);
-      if (!box)
-        return screen;
-      minRow = Math.max(0, box.rect.y, box.clip.y);
-      maxRow = Math.min(screen.length - 1, box.rect.y + box.rect.height - 1, box.clip.y + box.clip.height - 1);
-      minColumn = Math.max(0, box.rect.x, box.clip.x);
-      maxColumn = Math.min(this.terminal.columns, box.rect.x + box.rect.width, box.clip.x + box.clip.width);
-      screenSelection = {
-        start: {
-          ...selection2.start,
-          row: box.rect.y + selection2.start.row - selection2.start.scrollView.scrollTop,
-          col: box.rect.x + selection2.start.col
-        },
-        end: {
-          ...selection2.end,
-          row: box.rect.y + selection2.end.row - selection2.start.scrollView.scrollTop,
-          col: box.rect.x + selection2.end.col
-        }
-      };
-    }
-    return screen.map((line, row) => {
-      if (row < minRow || row > maxRow || row < screenSelection.start.row || row > screenSelection.end.row || isImageLine(line)) {
-        return line;
-      }
-      const lineWidth = visibleWidth(line);
-      const columns = this.getSelectionColumns(line, row, screenSelection, minColumn, maxColumn);
-      if (columns.end <= columns.start)
-        return line;
-      const before = sliceByColumn(line, 0, columns.start, true);
-      const selected = sliceByColumn(line, columns.start, columns.end - columns.start, true);
-      const after = sliceByColumn(line, columns.end, Math.max(0, lineWidth - columns.end), true);
-      return `${before}${this.applySelectionHighlight(selected)}${after}`;
-    });
-  }
-  isMouseSequence(data) {
-    return /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || data.length === 6 && data.startsWith("\x1B[M");
-  }
-  compositeFlashes(screen, width, height) {
-    const flashLines = this.flashes.render(width).slice(-height);
-    if (flashLines.length === 0)
-      return screen;
-    const result = [...screen];
-    while (result.length < height)
-      result.push("");
-    for (let row = 0;row < flashLines.length; row++) {
-      const line = flashLines[row];
-      const flashWidth = visibleWidth(line);
-      if (flashWidth === 0)
-        continue;
-      result[row] = compositeTuiLine(result[row] ?? "", line, width - flashWidth, flashWidth, width);
-    }
-    return result;
-  }
-  doRender() {
-    if (this.stopped || !this.altScreenActive)
-      return;
-    const width = Math.max(1, this.terminal.columns);
-    const height = Math.max(1, this.terminal.rows);
-    const root = this.layoutRoot ?? this.implicitScrollView;
-    let nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
-    if (this.refreshSearch(nextLayout)) {
-      nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
-    }
-    let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX2, ""));
-    screen = this.applySearchHighlights(screen, nextLayout);
-    screen = this.compositeOverlays(screen, width, height);
-    if (screen.length > height)
-      screen = screen.slice(screen.length - height);
-    screen = this.applySelection(screen, nextLayout);
-    screen = this.compositeFlashes(screen, width, height);
-    const cursorPos = this.extractCursorPosition(screen, height);
-    screen = this.applyLineResets(screen).map((line) => {
-      if (isImageLine(line) || visibleWidth(line) <= width)
-        return line;
-      return sliceByColumn(line, 0, width, true);
-    });
-    const fullRedraw = this.previousScreen.length === 0 || this.previousScreenWidth !== width || this.previousScreenHeight !== height;
-    const imagesNeedRedraw = screen.some((line, row) => line !== this.previousScreen[row] && (isImageLine(line) || isImageLine(this.previousScreen[row] ?? "")));
-    const redrawImages = fullRedraw || imagesNeedRedraw;
-    const hadUploadedKittyImages = this.uploadedKittyImages.size > 0;
-    const preparedKittyScreen = redrawImages && this.imageProtocol === "kitty" ? this.prepareKittyScreen(screen) : { lines: screen, evictedImageDeletion: "" };
-    let buffer = BEGIN_SYNCHRONIZED_OUTPUT;
-    if (fullRedraw) {
-      this.fullRedrawCount += 1;
-      const clearImages = this.imageProtocol === "kitty" && hadUploadedKittyImages ? deleteAllKittyPlacements() : this.deleteKittyImages();
-      buffer += `${clearImages}\x1B[2J`;
-    } else if (imagesNeedRedraw) {
-      if (this.imageProtocol === "iterm2")
-        buffer += "\x1B[2J";
-      else if (this.imageProtocol === "kitty")
-        buffer += deleteAllKittyPlacements();
-    }
-    buffer += preparedKittyScreen.evictedImageDeletion;
-    for (let row = 0;row < height; row++) {
-      if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row])
-        continue;
-      buffer += `\x1B[${row + 1};1H\x1B[2K${preparedKittyScreen.lines[row] ?? ""}`;
-    }
-    if (cursorPos) {
-      buffer += `\x1B[${cursorPos.row + 1};${Math.min(width, cursorPos.col) + 1}H`;
-      buffer += this.getShowHardwareCursor() ? "\x1B[?25h" : "\x1B[?25l";
-    } else {
-      buffer += "\x1B[?25l";
-    }
-    buffer += END_SYNCHRONIZED_OUTPUT;
-    this.terminal.write(buffer);
-    this.previousScreen = screen;
-    this.previousScreenWidth = width;
-    this.previousScreenHeight = height;
-    this.currentLayout = nextLayout;
-  }
-}
 // src/tui/layout.ts
 var COPY = {
   en: {
@@ -17619,9 +13471,9 @@ function budgetLine(presentation, copy, theme) {
 }
 function summaryRow(row, maximum, width, theme) {
   if (width < 44) {
-    const count2 = String(row.matches);
-    const pathWidth2 = Math.max(1, width - visibleWidth(count2) - 2);
-    return `${theme.fg("accent", padVisible(row.path, pathWidth2))}  ${theme.fg("muted", count2)}`;
+    const count = String(row.matches);
+    const pathWidth = Math.max(1, width - visibleWidth(count) - 2);
+    return `${theme.fg("accent", padVisible(row.path, pathWidth))}  ${theme.fg("muted", count)}`;
   }
   const count = String(row.matches);
   const barWidth = width >= 72 ? 20 : 10;
@@ -17919,14 +13771,14 @@ function parseSummaryRows(text, expectedRows) {
     const match = /^(\S(?:.*\S)?) {2,}(\d+)$/.exec(line);
     if (!match)
       return;
-    const path2 = match[1];
+    const path = match[1];
     const countText = match[2];
-    if (!path2 || !countText)
+    if (!path || !countText)
       return;
     const count = Number(countText);
     if (!Number.isSafeInteger(count) || count < 1)
       return;
-    rows.push({ path: path2, matches: count });
+    rows.push({ path, matches: count });
   }
   return rows.length === expectedRows ? rows : undefined;
 }
@@ -18000,7 +13852,7 @@ function parseInspect(text, details) {
 `, target.length + 1);
   if (sourceStart < 0 || sourceStart >= structureMarker)
     return;
-  const sourceLines2 = text.slice(sourceStart + 2, structureMarker).split(`
+  const sourceLines = text.slice(sourceStart + 2, structureMarker).split(`
 `);
   return {
     kind: "inspect",
@@ -18008,7 +13860,7 @@ function parseInspect(text, details) {
     text,
     target,
     descriptor,
-    sourceLines: sourceLines2,
+    sourceLines,
     status: structure.status
   };
 }
@@ -18059,11 +13911,11 @@ function resultText(result) {
 function textLines(text, width) {
   return new Text(text, 0, 0).render(Math.max(1, width));
 }
-function component(render2, fallbackText) {
+function component(render, fallbackText) {
   return {
     render(width) {
       try {
-        return render2(width);
+        return render(width);
       } catch {
         return textLines(fallbackText, width);
       }
@@ -18076,14 +13928,14 @@ function errorLines(text, options) {
   if (expanded)
     return textLines(text, width);
   const available = Math.max(1, width);
-  const sourceLines2 = text.split(`
+  const sourceLines = text.split(`
 `).filter((line) => line.length > 0);
-  const shown = sourceLines2.slice(0, 4);
+  const shown = sourceLines.slice(0, 4);
   const lines = [
     theme.fg("error", theme.bold(`\u2500\u2500 ${copy.title} \u2500\u2500`)),
     ...shown.map((line) => theme.fg("error", line))
   ];
-  if (sourceLines2.length > shown.length)
+  if (sourceLines.length > shown.length)
     lines.push(theme.fg("dim", `\u2026 ${copy.hint}`));
   return lines.map((line) => truncateToWidth(line, available));
 }
@@ -18132,8 +13984,8 @@ var SIZE_OF_POINT = 2 * SIZE_OF_INT;
 var SIZE_OF_RANGE = 2 * SIZE_OF_INT + 2 * SIZE_OF_POINT;
 var ZERO_POINT = { row: 0, column: 0 };
 var INTERNAL = Symbol("INTERNAL");
-function assertInternal(x2) {
-  if (x2 !== INTERNAL)
+function assertInternal(x) {
+  if (x !== INTERNAL)
     throw new Error("Illegal constructor");
 }
 __name(assertInternal, "assertInternal");
@@ -19187,9 +15039,9 @@ var Query = class {
     }
     for (let i2 = 0;i2 < patternCount; i2++) {
       const captureQuantifiersArray = new Array(captureCount);
-      for (let j2 = 0;j2 < captureCount; j2++) {
-        const quantifier = C._ts_query_capture_quantifier_for_id(address, i2, j2);
-        captureQuantifiersArray[j2] = quantifier;
+      for (let j = 0;j < captureCount; j++) {
+        const quantifier = C._ts_query_capture_quantifier_for_id(address, i2, j);
+        captureQuantifiersArray[j] = quantifier;
       }
       captureQuantifiers[i2] = captureQuantifiersArray;
     }
@@ -19210,7 +15062,7 @@ var Query = class {
       textPredicates[i2] = [];
       const steps = new Array;
       let stepAddress = predicatesAddress;
-      for (let j2 = 0;j2 < stepCount; j2++) {
+      for (let j = 0;j < stepCount; j++) {
         const stepType = C.getValue(stepAddress, "i32");
         stepAddress += SIZE_OF_INT;
         const stepValueId = C.getValue(stepAddress, "i32");
@@ -19555,8 +15407,8 @@ var Module2 = (() => {
     var moduleRtn;
     var Module = moduleArg;
     var readyPromiseResolve, readyPromiseReject;
-    var readyPromise = new Promise((resolve23, reject) => {
-      readyPromiseResolve = resolve23;
+    var readyPromise = new Promise((resolve, reject) => {
+      readyPromiseResolve = resolve;
       readyPromiseReject = reject;
     });
     var ENVIRONMENT_IS_WEB = typeof window == "object";
@@ -19564,8 +15416,8 @@ var Module2 = (() => {
     var ENVIRONMENT_IS_NODE = typeof process == "object" && typeof process.versions == "object" && typeof process.versions.node == "string" && process.type != "renderer";
     var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIRONMENT_IS_WORKER;
     if (ENVIRONMENT_IS_NODE) {
-      const { createRequire: createRequire6 } = await import("module");
-      var require = createRequire6(import.meta.url);
+      const { createRequire } = await import("module");
+      var require = createRequire(import.meta.url);
     }
     Module.currentQueryProgressCallback = null;
     Module.currentProgressCallback = null;
@@ -19578,11 +15430,11 @@ var Module2 = (() => {
       throw toThrow;
     }, "quit_");
     var scriptDirectory = "";
-    function locateFile(path2) {
+    function locateFile(path) {
       if (Module["locateFile"]) {
-        return Module["locateFile"](path2, scriptDirectory);
+        return Module["locateFile"](path, scriptDirectory);
       }
-      return scriptDirectory + path2;
+      return scriptDirectory + path;
     }
     __name(locateFile, "locateFile");
     var readAsync, readBinary;
@@ -19636,13 +15488,13 @@ var Module2 = (() => {
         }
         readAsync = /* @__PURE__ */ __name(async (url) => {
           if (isFileURI(url)) {
-            return new Promise((resolve23, reject) => {
+            return new Promise((resolve, reject) => {
               var xhr = new XMLHttpRequest;
               xhr.open("GET", url, true);
               xhr.responseType = "arraybuffer";
               xhr.onload = () => {
                 if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                  resolve23(xhr.response);
+                  resolve(xhr.response);
                   return;
                 }
                 reject(xhr.status);
@@ -19685,18 +15537,18 @@ var Module2 = (() => {
     var runtimeInitialized = false;
     var isFileURI = /* @__PURE__ */ __name((filename) => filename.startsWith("file://"), "isFileURI");
     function updateMemoryViews() {
-      var b2 = wasmMemory.buffer;
-      Module["HEAP_DATA_VIEW"] = HEAP_DATA_VIEW = new DataView(b2);
-      Module["HEAP8"] = HEAP8 = new Int8Array(b2);
-      Module["HEAP16"] = HEAP16 = new Int16Array(b2);
-      Module["HEAPU8"] = HEAPU8 = new Uint8Array(b2);
-      Module["HEAPU16"] = HEAPU16 = new Uint16Array(b2);
-      Module["HEAP32"] = HEAP32 = new Int32Array(b2);
-      Module["HEAPU32"] = HEAPU32 = new Uint32Array(b2);
-      Module["HEAPF32"] = HEAPF32 = new Float32Array(b2);
-      Module["HEAPF64"] = HEAPF64 = new Float64Array(b2);
-      Module["HEAP64"] = HEAP64 = new BigInt64Array(b2);
-      Module["HEAPU64"] = HEAPU64 = new BigUint64Array(b2);
+      var b = wasmMemory.buffer;
+      Module["HEAP_DATA_VIEW"] = HEAP_DATA_VIEW = new DataView(b);
+      Module["HEAP8"] = HEAP8 = new Int8Array(b);
+      Module["HEAP16"] = HEAP16 = new Int16Array(b);
+      Module["HEAPU8"] = HEAPU8 = new Uint8Array(b);
+      Module["HEAPU16"] = HEAPU16 = new Uint16Array(b);
+      Module["HEAP32"] = HEAP32 = new Int32Array(b);
+      Module["HEAPU32"] = HEAPU32 = new Uint32Array(b);
+      Module["HEAPF32"] = HEAPF32 = new Float32Array(b);
+      Module["HEAPF64"] = HEAPF64 = new Float64Array(b);
+      Module["HEAP64"] = HEAP64 = new BigInt64Array(b);
+      Module["HEAPU64"] = HEAPU64 = new BigUint64Array(b);
     }
     __name(updateMemoryViews, "updateMemoryViews");
     if (Module["wasmMemory"]) {
@@ -19862,10 +15714,10 @@ var Module2 = (() => {
       __name(receiveInstantiationResult, "receiveInstantiationResult");
       var info2 = getWasmImports();
       if (Module["instantiateWasm"]) {
-        return new Promise((resolve23, reject) => {
+        return new Promise((resolve, reject) => {
           Module["instantiateWasm"](info2, (mod, inst) => {
             receiveInstance(mod, inst);
-            resolve23(mod.exports);
+            resolve(mod.exports);
           });
         });
       }
@@ -20380,14 +16232,14 @@ var Module2 = (() => {
         }
         var moduleExports;
         function resolveSymbol(sym) {
-          var resolved2 = resolveGlobalSymbol(sym).sym;
-          if (!resolved2 && localScope) {
-            resolved2 = localScope[sym];
+          var resolved = resolveGlobalSymbol(sym).sym;
+          if (!resolved && localScope) {
+            resolved = localScope[sym];
           }
-          if (!resolved2) {
-            resolved2 = moduleExports[sym];
+          if (!resolved) {
+            resolved = moduleExports[sym];
           }
-          return resolved2;
+          return resolved;
         }
         __name(resolveSymbol, "resolveSymbol");
         var proxyHandler = {
@@ -20403,10 +16255,10 @@ var Module2 = (() => {
               return res;
             }
             if (!(prop in stubs)) {
-              var resolved2;
+              var resolved;
               stubs[prop] = (...args2) => {
-                resolved2 ||= resolveSymbol(prop);
-                return resolved2(...args2);
+                resolved ||= resolveSymbol(prop);
+                return resolved(...args2);
               };
             }
             return stubs[prop];
@@ -20712,8 +16564,8 @@ var Module2 = (() => {
     _clock_time_get.sig = "iijp";
     var getHeapMax = /* @__PURE__ */ __name(() => 2147483648, "getHeapMax");
     var growMemory = /* @__PURE__ */ __name((size) => {
-      var b2 = wasmMemory.buffer;
-      var pages = (size - b2.byteLength + 65535) / 65536 | 0;
+      var b = wasmMemory.buffer;
+      var pages = (size - b.byteLength + 65535) / 65536 | 0;
       try {
         wasmMemory.grow(pages);
         updateMemoryViews();
@@ -20776,8 +16628,8 @@ var Module2 = (() => {
         var ptr = LE_HEAP_LOAD_U32((iov >> 2) * 4);
         var len = LE_HEAP_LOAD_U32((iov + 4 >> 2) * 4);
         iov += 8;
-        for (var j2 = 0;j2 < len; j2++) {
-          printChar(fd, HEAPU8[ptr + j2]);
+        for (var j = 0;j < len; j++) {
+          printChar(fd, HEAPU8[ptr + j]);
         }
         num += len;
       }
@@ -21678,17 +17530,6 @@ class SearchPolicy {
   }
 }
 
-// node_modules/typebox/build/system/memory/memory.mjs
-var exports_memory = {};
-__export(exports_memory, {
-  Assign: () => Assign,
-  Clone: () => Clone,
-  Create: () => Create,
-  Discard: () => Discard,
-  Metrics: () => Metrics,
-  Update: () => Update
-});
-
 // node_modules/typebox/build/system/memory/metrics.mjs
 var Metrics = {
   assign: 0,
@@ -21698,240 +17539,18 @@ var Metrics = {
   update: 0
 };
 
-// node_modules/typebox/build/system/settings/settings.mjs
-var exports_settings = {};
-__export(exports_settings, {
-  Get: () => Get,
-  Reset: () => Reset,
-  Set: () => Set2
-});
-
-// node_modules/typebox/build/guard/guard.mjs
-var exports_guard = {};
-__export(exports_guard, {
-  Counted: () => Counted,
-  Entries: () => Entries,
-  EntriesRegExp: () => EntriesRegExp,
-  Every: () => Every,
-  EveryAll: () => EveryAll,
-  GraphemeCount: () => GraphemeCount2,
-  HasPropertyKey: () => HasPropertyKey,
-  IsArray: () => IsArray,
-  IsBigInt: () => IsBigInt,
-  IsBoolean: () => IsBoolean,
-  IsClassInstance: () => IsClassInstance,
-  IsConstructor: () => IsConstructor,
-  IsDeepEqual: () => IsDeepEqual,
-  IsEqual: () => IsEqual,
-  IsFunction: () => IsFunction,
-  IsGreaterEqualThan: () => IsGreaterEqualThan,
-  IsGreaterThan: () => IsGreaterThan,
-  IsInteger: () => IsInteger,
-  IsLessEqualThan: () => IsLessEqualThan,
-  IsLessThan: () => IsLessThan,
-  IsMaxLength: () => IsMaxLength2,
-  IsMinLength: () => IsMinLength2,
-  IsMultipleOf: () => IsMultipleOf,
-  IsNull: () => IsNull,
-  IsNumber: () => IsNumber,
-  IsObject: () => IsObject,
-  IsObjectNotArray: () => IsObjectNotArray,
-  IsString: () => IsString,
-  IsSymbol: () => IsSymbol,
-  IsUndefined: () => IsUndefined,
-  IsUnsafePropertyKey: () => IsUnsafePropertyKey,
-  IsValueLike: () => IsValueLike,
-  Keys: () => Keys,
-  ShiftLeft: () => ShiftLeft,
-  Some: () => Some,
-  SomeAll: () => SomeAll,
-  Symbols: () => Symbols,
-  Values: () => Values
-});
-
-// node_modules/typebox/build/guard/string.mjs
-function IsBetween(value, min, max) {
-  return value >= min && value <= max;
-}
-function IsZeroWidthJoiner(value) {
-  return value === 8205;
-}
-function IsHighSurrogate(value) {
-  return IsBetween(value, 55296, 56319);
-}
-function IsRegionalIndicator(value) {
-  return IsBetween(value, 127462, 127487);
-}
-function IsVariationSelector(value) {
-  return IsBetween(value, 65024, 65039);
-}
-function IsCombiningMark(value) {
-  return IsBetween(value, 768, 879) || IsBetween(value, 6832, 6911) || IsBetween(value, 7616, 7679) || IsBetween(value, 65056, 65071);
-}
-function CodePointLength(value) {
-  return value > 65535 ? 2 : 1;
-}
-function ConsumeModifiers(value, index) {
-  while (index < value.length) {
-    const point = value.codePointAt(index);
-    if (IsCombiningMark(point) || IsVariationSelector(point)) {
-      index += CodePointLength(point);
-    } else {
-      break;
-    }
-  }
-  return index;
-}
-function NextGraphemeClusterIndex(value, clusterStart) {
-  const startCP = value.codePointAt(clusterStart);
-  let clusterEnd = clusterStart + CodePointLength(startCP);
-  clusterEnd = ConsumeModifiers(value, clusterEnd);
-  while (clusterEnd < value.length - 1 && IsZeroWidthJoiner(value.codePointAt(clusterEnd))) {
-    const nextCP = value.codePointAt(clusterEnd + 1);
-    clusterEnd += 1 + CodePointLength(nextCP);
-    clusterEnd = ConsumeModifiers(value, clusterEnd);
-  }
-  if (IsRegionalIndicator(startCP) && clusterEnd < value.length && IsRegionalIndicator(value.codePointAt(clusterEnd))) {
-    clusterEnd += CodePointLength(value.codePointAt(clusterEnd));
-  }
-  return clusterEnd;
-}
-function IsGraphemeCodePoint(value) {
-  return IsHighSurrogate(value) || IsCombiningMark(value) || IsVariationSelector(value) || IsZeroWidthJoiner(value);
-}
-function GraphemeCount(value) {
-  let count = 0;
-  let index = 0;
-  while (index < value.length) {
-    index = NextGraphemeClusterIndex(value, index);
-    count++;
-  }
-  return count;
-}
-function IsMinLengthSegmented(value, minLength) {
-  if (minLength === 0)
-    return true;
-  let count = 0;
-  let index = 0;
-  while (index < value.length) {
-    index = NextGraphemeClusterIndex(value, index);
-    count++;
-    if (count >= minLength)
-      return true;
-  }
-  return false;
-}
-function IsMaxLengthSegmented(value, maxLength) {
-  let count = 0;
-  let index = 0;
-  while (index < value.length) {
-    index = NextGraphemeClusterIndex(value, index);
-    count++;
-    if (count > maxLength)
-      return false;
-  }
-  return true;
-}
-function IsMinLength(value, minLength) {
-  if (minLength === 0)
-    return true;
-  let index = 0;
-  while (index < value.length) {
-    if (IsGraphemeCodePoint(value.charCodeAt(index))) {
-      return IsMinLengthSegmented(value, minLength);
-    }
-    index++;
-    if (index >= minLength)
-      return true;
-  }
-  return false;
-}
-function IsMaxLength(value, maxLength) {
-  let index = 0;
-  while (index < value.length) {
-    if (IsGraphemeCodePoint(value.charCodeAt(index))) {
-      return IsMaxLengthSegmented(value, maxLength);
-    }
-    index++;
-    if (index > maxLength)
-      return false;
-  }
-  return true;
-}
-
 // node_modules/typebox/build/guard/guard.mjs
 function IsArray(value) {
   return Array.isArray(value);
 }
-function IsBigInt(value) {
-  return IsEqual(typeof value, "bigint");
-}
-function IsBoolean(value) {
-  return IsEqual(typeof value, "boolean");
-}
-function IsConstructor(value) {
-  if (IsUndefined(value) || !IsFunction(value))
-    return false;
-  const result = Function.prototype.toString.call(value);
-  if (/^class\s/.test(result))
-    return true;
-  if (/\[native code\]/.test(result))
-    return true;
-  return false;
-}
-function IsFunction(value) {
-  return IsEqual(typeof value, "function");
-}
-function IsInteger(value) {
-  return Number.isInteger(value);
-}
 function IsNull(value) {
   return IsEqual(value, null);
-}
-function IsNumber(value) {
-  return Number.isFinite(value);
-}
-function IsObjectNotArray(value) {
-  return IsObject(value) && !IsArray(value);
 }
 function IsObject(value) {
   return IsEqual(typeof value, "object") && !IsNull(value);
 }
-function IsString(value) {
-  return IsEqual(typeof value, "string");
-}
-function IsSymbol(value) {
-  return IsEqual(typeof value, "symbol");
-}
-function IsUndefined(value) {
-  return IsEqual(value, undefined);
-}
 function IsEqual(left, right) {
   return left === right;
-}
-function IsGreaterThan(left, right) {
-  return left > right;
-}
-function IsLessThan(left, right) {
-  return left < right;
-}
-function IsLessEqualThan(left, right) {
-  return left <= right;
-}
-function IsGreaterEqualThan(left, right) {
-  return left >= right;
-}
-function IsMultipleOf(dividend, divisor) {
-  if (IsBigInt(dividend) || IsBigInt(divisor)) {
-    return BigInt(dividend) % BigInt(divisor) === 0n;
-  }
-  const tolerance = 0.0000000001;
-  if (!IsNumber(dividend))
-    return true;
-  if (IsInteger(dividend) && 1 / divisor % 1 === 0)
-    return true;
-  const mod = dividend % divisor;
-  return Math.min(Math.abs(mod), Math.abs(mod - divisor), Math.abs(mod + divisor)) < tolerance;
 }
 function IsClassInstance(value) {
   if (!IsObject(value))
@@ -21941,65 +17560,11 @@ function IsClassInstance(value) {
     return false;
   return IsEqual(typeof proto.constructor, "function") && !(IsEqual(proto.constructor, globalThis.Object) || IsEqual(proto.constructor.name, "Object"));
 }
-function IsValueLike(value) {
-  return IsBigInt(value) || IsBoolean(value) || IsNull(value) || IsNumber(value) || IsString(value) || IsUndefined(value);
-}
-function GraphemeCount2(value) {
-  return GraphemeCount(value);
-}
-function IsMaxLength2(value, length) {
-  return IsMaxLength(value, length);
-}
-function IsMinLength2(value, length) {
-  return IsMinLength(value, length);
-}
-function Every(value, offset, callback) {
-  for (let index = offset;index < value.length; index++) {
-    if (!callback(value[index], index))
-      return false;
-  }
-  return true;
-}
-function EveryAll(value, offset, callback) {
-  let result = true;
-  for (let index = offset;index < value.length; index++) {
-    if (!callback(value[index], index))
-      result = false;
-  }
-  return result;
-}
-function Some(value, callback) {
-  for (let index = 0;index < value.length; index++) {
-    if (callback(value[index], index))
-      return true;
-  }
-  return false;
-}
-function SomeAll(value, callback) {
-  let result = false;
-  for (let index = 0;index < value.length; index++) {
-    if (callback(value[index], index))
-      result = true;
-  }
-  return result;
-}
-function Counted(value, callback) {
-  return value.reduce((result, value2, index) => callback(value2, index) ? ++result : result, 0);
-}
-function ShiftLeft(array, true_, false_) {
-  return IsEqual(array.length, 0) ? false_() : true_(array[0], array.slice(1));
-}
 function IsUnsafePropertyKey(key) {
   return IsEqual(key, "__proto__") || IsEqual(key, "constructor") || IsEqual(key, "prototype");
 }
 function HasPropertyKey(value, key) {
   return IsUnsafePropertyKey(key) ? Object.prototype.hasOwnProperty.call(value, key) : (key in value);
-}
-function EntriesRegExp(value) {
-  return Keys(value).map((key) => [new RegExp(`^${key}$`), value[key]]);
-}
-function Entries(value) {
-  return Object.entries(value);
 }
 function Keys(value) {
   return Object.getOwnPropertyNames(value);
@@ -22007,94 +17572,12 @@ function Keys(value) {
 function Symbols(value) {
   return Object.getOwnPropertySymbols(value);
 }
-function Values(value) {
-  return Object.values(value);
-}
-function DeepEqualObject(left, right) {
-  if (!IsObject(right))
-    return false;
-  const keys = Keys(left);
-  return IsEqual(keys.length, Keys(right).length) && keys.every((key) => IsDeepEqual(left[key], right[key]));
-}
-function DeepEqualArray(left, right) {
-  return IsArray(right) && IsEqual(left.length, right.length) && left.every((_2, index) => IsDeepEqual(left[index], right[index]));
-}
-function IsDeepEqual(left, right) {
-  return IsArray(left) ? DeepEqualArray(left, right) : IsObject(left) ? DeepEqualObject(left, right) : IsEqual(left, right);
-}
 // node_modules/typebox/build/guard/globals.mjs
-var exports_globals = {};
-__export(exports_globals, {
-  IsBigInt64Array: () => IsBigInt64Array,
-  IsBigUint64Array: () => IsBigUint64Array,
-  IsBoolean: () => IsBoolean2,
-  IsDate: () => IsDate,
-  IsFloat32Array: () => IsFloat32Array,
-  IsFloat64Array: () => IsFloat64Array,
-  IsInt16Array: () => IsInt16Array,
-  IsInt32Array: () => IsInt32Array,
-  IsInt8Array: () => IsInt8Array,
-  IsMap: () => IsMap,
-  IsNumber: () => IsNumber2,
-  IsRegExp: () => IsRegExp,
-  IsSet: () => IsSet,
-  IsString: () => IsString2,
-  IsTypeArray: () => IsTypeArray,
-  IsUint16Array: () => IsUint16Array,
-  IsUint32Array: () => IsUint32Array,
-  IsUint8Array: () => IsUint8Array,
-  IsUint8ClampedArray: () => IsUint8ClampedArray
-});
-function IsBoolean2(value) {
-  return value instanceof Boolean;
-}
-function IsNumber2(value) {
-  return value instanceof Number;
-}
-function IsString2(value) {
-  return value instanceof String;
-}
 function IsTypeArray(value) {
   return globalThis.ArrayBuffer.isView(value);
 }
-function IsInt8Array(value) {
-  return value instanceof globalThis.Int8Array;
-}
-function IsUint8Array(value) {
-  return value instanceof globalThis.Uint8Array;
-}
-function IsUint8ClampedArray(value) {
-  return value instanceof globalThis.Uint8ClampedArray;
-}
-function IsInt16Array(value) {
-  return value instanceof globalThis.Int16Array;
-}
-function IsUint16Array(value) {
-  return value instanceof globalThis.Uint16Array;
-}
-function IsInt32Array(value) {
-  return value instanceof globalThis.Int32Array;
-}
-function IsUint32Array(value) {
-  return value instanceof globalThis.Uint32Array;
-}
-function IsFloat32Array(value) {
-  return value instanceof globalThis.Float32Array;
-}
-function IsFloat64Array(value) {
-  return value instanceof globalThis.Float64Array;
-}
-function IsBigInt64Array(value) {
-  return value instanceof globalThis.BigInt64Array;
-}
-function IsBigUint64Array(value) {
-  return value instanceof globalThis.BigUint64Array;
-}
 function IsRegExp(value) {
   return value instanceof globalThis.RegExp;
-}
-function IsDate(value) {
-  return value instanceof globalThis.Date;
 }
 function IsSet(value) {
   return value instanceof globalThis.Set;
@@ -22113,52 +17596,28 @@ var settings = {
   correctiveParse: false,
   unionPrioritySort: true
 };
-function Reset() {
-  settings.immutableTypes = false;
-  settings.maxErrors = 8;
-  settings.maxInstantiationCount = 128;
-  settings.useAcceleration = true;
-  settings.exactOptionalPropertyTypes = false;
-  settings.enumerableKind = false;
-  settings.correctiveParse = false;
-  settings.unionPrioritySort = true;
-}
-function Set2(options) {
-  for (const key of exports_guard.Keys(options)) {
-    const value = options[key];
-    if (value !== undefined) {
-      Object.defineProperty(settings, key, { value });
-    }
-  }
-}
 function Get() {
   return settings;
 }
 // node_modules/typebox/build/system/memory/freeze.mjs
 function Freeze(value) {
-  return exports_settings.Get().immutableTypes ? Object.freeze(value) : value;
-}
-
-// node_modules/typebox/build/system/memory/assign.mjs
-function Assign(left, right) {
-  Metrics.assign += 1;
-  return Freeze({ ...left, ...right });
+  return Get().immutableTypes ? Object.freeze(value) : value;
 }
 // node_modules/typebox/build/system/memory/clone.mjs
 function FromClassInstance(value) {
   return value;
 }
 function IsSchemaObject(value) {
-  return exports_guard.HasPropertyKey(value, "~kind") || exports_guard.HasPropertyKey(value, "~unsafe");
+  return HasPropertyKey(value, "~kind") || HasPropertyKey(value, "~unsafe");
 }
 function FromSchemaObject(value) {
   const result = {};
-  for (const key of exports_guard.Keys(value)) {
-    if (exports_guard.IsUnsafePropertyKey(key))
+  for (const key of Keys(value)) {
+    if (IsUnsafePropertyKey(key))
       continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     descriptor.value = FromValue(descriptor.value);
-    if (exports_guard.IsEqual(descriptor.enumerable, true)) {
+    if (IsEqual(descriptor.enumerable, true)) {
       result[key] = descriptor.value;
     } else {
       Object.defineProperty(result, key, descriptor);
@@ -22168,18 +17627,18 @@ function FromSchemaObject(value) {
 }
 function FromPlainObject(value) {
   const result = {};
-  for (const key of exports_guard.Keys(value)) {
-    if (exports_guard.IsUnsafePropertyKey(key))
+  for (const key of Keys(value)) {
+    if (IsUnsafePropertyKey(key))
       continue;
     result[key] = FromValue(value[key]);
   }
-  for (const key of exports_guard.Symbols(value)) {
+  for (const key of Symbols(value)) {
     result[key] = FromValue(value[key]);
   }
   return result;
 }
 function FromObject(value) {
-  return exports_guard.IsClassInstance(value) ? FromClassInstance(value) : IsSchemaObject(value) ? FromSchemaObject(value) : FromPlainObject(value);
+  return IsClassInstance(value) ? FromClassInstance(value) : IsSchemaObject(value) ? FromSchemaObject(value) : FromPlainObject(value);
 }
 function FromArray(value) {
   return value.map((element) => FromValue(element));
@@ -22197,7 +17656,7 @@ function FromSet(value) {
   return new Set(FromValue([...value.values()]));
 }
 function FromValue(value) {
-  return exports_globals.IsTypeArray(value) ? FromTypedArray(value) : exports_globals.IsRegExp(value) ? FromRegExp(value) : exports_globals.IsMap(value) ? FromMap(value) : exports_globals.IsSet(value) ? FromSet(value) : exports_guard.IsArray(value) ? FromArray(value) : exports_guard.IsObject(value) ? FromObject(value) : value;
+  return IsTypeArray(value) ? FromTypedArray(value) : IsRegExp(value) ? FromRegExp(value) : IsMap(value) ? FromMap(value) : IsSet(value) ? FromSet(value) : IsArray(value) ? FromArray(value) : IsObject(value) ? FromObject(value) : value;
 }
 function Clone(value) {
   Metrics.clone += 1;
@@ -22221,32 +17680,19 @@ function Merge(left, right) {
 function Create(hidden, enumerable, options = {}) {
   Metrics.create += 1;
   const withOptions = Merge(enumerable, options);
-  const withHidden = exports_settings.Get().enumerableKind ? Merge(withOptions, hidden) : MergeHidden(withOptions, hidden);
+  const withHidden = Get().enumerableKind ? Merge(withOptions, hidden) : MergeHidden(withOptions, hidden);
   return Freeze(withHidden);
-}
-// node_modules/typebox/build/system/memory/discard.mjs
-function Discard(value, propertyKeys) {
-  Metrics.discard += 1;
-  const result = {};
-  for (const key of exports_guard.Keys(value)) {
-    if (propertyKeys.includes(key))
-      continue;
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    descriptor.value = Clone(descriptor.value);
-    Object.defineProperty(result, key, descriptor);
-  }
-  return Freeze(result);
 }
 // node_modules/typebox/build/system/memory/update.mjs
 function Update(current, hidden, enumerable) {
   Metrics.update += 1;
-  const settings2 = exports_settings.Get();
+  const settings = Get();
   const result = Clone(current);
   for (const key of Object.keys(hidden)) {
     Object.defineProperty(result, key, {
       configurable: true,
       writable: true,
-      enumerable: settings2.enumerableKind,
+      enumerable: settings.enumerableKind,
       value: hidden[key]
     });
   }
@@ -22261,117 +17707,25 @@ function Update(current, hidden, enumerable) {
   return Freeze(result);
 }
 // node_modules/typebox/build/type/types/schema.mjs
-function IsKind(value, kind) {
-  return exports_guard.IsObject(value) && exports_guard.HasPropertyKey(value, "~kind") && exports_guard.IsEqual(value["~kind"], kind);
-}
 function IsSchema(value) {
-  return exports_guard.IsObject(value);
-}
-
-// node_modules/typebox/build/type/types/deferred.mjs
-function Deferred(action, parameters, options) {
-  return exports_memory.Create({ "~kind": "Deferred" }, { type: "deferred", action, parameters, options }, {});
-}
-function IsDeferred(value) {
-  return IsKind(value, "Deferred");
-}
-
-// node_modules/typebox/build/type/engine/readonly/instantiate_add.mjs
-function AddReadonlyOperation(type) {
-  return exports_memory.Update(type, { "~readonly": true }, {});
-}
-function AddReadonlyAction(type, options) {
-  const result = exports_memory.Update(AddReadonlyOperation(type), {}, options);
-  return result;
-}
-function AddReadonlyInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return AddReadonlyAction(instantiatedType, options);
+  return IsObject(value);
 }
 
 // node_modules/typebox/build/type/engine/optional/instantiate_add.mjs
 function AddOptionalOperation(type) {
-  return exports_memory.Update(type, { "~optional": true }, {});
+  return Update(type, { "~optional": true }, {});
 }
 function AddOptionalAction(type, options) {
-  const result = exports_memory.Update(AddOptionalOperation(type), {}, options);
+  const result = Update(AddOptionalOperation(type), {}, options);
   return result;
-}
-function AddOptionalInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return AddOptionalAction(instantiatedType, options);
 }
 
 // node_modules/typebox/build/type/types/array.mjs
 function _Array_(items, options) {
-  return exports_memory.Create({ "~kind": "Array" }, { type: "array", items }, options);
-}
-function IsArray2(value) {
-  return IsKind(value, "Array");
-}
-function ArrayOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "type", "items"]);
-}
-
-// node_modules/typebox/build/type/types/constructor.mjs
-function Constructor(parameters, instanceType, options = {}) {
-  return exports_memory.Create({ "~kind": "Constructor" }, { type: "constructor", parameters, instanceType }, options);
-}
-function IsConstructor2(value) {
-  return IsKind(value, "Constructor");
-}
-function ConstructorOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "type", "parameters", "instanceType"]);
-}
-
-// node_modules/typebox/build/type/types/function.mjs
-function _Function_(parameters, returnType, options = {}) {
-  return exports_memory.Create({ ["~kind"]: "Function" }, { type: "function", parameters, returnType }, options);
-}
-function IsFunction2(value) {
-  return IsKind(value, "Function");
-}
-function FunctionOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "type", "parameters", "returnType"]);
-}
-
-// node_modules/typebox/build/type/types/ref.mjs
-function Ref(ref, options) {
-  return exports_memory.Create({ ["~kind"]: "Ref" }, { $ref: ref }, options);
-}
-function IsRef(value) {
-  return IsKind(value, "Ref");
-}
-
-// node_modules/typebox/build/type/types/generic.mjs
-function Generic(parameters, expression) {
-  return exports_memory.Create({ "~kind": "Generic" }, { type: "generic", parameters, expression });
-}
-function IsGeneric(value) {
-  return IsKind(value, "Generic");
-}
-
-// node_modules/typebox/build/type/types/any.mjs
-function Any(options) {
-  return exports_memory.Create({ ["~kind"]: "Any" }, {}, options);
-}
-function IsAny(value) {
-  return IsKind(value, "Any");
-}
-
-// node_modules/typebox/build/type/types/never.mjs
-var NeverPattern = "(?!)";
-function Never(options) {
-  return exports_memory.Create({ "~kind": "Never" }, { not: {} }, options);
-}
-function IsNever(value) {
-  return IsKind(value, "Never");
+  return Create({ "~kind": "Array" }, { type: "array", items }, options);
 }
 
 // node_modules/typebox/build/type/action/_add_optional.mjs
-function AddOptionalDeferred(type, options = {}) {
-  return Deferred("AddOptional", [type], options);
-}
 function AddOptional(type, options = {}) {
   return AddOptionalAction(type, options);
 }
@@ -22381,1233 +17735,82 @@ function Optional(type) {
   return AddOptional(type);
 }
 function IsOptional(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "~optional");
+  return IsSchema(value) && HasPropertyKey(value, "~optional");
 }
 
 // node_modules/typebox/build/type/types/properties.mjs
 function RequiredArray(properties) {
-  return exports_guard.Keys(properties).filter((key) => !IsOptional(properties[key]));
-}
-function PropertyKeys(properties) {
-  return exports_guard.Keys(properties);
-}
-function PropertyValues(properties) {
-  return exports_guard.Values(properties);
+  return Keys(properties).filter((key) => !IsOptional(properties[key]));
 }
 
 // node_modules/typebox/build/type/types/object.mjs
 function _Object_(properties, options = {}) {
   const requiredKeys = RequiredArray(properties);
   const required = requiredKeys.length > 0 ? { required: requiredKeys } : {};
-  return exports_memory.Create({ "~kind": "Object" }, { type: "object", ...required, properties }, options);
-}
-function IsObject2(value) {
-  return IsKind(value, "Object");
-}
-function ObjectOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "type", "properties", "required"]);
-}
-
-// node_modules/typebox/build/type/types/unknown.mjs
-function Unknown(options) {
-  return exports_memory.Create({ ["~kind"]: "Unknown" }, {}, options);
-}
-function IsUnknown(value) {
-  return IsKind(value, "Unknown");
-}
-
-// node_modules/typebox/build/type/types/cyclic.mjs
-function Cyclic($defs, $ref, options) {
-  const defs = exports_guard.Keys($defs).reduce((result, key) => {
-    return { ...result, [key]: exports_memory.Update($defs[key], {}, { $id: key }) };
-  }, {});
-  return exports_memory.Create({ ["~kind"]: "Cyclic" }, { $defs: defs, $ref }, options);
-}
-function IsCyclic(value) {
-  return IsKind(value, "Cyclic");
+  return Create({ "~kind": "Object" }, { type: "object", ...required, properties }, options);
 }
 
 // node_modules/typebox/build/type/types/unsafe.mjs
 function Unsafe(schema) {
-  return exports_memory.Update(schema, { ["~unsafe"]: null }, {});
-}
-function IsUnsafe(value) {
-  return exports_guard.IsObjectNotArray(value) && exports_guard.HasPropertyKey(value, "~unsafe") && exports_guard.IsNull(value["~unsafe"]);
-}
-
-// node_modules/typebox/build/system/arguments/arguments.mjs
-var exports_arguments = {};
-__export(exports_arguments, {
-  Match: () => Match
-});
-function Match(args2, match) {
-  return match[args2.length]?.(...args2) ?? (() => {
-    throw Error("Invalid Arguments");
-  })();
-}
-// node_modules/typebox/build/type/types/infer.mjs
-function Infer(...args2) {
-  const [name2, extends_] = exports_arguments.Match(args2, {
-    2: (name3, extends_2) => [name3, extends_2, extends_2],
-    1: (name3) => [name3, Unknown(), Unknown()]
-  });
-  return exports_memory.Create({ ["~kind"]: "Infer" }, { type: "infer", name: name2, extends: extends_ }, {});
-}
-function IsInfer(value) {
-  return IsKind(value, "Infer");
-}
-
-// node_modules/typebox/build/type/types/dependent.mjs
-function Dependent(if_, then_, else_, options = {}) {
-  return exports_memory.Create({ "~kind": "Dependent" }, { if: if_, then: then_, else: else_ }, options);
-}
-function IsDependent(value) {
-  return IsKind(value, "Dependent");
-}
-function DependentOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "if", "then", "else"]);
-}
-
-// node_modules/typebox/build/type/engine/enum/typescript_enum_to_enum_values.mjs
-function IsTypeScriptEnumLike(value) {
-  return exports_guard.IsObjectNotArray(value);
-}
-function TypeScriptEnumToEnumValues(type) {
-  const keys = exports_guard.Keys(type).filter((key) => isNaN(key));
-  return keys.reduce((result, key) => [...result, type[key]], []);
-}
-
-// node_modules/typebox/build/type/types/enum.mjs
-function IsEnumValue(value) {
-  return exports_guard.IsString(value) || exports_guard.IsNumber(value);
-}
-function Enum(value, options) {
-  const values = IsTypeScriptEnumLike(value) ? TypeScriptEnumToEnumValues(value) : value;
-  return exports_memory.Create({ "~kind": "Enum" }, { enum: values }, options);
-}
-function IsEnum(value) {
-  return IsKind(value, "Enum");
-}
-
-// node_modules/typebox/build/type/types/intersect.mjs
-function Intersect(types, options = {}) {
-  return exports_memory.Create({ "~kind": "Intersect" }, { allOf: types }, options);
-}
-function IsIntersect(value) {
-  return IsKind(value, "Intersect");
-}
-function IntersectOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "allOf"]);
-}
-// node_modules/typebox/build/system/unreachable/unreachable.mjs
-function Unreachable() {
-  throw new Error("Unreachable");
+  return Update(schema, { ["~unsafe"]: null }, {});
 }
 // node_modules/typebox/build/system/hashing/hash.mjs
 var ByteMarker;
-(function(ByteMarker2) {
-  ByteMarker2[ByteMarker2["Array"] = 0] = "Array";
-  ByteMarker2[ByteMarker2["BigInt"] = 1] = "BigInt";
-  ByteMarker2[ByteMarker2["Boolean"] = 2] = "Boolean";
-  ByteMarker2[ByteMarker2["Date"] = 3] = "Date";
-  ByteMarker2[ByteMarker2["Constructor"] = 4] = "Constructor";
-  ByteMarker2[ByteMarker2["Function"] = 5] = "Function";
-  ByteMarker2[ByteMarker2["Null"] = 6] = "Null";
-  ByteMarker2[ByteMarker2["Number"] = 7] = "Number";
-  ByteMarker2[ByteMarker2["Object"] = 8] = "Object";
-  ByteMarker2[ByteMarker2["RegExp"] = 9] = "RegExp";
-  ByteMarker2[ByteMarker2["String"] = 10] = "String";
-  ByteMarker2[ByteMarker2["Symbol"] = 11] = "Symbol";
-  ByteMarker2[ByteMarker2["TypeArray"] = 12] = "TypeArray";
-  ByteMarker2[ByteMarker2["Undefined"] = 13] = "Undefined";
+(function(ByteMarker) {
+  ByteMarker[ByteMarker["Array"] = 0] = "Array";
+  ByteMarker[ByteMarker["BigInt"] = 1] = "BigInt";
+  ByteMarker[ByteMarker["Boolean"] = 2] = "Boolean";
+  ByteMarker[ByteMarker["Date"] = 3] = "Date";
+  ByteMarker[ByteMarker["Constructor"] = 4] = "Constructor";
+  ByteMarker[ByteMarker["Function"] = 5] = "Function";
+  ByteMarker[ByteMarker["Null"] = 6] = "Null";
+  ByteMarker[ByteMarker["Number"] = 7] = "Number";
+  ByteMarker[ByteMarker["Object"] = 8] = "Object";
+  ByteMarker[ByteMarker["RegExp"] = 9] = "RegExp";
+  ByteMarker[ByteMarker["String"] = 10] = "String";
+  ByteMarker[ByteMarker["Symbol"] = 11] = "Symbol";
+  ByteMarker[ByteMarker["TypeArray"] = 12] = "TypeArray";
+  ByteMarker[ByteMarker["Undefined"] = 13] = "Undefined";
 })(ByteMarker || (ByteMarker = {}));
 var Accumulator = BigInt("14695981039346656037");
 var [Prime, Size] = [BigInt("1099511628211"), BigInt("18446744073709551616")];
-var Bytes = Array.from({ length: 256 }).map((_2, i2) => BigInt(i2));
+var Bytes = Array.from({ length: 256 }).map((_, i2) => BigInt(i2));
 var F64 = new Float64Array(1);
 var F64In = new DataView(F64.buffer);
 var F64Out = new Uint8Array(F64.buffer);
 var encoder = new TextEncoder;
-// node_modules/typebox/build/type/types/_codec.mjs
-class EncodeBuilder {
-  constructor(type, decode) {
-    this.type = type;
-    this.decode = decode;
-  }
-  Encode(callback) {
-    const type = this.type;
-    const decode = IsCodec(type) ? (value) => this.decode(type["~codec"].decode(value)) : this.decode;
-    const encode = IsCodec(type) ? (value) => type["~codec"].encode(callback(value)) : callback;
-    const codec = { decode, encode };
-    return exports_memory.Update(this.type, { "~codec": codec }, {});
-  }
-}
-
-class DecodeBuilder {
-  constructor(type) {
-    this.type = type;
-  }
-  Decode(callback) {
-    return new EncodeBuilder(this.type, callback);
-  }
-}
-function Codec(type) {
-  return new DecodeBuilder(type);
-}
-function Decode(type, callback) {
-  return Codec(type).Decode(callback).Encode(() => {
-    throw Error("Encode not implemented");
-  });
-}
-function Encode(type, callback) {
-  return Codec(type).Decode(() => {
-    throw Error("Decode not implemented");
-  }).Encode(callback);
-}
-function IsCodec(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "~codec") && exports_guard.IsObject(value["~codec"]) && exports_guard.HasPropertyKey(value["~codec"], "encode") && exports_guard.HasPropertyKey(value["~codec"], "decode");
-}
-// node_modules/typebox/build/type/types/_immutable.mjs
-function Immutable(type) {
-  return AddImmutable(type);
-}
-function IsImmutable(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "~immutable");
-}
-// node_modules/typebox/build/type/action/_add_readonly.mjs
-function AddReadonlyDeferred(type, options = {}) {
-  return Deferred("AddReadonly", [type], options);
-}
-function AddReadonly(type, options = {}) {
-  return AddReadonlyAction(type, options);
-}
-
-// node_modules/typebox/build/type/types/_readonly.mjs
-function Readonly(type) {
-  return AddReadonly(type);
-}
-function IsReadonly(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "~readonly");
-}
-// node_modules/typebox/build/type/types/_refine.mjs
-function RefineAdd(type, refinement) {
-  const refinements = IsRefine(type) ? [...type["~refine"], refinement] : [refinement];
-  return exports_memory.Update(type, { "~refine": refinements }, {});
-}
-function Refine(...args2) {
-  const [type, check, error] = exports_arguments.Match(args2, {
-    3: (type2, check2, error2) => [type2, check2, error2],
-    2: (type2, check2) => [type2, check2, () => "Refine Error"]
-  });
-  return RefineAdd(type, { check, error });
-}
-function IsRefinement(value) {
-  return exports_guard.IsObjectNotArray(value) && exports_guard.HasPropertyKey(value, "check") && exports_guard.HasPropertyKey(value, "error") && exports_guard.IsFunction(value.check) && exports_guard.IsFunction(value.error);
-}
-function IsRefine(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "~refine") && exports_guard.IsArray(value["~refine"]) && exports_guard.Every(value["~refine"], 0, (value2) => IsRefinement(value2));
-}
-// node_modules/typebox/build/type/types/bigint.mjs
-var BigIntPattern = "-?(?:0|[1-9][0-9]*)n";
-function BigInt2(options) {
-  return exports_memory.Create({ "~kind": "BigInt" }, { type: "bigint" }, options);
-}
-function IsBigInt2(value) {
-  return IsKind(value, "BigInt");
-}
 // node_modules/typebox/build/type/types/boolean.mjs
 function Boolean2(options) {
-  return exports_memory.Create({ "~kind": "Boolean" }, { type: "boolean" }, options);
-}
-function IsBoolean3(value) {
-  return IsKind(value, "Boolean");
-}
-// node_modules/typebox/build/type/types/identifier.mjs
-function Identifier(name2) {
-  return exports_memory.Create({ "~kind": "Identifier" }, { name: name2 });
-}
-function IsIdentifier(value) {
-  return IsKind(value, "Identifier");
+  return Create({ "~kind": "Boolean" }, { type: "boolean" }, options);
 }
 // node_modules/typebox/build/type/types/integer.mjs
 var IntegerPattern = "-?(?:0|[1-9][0-9]*)";
 function Integer(options) {
-  return exports_memory.Create({ "~kind": "Integer" }, { type: "integer" }, options);
-}
-function IsInteger2(value) {
-  return IsKind(value, "Integer");
-}
-// node_modules/typebox/build/type/types/literal.mjs
-class InvalidLiteralValue extends Error {
-  constructor(value) {
-    super(`Invalid Literal value`);
-    Object.defineProperty(this, "cause", {
-      value: { value },
-      writable: false,
-      configurable: false,
-      enumerable: false
-    });
-  }
-}
-function LiteralTypeName(value) {
-  return exports_guard.IsBigInt(value) ? "bigint" : exports_guard.IsBoolean(value) ? "boolean" : exports_guard.IsNumber(value) ? "number" : exports_guard.IsString(value) ? "string" : (() => {
-    throw new InvalidLiteralValue(value);
-  })();
-}
-function Literal(value, options) {
-  return exports_memory.Create({ "~kind": "Literal" }, { type: LiteralTypeName(value), const: value }, options);
-}
-function IsLiteralValue(value) {
-  return exports_guard.IsBigInt(value) || exports_guard.IsBoolean(value) || exports_guard.IsNumber(value) || exports_guard.IsString(value);
-}
-function IsLiteralNumber(value) {
-  return IsLiteral(value) && exports_guard.IsNumber(value.const);
-}
-function IsLiteralString(value) {
-  return IsLiteral(value) && exports_guard.IsString(value.const);
-}
-function IsLiteral(value) {
-  return IsKind(value, "Literal");
-}
-// node_modules/typebox/build/type/types/null.mjs
-function Null(options) {
-  return exports_memory.Create({ "~kind": "Null" }, { type: "null" }, options);
-}
-function IsNull2(value) {
-  return IsKind(value, "Null");
+  return Create({ "~kind": "Integer" }, { type: "integer" }, options);
 }
 // node_modules/typebox/build/type/types/number.mjs
 var NumberPattern = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?";
 function Number2(options) {
-  return exports_memory.Create({ "~kind": "Number" }, { type: "number" }, options);
-}
-function IsNumber3(value) {
-  return IsKind(value, "Number");
-}
-// node_modules/typebox/build/type/types/symbol.mjs
-function Symbol2(options) {
-  return exports_memory.Create({ "~kind": "Symbol" }, { type: "symbol" }, options);
-}
-function IsSymbol2(value) {
-  return IsKind(value, "Symbol");
-}
-// node_modules/typebox/build/type/types/parameter.mjs
-function Parameter(...args2) {
-  const [name2, extends_, equals] = exports_arguments.Match(args2, {
-    3: (name3, extends_2, equals2) => [name3, extends_2, equals2],
-    2: (name3, extends_2) => [name3, extends_2, extends_2],
-    1: (name3) => [name3, Unknown(), Unknown()]
-  });
-  return exports_memory.Create({ "~kind": "Parameter" }, { name: name2, extends: extends_, equals }, {});
-}
-function IsParameter(value) {
-  return IsKind(value, "Parameter");
+  return Create({ "~kind": "Number" }, { type: "number" }, options);
 }
 // node_modules/typebox/build/type/types/string.mjs
 var StringPattern = ".*";
 function String2(options) {
-  return exports_memory.Create({ "~kind": "String" }, { type: "string" }, options);
-}
-function IsString3(value) {
-  return IsKind(value, "String");
+  return Create({ "~kind": "String" }, { type: "string" }, options);
 }
 
 // node_modules/typebox/build/type/types/union.mjs
 function Union(anyOf, options = {}) {
-  return exports_memory.Create({ "~kind": "Union" }, { anyOf }, options);
-}
-function IsUnion(value) {
-  return IsKind(value, "Union");
-}
-function UnionOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "anyOf"]);
-}
-
-// node_modules/typebox/build/type/engine/patterns/pattern.mjs
-function ParsePatternIntoTypes(pattern) {
-  const parsed = Pattern(pattern);
-  const result = exports_guard.IsEqual(parsed.length, 2) ? parsed[0] : [];
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/template_literal/is_finite.mjs
-function FromLiteral(_value) {
-  return true;
-}
-function FromTypesReduce(types) {
-  return exports_guard.ShiftLeft(types, (left, right) => FromType(left) ? FromTypesReduce(right) : false, () => true);
-}
-function FromTypes(types) {
-  const result = exports_guard.IsEqual(types.length, 0) ? false : FromTypesReduce(types);
-  return result;
-}
-function FromType(type) {
-  return IsUnion(type) ? FromTypes(type.anyOf) : IsLiteral(type) ? FromLiteral(type.const) : false;
-}
-function IsTemplateLiteralFinite(types) {
-  const result = FromTypes(types);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/template_literal/create.mjs
-function TemplateLiteralCreate(pattern) {
-  return exports_memory.Create({ ["~kind"]: "TemplateLiteral" }, { type: "string", pattern }, {});
-}
-
-// node_modules/typebox/build/type/engine/template_literal/decode.mjs
-function FromLiteralPush(variants, value, result = []) {
-  return exports_guard.ShiftLeft(variants, (left, right) => FromLiteralPush(right, value, [...result, `${left}${value}`]), () => result);
-}
-function FromLiteral2(variants, value) {
-  return exports_guard.IsEqual(variants.length, 0) ? [`${value}`] : FromLiteralPush(variants, value);
-}
-function FromUnion(variants, types, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => FromUnion(variants, right, [...result, ...FromType2(variants, left)]), () => result);
-}
-function FromType2(variants, type) {
-  const result = IsUnion(type) ? FromUnion(variants, type.anyOf) : IsLiteral(type) ? FromLiteral2(variants, type.const) : Unreachable();
-  return result;
-}
-function DecodeFromSpan(variants, types) {
-  return exports_guard.ShiftLeft(types, (left, right) => DecodeFromSpan(FromType2(variants, left), right), () => variants);
-}
-function VariantsToLiterals(variants) {
-  return variants.map((variant) => Literal(variant));
-}
-function DecodeTypesAsUnion(types) {
-  const variants = DecodeFromSpan([], types);
-  const literals = VariantsToLiterals(variants);
-  const result = Union(literals);
-  return result;
-}
-function DecodeTypes(types) {
-  return exports_guard.IsEqual(types.length, 0) ? Unreachable() : exports_guard.IsEqual(types.length, 1) && IsLiteral(types[0]) ? types[0] : DecodeTypesAsUnion(types);
-}
-function TemplateLiteralDecodeUnsafe(pattern) {
-  const types = ParsePatternIntoTypes(pattern);
-  const result = exports_guard.IsEqual(types.length, 0) ? String2() : IsTemplateLiteralFinite(types) ? DecodeTypes(types) : TemplateLiteralCreate(pattern);
-  return result;
-}
-function TemplateLiteralDecode(pattern) {
-  const decoded = TemplateLiteralDecodeUnsafe(pattern);
-  const result = IsTemplateLiteral(decoded) ? String2() : decoded;
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/record_create.mjs
-function CreateRecord(key, value) {
-  const type = "object";
-  const patternProperties = { [key]: value };
-  return exports_memory.Create({ ["~kind"]: "Record" }, { type, patternProperties });
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_any.mjs
-function FromAnyKey(value) {
-  return CreateRecord(StringKey, value);
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_boolean.mjs
-function FromBooleanKey(value) {
-  return _Object_({ true: value, false: value });
-}
-
-// node_modules/typebox/build/type/types/tuple.mjs
-function Tuple(types, options = {}) {
-  const [items, minItems, additionalItems] = [types, types.length, false];
-  return exports_memory.Create({ ["~kind"]: "Tuple" }, { type: "array", additionalItems, items, minItems }, options);
-}
-function IsTuple(value) {
-  return IsKind(value, "Tuple");
-}
-function TupleOptions(type) {
-  return exports_memory.Discard(type, ["~kind", "type", "items", "minItems", "additionalItems"]);
-}
-
-// node_modules/typebox/build/type/engine/readonly/instantiate_remove.mjs
-function RemoveReadonlyOperation(type) {
-  return exports_memory.Discard(type, ["~readonly"]);
-}
-function RemoveReadonlyAction(type, options) {
-  const result = exports_memory.Update(RemoveReadonlyOperation(type), {}, options);
-  return result;
-}
-function RemoveReadonlyInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return RemoveReadonlyAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/_remove_readonly.mjs
-function RemoveReadonlyDeferred(type, options = {}) {
-  return Deferred("RemoveReadonly", [type], options);
-}
-function RemoveReadonly(type, options = {}) {
-  return RemoveReadonlyAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/optional/instantiate_remove.mjs
-function RemoveOptionalOperation(type) {
-  return exports_memory.Discard(type, ["~optional"]);
-}
-function RemoveOptionalAction(type, options) {
-  const result = exports_memory.Update(RemoveOptionalOperation(type), {}, options);
-  return result;
-}
-function RemoveOptionalInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return RemoveOptionalAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/_remove_optional.mjs
-function RemoveOptionalDeferred(type, options = {}) {
-  return Deferred("RemoveOptional", [type], options);
-}
-function RemoveOptional(type, options = {}) {
-  return RemoveOptionalAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/tuple/to_object.mjs
-function TupleElementsToProperties(types) {
-  const result = types.reduceRight((result2, right, index) => {
-    return { [index]: right, ...result2 };
-  }, {});
-  return result;
-}
-function TupleToObject(type) {
-  const properties = TupleElementsToProperties(type.items);
-  const result = _Object_(properties);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/evaluate/composite.mjs
-function CanComposite(type) {
-  return IsObject2(type) || IsTuple(type);
-}
-function IsReadonlyProperty(left, right) {
-  return IsReadonly(left) ? IsReadonly(right) ? true : false : false;
-}
-function IsOptionalProperty(left, right) {
-  return IsOptional(left) ? IsOptional(right) ? true : false : false;
-}
-function CompositeProperty(left, right) {
-  const isReadonly = IsReadonlyProperty(left, right);
-  const isOptional = IsOptionalProperty(left, right);
-  const evaluated = EvaluateIntersect([left, right]);
-  const property = RemoveReadonly(RemoveOptional(evaluated));
-  return isReadonly && isOptional ? AddReadonly(AddOptional(property)) : isReadonly && !isOptional ? AddReadonly(property) : !isReadonly && isOptional ? AddOptional(property) : property;
-}
-function CompositePropertyKey(left, right, key) {
-  return key in left ? key in right ? CompositeProperty(left[key], right[key]) : left[key] : (key in right) ? right[key] : Never();
-}
-function CompositeProperties(left, right) {
-  const keys = new Set([...exports_guard.Keys(left), ...exports_guard.Keys(right)]);
-  const result = [...keys].reduce((result2, key) => {
-    return { ...result2, [key]: CompositePropertyKey(left, right, key) };
-  }, {});
-  return result;
-}
-function GetProperties(type) {
-  const result = IsObject2(type) ? type.properties : IsTuple(type) ? TupleElementsToProperties(type.items) : {};
-  return result;
-}
-function Composite(left, right) {
-  const leftProperties = GetProperties(left);
-  const rightProperties = GetProperties(right);
-  const properties = CompositeProperties(leftProperties, rightProperties);
-  const result = _Object_(properties);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/evaluate/narrow.mjs
-function NarrowCompareRule(left, right) {
-  const result = Compare(left, right);
-  return exports_guard.IsEqual(result, CompareResultLeftInside) ? left : exports_guard.IsEqual(result, CompareResultRightInside) ? right : exports_guard.IsEqual(result, CompareResultEqual) ? right : Never();
-}
-function NarrowCompositeRule(left, right) {
-  const canCompositeLeft = CanComposite(left);
-  const canCompositeRight = CanComposite(right);
-  return canCompositeLeft && canCompositeRight ? Composite(left, right) : canCompositeLeft && !canCompositeRight ? left : !canCompositeLeft && canCompositeRight ? right : NarrowCompareRule(left, right);
-}
-function Narrow(left, right) {
-  return IsNever(left) ? left : IsAny(left) ? left : IsUnknown(left) ? right : IsNever(right) ? right : IsAny(right) ? right : IsUnknown(right) ? left : NarrowCompositeRule(left, right);
-}
-
-// node_modules/typebox/build/type/engine/evaluate/distribute.mjs
-function ShouldEvaluate(left, right) {
-  const result = IsUnion(left) || IsUnion(right);
-  return result;
-}
-function DistributeOperation(left, right) {
-  const evaluatedLeft = EvaluateType(left);
-  const evaluatedRight = EvaluateType(right);
-  const shouldEvaluate = ShouldEvaluate(evaluatedLeft, evaluatedRight);
-  const result = shouldEvaluate ? EvaluateIntersect([evaluatedLeft, evaluatedRight]) : Narrow(evaluatedLeft, evaluatedRight);
-  return result;
-}
-function DistributeType(type, types, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => DistributeType(type, right, [...result, DistributeOperation(left, type)]), () => exports_guard.IsEqual(result.length, 0) ? [type] : result);
-}
-function DistributeUnion(types, distribution, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => DistributeUnion(right, distribution, [...result, ...Distribute([left], distribution)]), () => result);
-}
-function Distribute(types, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => IsUnion(left) ? Distribute(right, DistributeUnion(left.anyOf, result)) : Distribute(right, DistributeType(left, result)), () => result);
-}
-
-// node_modules/typebox/build/type/engine/exclude/operation.mjs
-function ExcludeType(left, right) {
-  const check = Extends({}, left, right);
-  const result = exports_result.IsExtendsTrueLike(check) ? [] : [left];
-  return result;
-}
-function ExcludeUnion(left, right, result = []) {
-  return exports_guard.ShiftLeft(left, (head, tail) => ExcludeUnion(tail, right, [...result, ...ExcludeType(head, right)]), () => result);
-}
-function ExcludeOperation(left, right) {
-  const evaluated = EvaluateType(left);
-  const canonical = IsUnion(evaluated) ? evaluated.anyOf : [evaluated];
-  const remaining = ExcludeUnion(canonical, right);
-  const result = EvaluateUnion(remaining);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/evaluate/evaluate.mjs
-function EvaluateDependent(if_, then_, else_) {
-  const intersected = EvaluateIntersect([if_, then_]);
-  const excluded = ExcludeOperation(else_, if_);
-  const result = EvaluateUnion([intersected, excluded]);
-  return result;
-}
-function EvaluateEnum(values, result = []) {
-  return exports_guard.ShiftLeft(values, (left, right) => EvaluateEnum(right, [...result, Literal(left)]), () => EvaluateUnion(result));
-}
-function EvaluateIntersect(types) {
-  const distribution = Distribute(types);
-  const broadend = Broaden(distribution);
-  const result = EvaluateUnion(broadend);
-  return result;
-}
-function EvaluateTemplateLiteral(pattern) {
-  const evaluated = TemplateLiteralDecode(pattern);
-  const result = EvaluateType(evaluated);
-  return result;
-}
-function EvaluateUnion(types) {
-  const broadend = Broaden(types);
-  const result = EvaluateUnionFast(broadend);
-  return result;
-}
-function EvaluateType(type) {
-  const result = IsDependent(type) ? EvaluateDependent(type.if, type.then, type.else) : IsEnum(type) ? EvaluateEnum(type.enum) : IsIntersect(type) ? EvaluateIntersect(type.allOf) : IsTemplateLiteral(type) ? EvaluateTemplateLiteral(type.pattern) : IsUnion(type) ? EvaluateUnion(type.anyOf) : type;
-  return result;
-}
-function EvaluateUnionFast(types) {
-  const result = exports_guard.IsEqual(types.length, 1) ? types[0] : exports_guard.IsEqual(types.length, 0) ? Never() : Union(types);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_enum.mjs
-function FromEnumKey(values, value) {
-  const unionKey = EvaluateEnum(values);
-  const result = FromKey(unionKey, value);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_integer.mjs
-function FromIntegerKey(_key, value) {
-  const result = CreateRecord(IntegerKey, value);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_intersect.mjs
-function FromIntersectKey(types, value) {
-  const evaluatedKey = EvaluateIntersect(types);
-  const result = FromKey(evaluatedKey, value);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_literal.mjs
-function FromLiteralKey(key, value) {
-  return exports_guard.IsString(key) || exports_guard.IsNumber(key) ? _Object_({ [key]: value }) : exports_guard.IsEqual(key, false) ? _Object_({ false: value }) : exports_guard.IsEqual(key, true) ? _Object_({ true: value }) : _Object_({});
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_number.mjs
-function FromNumberKey(_key, value) {
-  const result = CreateRecord(NumberKey, value);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_string.mjs
-function FromStringKey(key, value) {
-  return exports_guard.HasPropertyKey(key, "pattern") && (exports_guard.IsString(key.pattern) || key.pattern instanceof RegExp) ? CreateRecord(key.pattern.toString(), value) : CreateRecord(StringKey, value);
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_template_literal.mjs
-function FromTemplateKey(pattern, value) {
-  const types = ParsePatternIntoTypes(pattern);
-  const finite = IsTemplateLiteralFinite(types);
-  const result = finite ? FromKey(EvaluateTemplateLiteral(pattern), value) : CreateRecord(pattern, value);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/evaluate/flatten.mjs
-function FlattenType(type) {
-  const result = IsUnion(type) ? Flatten(type.anyOf) : [type];
-  return result;
-}
-function Flatten(types, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => Flatten(right, [...result, ...FlattenType(left)]), () => result);
-}
-
-// node_modules/typebox/build/type/engine/record/from_key_union.mjs
-function StringOrNumberCheck(types) {
-  return types.some((type) => IsString3(type) || IsNumber3(type) || IsInteger2(type));
-}
-function TryBuildRecord(types, value) {
-  return exports_guard.IsEqual(StringOrNumberCheck(types), true) ? CreateRecord(StringKey, value) : undefined;
-}
-function CreateProperties(types, value) {
-  return types.reduce((result, left) => {
-    return IsLiteral(left) && (exports_guard.IsString(left.const) || exports_guard.IsNumber(left.const)) ? { ...result, [left.const]: value } : result;
-  }, {});
-}
-function CreateObject(types, value) {
-  const properties = CreateProperties(types, value);
-  const result = _Object_(properties);
-  return result;
-}
-function FromUnionKey(types, value) {
-  const flattened = Flatten(types);
-  const record2 = TryBuildRecord(flattened, value);
-  return IsSchema(record2) ? record2 : CreateObject(flattened, value);
-}
-
-// node_modules/typebox/build/type/engine/record/from_key.mjs
-function FromKey(key, value) {
-  const result = IsAny(key) ? FromAnyKey(value) : IsBoolean3(key) ? FromBooleanKey(value) : IsEnum(key) ? FromEnumKey(key.enum, value) : IsInteger2(key) ? FromIntegerKey(key, value) : IsIntersect(key) ? FromIntersectKey(key.allOf, value) : IsLiteral(key) ? FromLiteralKey(key.const, value) : IsNumber3(key) ? FromNumberKey(key, value) : IsUnion(key) ? FromUnionKey(key.anyOf, value) : IsString3(key) ? FromStringKey(key, value) : IsTemplateLiteral(key) ? FromTemplateKey(key.pattern, value) : _Object_({});
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/record/instantiate.mjs
-function RecordAction(key, value, options) {
-  const result = CanInstantiate([key]) ? exports_memory.Update(FromKey(key, value), {}, options) : RecordDeferred(key, value, options);
-  return result;
-}
-function RecordInstantiate(context, state, key, value, options) {
-  const instantiatedKey = InstantiateType(context, state, key);
-  const instantiatedValue = InstantiateType(context, state, value);
-  return RecordAction(instantiatedKey, instantiatedValue, options);
+  return Create({ "~kind": "Union" }, { anyOf }, options);
 }
 
 // node_modules/typebox/build/type/types/record.mjs
 var IntegerKey = `^${IntegerPattern}$`;
 var NumberKey = `^${NumberPattern}$`;
 var StringKey = `^${StringPattern}$`;
-function RecordDeferred(key, value, options = {}) {
-  return Deferred("Record", [key, value], options);
-}
-function Record(key, value, options = {}) {
-  return RecordAction(key, value, options);
-}
-function RecordFromPattern(pattern, value) {
-  return CreateRecord(pattern, value);
-}
-function RecordPatternToType(pattern) {
-  const result = exports_guard.IsEqual(pattern, StringKey) ? String2() : exports_guard.IsEqual(pattern, IntegerKey) ? Integer() : exports_guard.IsEqual(pattern, NumberKey) ? Number2() : TemplateLiteralDecodeUnsafe(pattern);
-  return result;
-}
-function RecordPattern(type) {
-  return exports_guard.Keys(type.patternProperties)[0];
-}
-function RecordKey(type) {
-  const pattern = RecordPattern(type);
-  const result = RecordPatternToType(pattern);
-  return result;
-}
-function RecordValue(type) {
-  return type.patternProperties[RecordPattern(type)];
-}
-function IsRecord(value) {
-  return IsKind(value, "Record");
-}
-// node_modules/typebox/build/type/types/rest.mjs
-function Rest(type) {
-  return exports_memory.Create({ "~kind": "Rest" }, { type: "rest", items: type }, {});
-}
-function IsRest(value) {
-  return IsKind(value, "Rest");
-}
-// node_modules/typebox/build/type/types/this.mjs
-function This(options) {
-  return exports_memory.Create({ ["~kind"]: "This" }, { $ref: "#" }, options);
-}
-function IsThis(value) {
-  return IsKind(value, "This");
-}
-// node_modules/typebox/build/type/types/undefined.mjs
-function Undefined(options) {
-  return exports_memory.Create({ "~kind": "Undefined" }, { type: "undefined" }, options);
-}
-function IsUndefined2(value) {
-  return IsKind(value, "Undefined");
-}
-// node_modules/typebox/build/type/types/void.mjs
-function Void(options) {
-  return exports_memory.Create({ "~kind": "Void" }, { type: "void" }, options);
-}
-function IsVoid(value) {
-  return IsKind(value, "Void");
-}
-// node_modules/typebox/build/type/script/mapping.mjs
-function IntrinsicOrCall(ref2, parameters) {
-  return exports_guard.IsEqual(ref2, "Array") ? _Array_(parameters[0]) : exports_guard.IsEqual(ref2, "Capitalize") ? CapitalizeDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "ConstructorParameters") ? ConstructorParametersDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Evaluate") ? EvaluateDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Exclude") ? ExcludeDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "Extract") ? ExtractDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "Index") ? IndexDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "InstanceType") ? InstanceTypeDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Lowercase") ? LowercaseDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "NonNullable") ? NonNullableDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Omit") ? OmitDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "Parameters") ? ParametersDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Partial") ? PartialDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Pick") ? PickDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "Readonly") ? ReadonlyObjectDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "KeyOf") ? KeyOfDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Record") ? RecordDeferred(parameters[0], parameters[1]) : exports_guard.IsEqual(ref2, "Required") ? RequiredDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "ReturnType") ? ReturnTypeDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Uncapitalize") ? UncapitalizeDeferred(parameters[0]) : exports_guard.IsEqual(ref2, "Uppercase") ? UppercaseDeferred(parameters[0]) : CallConstruct(Ref(ref2), parameters);
-}
-function Unreachable2() {
-  throw Error("Unreachable");
-}
-function DelimitedDecode(input, result = []) {
-  return exports_guard.ShiftLeft(input, (left, right) => DelimitedDecode(right, [...result, left[1]]), () => result);
-}
-function Delimited(input) {
-  return exports_guard.IsEqual(input.length, 3) ? [input[0], ...DelimitedDecode(input[1])] : [];
-}
-function GenericParameterExtendsEqualsMapping(input) {
-  return Parameter(input[0], input[2], input[4]);
-}
-function GenericParameterExtendsMapping(input) {
-  return Parameter(input[0], input[2], input[2]);
-}
-function GenericParameterEqualsMapping(input) {
-  return Parameter(input[0], Unknown(), input[2]);
-}
-function GenericParameterIdentifierMapping(input) {
-  return Parameter(input, Unknown(), Unknown());
-}
-function GenericParameterMapping(input) {
-  return input;
-}
-function GenericParameterListMapping(input) {
-  return Delimited(input);
-}
-function GenericParametersMapping(input) {
-  return input[1];
-}
-function GenericCallArgumentListMapping(input) {
-  return Delimited(input);
-}
-function GenericCallArgumentsMapping(input) {
-  return input[1];
-}
-function GenericCallMapping(input) {
-  return IntrinsicOrCall(input[0], input[1]);
-}
-function OptionalSemiColonMapping(input) {
-  return null;
-}
-function KeywordStringMapping(input) {
-  return String2();
-}
-function KeywordNumberMapping(input) {
-  return Number2();
-}
-function KeywordBooleanMapping(input) {
-  return Boolean2();
-}
-function KeywordUndefinedMapping(input) {
-  return Undefined();
-}
-function KeywordNullMapping(input) {
-  return Null();
-}
-function KeywordIntegerMapping(input) {
-  return Integer();
-}
-function KeywordBigIntMapping(input) {
-  return BigInt2();
-}
-function KeywordUnknownMapping(input) {
-  return Unknown();
-}
-function KeywordAnyMapping(input) {
-  return Any();
-}
-function KeywordObjectMapping(input) {
-  return _Object_({});
-}
-function KeywordNeverMapping(input) {
-  return Never();
-}
-function KeywordSymbolMapping(input) {
-  return Symbol2();
-}
-function KeywordVoidMapping(input) {
-  return Void();
-}
-function KeywordThisMapping(input) {
-  return This();
-}
-function LiteralBigIntMapping(input) {
-  return Literal(BigInt(input));
-}
-function LiteralBooleanMapping(input) {
-  return Literal(exports_guard.IsEqual(input, "true"));
-}
-function LiteralNumberMapping(input) {
-  return Literal(parseFloat(input));
-}
-function LiteralStringMapping(input) {
-  return Literal(input);
-}
-function TemplateInterpolateMapping(input) {
-  return input[1];
-}
-function TemplateSpanMapping(input) {
-  return Literal(input);
-}
-function TemplateBodyMapping(input) {
-  return exports_guard.IsEqual(input.length, 3) ? [input[0], input[1], ...input[2]] : [input[0]];
-}
-function TemplateLiteralTypesMapping(input) {
-  return input[1];
-}
-function TemplateLiteralMapping(input) {
-  return TemplateLiteralDeferred(input);
-}
-function DependentMapping(input) {
-  return exports_guard.IsEqual(input.length, 6) ? Dependent(input[1], input[3], input[5]) : Dependent(input[1], input[3], Unknown());
-}
-function KeyOfMapping(input) {
-  return input.length > 0;
-}
-function IndexArrayMapping(input) {
-  return input.reduce((result, current) => {
-    return exports_guard.IsEqual(current.length, 3) ? [...result, [current[1]]] : [...result, []];
-  }, []);
-}
-function ExtendsMapping(input) {
-  return exports_guard.IsEqual(input.length, 6) ? [input[1], input[3], input[5]] : [];
-}
-function BaseMapping(input) {
-  return exports_guard.IsArray(input) && exports_guard.IsEqual(input.length, 3) ? input[1] : input;
-}
-function WithMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) ? input[1] : [];
-}
-function FactorIndexArray(Type, indexArray) {
-  return indexArray.reduce((result, left) => {
-    const _left = left;
-    return exports_guard.IsEqual(_left.length, 1) ? IndexDeferred(result, _left[0]) : exports_guard.IsEqual(_left.length, 0) ? _Array_(result) : Unreachable2();
-  }, Type);
-}
-function FactorExtends(type, extend) {
-  return exports_guard.IsEqual(extend.length, 3) ? ConditionalDeferred(type, extend[0], extend[1], extend[2]) : type;
-}
-function FactorWith(type, withClause) {
-  return exports_guard.IsArray(withClause) && exports_guard.IsEqual(withClause.length, 0) ? type : WithDeferred(type, withClause);
-}
-function FactorMapping(input) {
-  const [keyOf, type, indexArray, extend, withClause] = input;
-  return FactorWith(keyOf ? FactorExtends(KeyOfDeferred(FactorIndexArray(type, indexArray)), extend) : FactorExtends(FactorIndexArray(type, indexArray), extend), withClause);
-}
-function ExprBinaryMapping(left, rest2) {
-  return exports_guard.IsEqual(rest2.length, 3) ? (() => {
-    const [operator, right, next] = rest2;
-    const Schema = ExprBinaryMapping(right, next);
-    if (exports_guard.IsEqual(operator, "&")) {
-      return IsIntersect(Schema) ? Intersect([left, ...Schema.allOf]) : Intersect([left, Schema]);
-    }
-    if (exports_guard.IsEqual(operator, "|")) {
-      return IsUnion(Schema) ? Union([left, ...Schema.anyOf]) : Union([left, Schema]);
-    }
-    Unreachable2();
-  })() : left;
-}
-function ExprTermTailMapping(input) {
-  return input;
-}
-function ExprTermMapping(input) {
-  const [left, rest2] = input;
-  return ExprBinaryMapping(left, rest2);
-}
-function ExprTailMapping(input) {
-  return input;
-}
-function ExprMapping(input) {
-  const [left, rest2] = input;
-  return ExprBinaryMapping(left, rest2);
-}
-function ExprReadonlyMapping(input) {
-  return AddImmutableDeferred(input[1]);
-}
-function ExprPipeMapping(input) {
-  return input[1];
-}
-function GenericTypeMapping(input) {
-  return Generic(input[0], input[2]);
-}
-function InferTypeMapping(input) {
-  return exports_guard.IsEqual(input.length, 4) ? Infer(input[1], input[3]) : exports_guard.IsEqual(input.length, 2) ? Infer(input[1], Unknown()) : Unreachable2();
-}
-function TypeMapping(input) {
-  return input;
-}
-function PropertyKeyNumberMapping(input) {
-  return `${input}`;
-}
-function PropertyKeyIdentMapping(input) {
-  return input;
-}
-function PropertyKeyQuotedMapping(input) {
-  return input;
-}
-function PropertyKeyIndexMapping(input) {
-  return IsInteger2(input[3]) ? IntegerKey : IsNumber3(input[3]) ? NumberKey : IsSymbol2(input[3]) ? StringKey : IsString3(input[3]) ? StringKey : Unreachable2();
-}
-function PropertyKeyMapping(input) {
-  return input;
-}
-function ReadonlyMapping(input) {
-  return input.length > 0;
-}
-function OptionalMapping(input) {
-  return input.length > 0;
-}
-function PropertyMapping(input) {
-  const [isReadonly, key, isOptional, _colon, type] = input;
-  return {
-    [key]: isReadonly && isOptional ? AddReadonlyDeferred(AddOptionalDeferred(type)) : isReadonly && !isOptional ? AddReadonlyDeferred(type) : !isReadonly && isOptional ? AddOptionalDeferred(type) : type
-  };
-}
-function PropertyDelimiterMapping(input) {
-  return input;
-}
-function PropertyListMapping(input) {
-  return Delimited(input);
-}
-function PropertiesReduce(propertyList) {
-  return propertyList.reduce((result, left) => {
-    const isPatternProperties = exports_guard.HasPropertyKey(left, IntegerKey) || exports_guard.HasPropertyKey(left, NumberKey) || exports_guard.HasPropertyKey(left, StringKey);
-    return isPatternProperties ? [result[0], exports_memory.Assign(result[1], left)] : [exports_memory.Assign(result[0], left), result[1]];
-  }, [{}, {}]);
-}
-function PropertiesMapping(input) {
-  return PropertiesReduce(input[1]);
-}
-function _Object_Mapping(input) {
-  const [properties2, patternProperties] = input;
-  const options = exports_guard.IsEqual(exports_guard.Keys(patternProperties).length, 0) ? {} : { patternProperties };
-  return _Object_(properties2, options);
-}
-function ElementNamedMapping(input) {
-  return exports_guard.IsEqual(input.length, 5) ? AddReadonlyDeferred(AddOptionalDeferred(input[4])) : exports_guard.IsEqual(input.length, 3) ? input[2] : exports_guard.IsEqual(input.length, 4) ? exports_guard.IsEqual(input[2], "readonly") ? AddReadonlyDeferred(input[3]) : AddOptionalDeferred(input[3]) : Unreachable2();
-}
-function ElementBaseMapping(input) {
-  if (!exports_guard.IsArray(input) || !exports_guard.IsEqual(input.length, 3))
-    return input;
-  const [isReadonly, type, isOptional] = input;
-  return isReadonly && isOptional ? AddReadonlyDeferred(AddOptionalDeferred(type)) : isReadonly && !isOptional ? AddReadonlyDeferred(type) : !isReadonly && isOptional ? AddOptionalDeferred(type) : type;
-}
-function ElementMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) ? Rest(input[1]) : exports_guard.IsEqual(input.length, 1) ? input[0] : Unreachable2();
-}
-function ElementListMapping(input) {
-  return Delimited(input);
-}
-function _Tuple_Mapping(input) {
-  return Tuple(input[1]);
-}
-function ParameterReadonlyOptionalMapping(input) {
-  return AddReadonlyDeferred(AddOptionalDeferred(input[4]));
-}
-function ParameterReadonlyMapping(input) {
-  return AddReadonlyDeferred(input[3]);
-}
-function ParameterOptionalMapping(input) {
-  return AddOptionalDeferred(input[3]);
-}
-function ParameterTypeMapping(input) {
-  return input[2];
-}
-function ParameterBaseMapping(input) {
-  return input;
-}
-function ParameterMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) ? Rest(input[1]) : exports_guard.IsEqual(input.length, 1) ? input[0] : Unreachable2();
-}
-function ParameterListMapping(input) {
-  return Delimited(input);
-}
-function _Function_Mapping(input) {
-  return _Function_(input[1], input[4]);
-}
-function _Constructor_Mapping(input) {
-  return Constructor(input[2], input[5]);
-}
-function ApplyReadonly(state, type) {
-  return exports_guard.IsEqual(state, "remove") ? RemoveReadonlyDeferred(type) : exports_guard.IsEqual(state, "add") ? AddReadonlyDeferred(type) : type;
-}
-function MappedReadonlyMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) && exports_guard.IsEqual(input[0], "-") ? "remove" : exports_guard.IsEqual(input.length, 2) && exports_guard.IsEqual(input[0], "+") ? "add" : exports_guard.IsEqual(input.length, 1) ? "add" : "none";
-}
-function ApplyOptional(state, type) {
-  return exports_guard.IsEqual(state, "remove") ? RemoveOptionalDeferred(type) : exports_guard.IsEqual(state, "add") ? AddOptionalDeferred(type) : type;
-}
-function MappedOptionalMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) && exports_guard.IsEqual(input[0], "-") ? "remove" : exports_guard.IsEqual(input.length, 2) && exports_guard.IsEqual(input[0], "+") ? "add" : exports_guard.IsEqual(input.length, 1) ? "add" : "none";
-}
-function MappedAsMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) ? [input[1]] : [];
-}
-function _Mapped_Mapping(input) {
-  return exports_guard.IsArray(input[6]) && exports_guard.IsEqual(input[6].length, 1) ? MappedDeferred(Identifier(input[3]), input[5], input[6][0], ApplyReadonly(input[1], ApplyOptional(input[8], input[10]))) : MappedDeferred(Identifier(input[3]), input[5], Ref(input[3]), ApplyReadonly(input[1], ApplyOptional(input[8], input[10])));
-}
-function ReferenceMapping(input) {
-  return Ref(input);
-}
-function WithBigIntMapping(input) {
-  return BigInt(input);
-}
-function WithNumberMapping(input) {
-  return parseFloat(input);
-}
-function WithBooleanMapping(input) {
-  return exports_guard.IsEqual(input, "true");
-}
-function WithStringMapping(input) {
-  return input;
-}
-function WithNullMapping(input) {
-  return null;
-}
-function WithUndefinedMapping(input) {
-  return;
-}
-function WithPropertyMapping(input) {
-  return { [input[0]]: input[2] };
-}
-function WithPropertyListMapping(input) {
-  return Delimited(input);
-}
-function WithObjectMappingReduce(propertyList) {
-  return propertyList.reduce((result, left) => {
-    return exports_memory.Assign(result, left);
-  }, {});
-}
-function WithObjectMapping(input) {
-  return WithObjectMappingReduce(input[1]);
-}
-function WithElementListMapping(input) {
-  return Delimited(input);
-}
-function WithArrayMapping(input) {
-  return input[1];
-}
-function WithValueMapping(input) {
-  return input;
-}
-function PatternBigIntMapping(input) {
-  return BigInt2();
-}
-function PatternStringMapping(input) {
-  return String2();
-}
-function PatternNumberMapping(input) {
-  return Number2();
-}
-function PatternIntegerMapping(input) {
-  return Integer();
-}
-function PatternNeverMapping(input) {
-  return Never();
-}
-function PatternTextMapping(input) {
-  return Literal(input);
-}
-function PatternBaseMapping(input) {
-  return input;
-}
-function PatternGroupMapping(input) {
-  return Union(input[1]);
-}
-function PatternUnionMapping(input) {
-  return input.length === 3 ? [...input[0], ...input[2]] : input.length === 1 ? [...input[0]] : [];
-}
-function PatternTermMapping(input) {
-  return [input[0], ...input[1]];
-}
-function PatternBodyMapping(input) {
-  return input;
-}
-function PatternMapping(input) {
-  return input[1];
-}
-function InterfaceDeclarationHeritageListMapping(input) {
-  return Delimited(input);
-}
-function InterfaceDeclarationHeritageMapping(input) {
-  return exports_guard.IsEqual(input.length, 2) ? input[1] : [];
-}
-function InterfaceDeclarationGenericMapping(input) {
-  const parameters = input[2];
-  const heritage = input[3];
-  const [properties2, patternProperties] = input[4];
-  const options = exports_guard.IsEqual(exports_guard.Keys(patternProperties).length, 0) ? {} : { patternProperties };
-  return { [input[1]]: Generic(parameters, InterfaceDeferred(heritage, properties2, options)) };
-}
-function InterfaceDeclarationMapping(input) {
-  const heritage = input[2];
-  const [properties2, patternProperties] = input[3];
-  const options = exports_guard.IsEqual(exports_guard.Keys(patternProperties).length, 0) ? {} : { patternProperties };
-  return { [input[1]]: InterfaceDeferred(heritage, properties2, options) };
-}
-function TypeAliasDeclarationGenericMapping(input) {
-  return { [input[1]]: Generic(input[2], input[4]) };
-}
-function TypeAliasDeclarationMapping(input) {
-  return { [input[1]]: input[3] };
-}
-function ExportKeywordMapping(input) {
-  return null;
-}
-function ModuleDeclarationDelimiterMapping(input) {
-  return input;
-}
-function ModuleDeclarationListMapping(input) {
-  return Delimited(input);
-}
-function ModuleDeclarationMapping(input) {
-  return input[1];
-}
-function ModuleMapping(input) {
-  const [moduleDeclaration, moduleDeclarationList] = [input[0], input[1]];
-  return ModuleDeferred(exports_memory.Assign(moduleDeclaration, PropertiesReduce(moduleDeclarationList)[0]));
-}
-function ScriptMapping(input) {
-  return input;
-}
-// node_modules/typebox/build/type/script/token/internal/match.mjs
-function IsMatch(value) {
-  return IsEqual(value.length, 2);
-}
-function Match2(input, ok, fail) {
-  return IsMatch(input) ? ok(input[0], input[1]) : fail();
-}
-
-// node_modules/typebox/build/type/script/token/internal/take.mjs
-function TakeVariant(variant, input) {
-  return IsEqual(input.indexOf(variant), 0) ? [variant, input.slice(variant.length)] : [];
-}
-function Take(variants, input) {
-  for (let i2 = 0;i2 < variants.length; i2++) {
-    const result = TakeVariant(variants[i2], input);
-    if (IsMatch(result))
-      return result;
-  }
-  return [];
-}
-
 // node_modules/typebox/build/type/script/token/internal/char.mjs
 function Range(start2, end) {
-  return Array.from({ length: end - start2 + 1 }, (_2, i2) => String.fromCharCode(start2 + i2));
+  return Array.from({ length: end - start2 + 1 }, (_, i2) => String.fromCharCode(start2 + i2));
 }
 var Alpha = [
   ...Range(97, 122),
@@ -23616,2370 +17819,58 @@ var Alpha = [
 var Zero = "0";
 var NonZero = Range(49, 57);
 var Digit = [Zero, ...NonZero];
-var WhiteSpace = " ";
-var NewLine = `
-`;
 var UnderScore = "_";
-var Dot = ".";
 var DollarSign = "$";
-var Hyphen = "-";
-
-// node_modules/typebox/build/type/script/token/internal/trim.mjs
-var LineComment = "//";
-var OpenComment = "/*";
-var CloseComment = "*/";
-function DiscardMultilineComment(input) {
-  const index = input.indexOf(CloseComment);
-  const result = IsEqual(index, -1) ? "" : input.slice(index + 2);
-  return result;
-}
-function DiscardLineComment(input) {
-  const index = input.indexOf(NewLine);
-  const result = IsEqual(index, -1) ? "" : input.slice(index);
-  return result;
-}
-function TrimStartUntilNewline(input) {
-  return input.replace(/^[ \t\r\f\v]+/, "");
-}
-function TrimWhitespace(input) {
-  const trimmed = TrimStartUntilNewline(input);
-  return trimmed.startsWith(OpenComment) ? TrimWhitespace(DiscardMultilineComment(trimmed.slice(2))) : trimmed.startsWith(LineComment) ? TrimWhitespace(DiscardLineComment(trimmed.slice(2))) : trimmed;
-}
-function Trim(input) {
-  const trimmed = input.trimStart();
-  return trimmed.startsWith(OpenComment) ? Trim(DiscardMultilineComment(trimmed.slice(2))) : trimmed.startsWith(LineComment) ? Trim(DiscardLineComment(trimmed.slice(2))) : trimmed;
-}
-
-// node_modules/typebox/build/type/script/token/internal/optional.mjs
-function Optional2(value, input) {
-  return Match2(Take([value], input), (Optional3, Rest2) => [Optional3, Rest2], () => ["", input]);
-}
-
-// node_modules/typebox/build/type/script/token/internal/many.mjs
-function IsDiscard(discard2, input) {
-  return discard2.includes(input);
-}
-function Many(allowed, discard2, input, result = "") {
-  return Match2(Take(allowed, input), (Char, Rest2) => IsDiscard(discard2, Char) ? Many(allowed, discard2, Rest2, result) : Many(allowed, discard2, Rest2, `${result}${Char}`), () => [result, input]);
-}
 
 // node_modules/typebox/build/type/script/token/unsigned_integer.mjs
-function TakeNonZero(input) {
-  return Take(NonZero, input);
-}
 var AllowedDigits = [...Digit, UnderScore];
-function TakeDigits(input) {
-  return Many(AllowedDigits, [UnderScore], input);
-}
-function TakeUnsignedInteger(input) {
-  return Match2(Take([Zero], input), (Zero2, ZeroRest) => [Zero2, ZeroRest], () => Match2(TakeNonZero(input), (NonZero2, NonZeroRest) => Match2(TakeDigits(NonZeroRest), (Digits, DigitsRest) => [`${NonZero2}${Digits}`, DigitsRest], () => []), () => []));
-}
-function UnsignedInteger(input) {
-  return TakeUnsignedInteger(Trim(input));
-}
-
-// node_modules/typebox/build/type/script/token/integer.mjs
-function TakeSign(input) {
-  return Optional2(Hyphen, input);
-}
-function TakeSignedInteger(input) {
-  return Match2(TakeSign(input), (Sign, SignRest) => Match2(UnsignedInteger(SignRest), (UnsignedInteger2, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger2}`, UnsignedIntegerRest], () => []), () => []);
-}
-function Integer2(input) {
-  return TakeSignedInteger(Trim(input));
-}
-
-// node_modules/typebox/build/type/script/token/bigint.mjs
-function TakeBigInt(input) {
-  return Match2(Integer2(input), (Integer3, IntegerRest) => Match2(Take(["n"], IntegerRest), (_N, NRest) => [`${Integer3}`, NRest], () => []), () => []);
-}
-function BigInt3(input) {
-  return TakeBigInt(input);
-}
-// node_modules/typebox/build/type/script/token/const.mjs
-function TakeConst(const_, input) {
-  return Take([const_], input);
-}
-function Const(const_, input) {
-  return IsEqual(const_, "") ? ["", input] : const_.startsWith(NewLine) ? TakeConst(const_, TrimWhitespace(input)) : const_.startsWith(WhiteSpace) ? TakeConst(const_, input) : TakeConst(const_, Trim(input));
-}
 // node_modules/typebox/build/type/script/token/ident.mjs
 var Initial = [...Alpha, UnderScore, DollarSign];
-function TakeInitial(input) {
-  return Take(Initial, input);
-}
 var Remaining = [...Initial, ...Digit];
-function TakeRemaining(input, result = "") {
-  return Match2(Take(Remaining, input), (Remaining2, RemainingRest) => TakeRemaining(RemainingRest, `${result}${Remaining2}`), () => [result, input]);
-}
-function TakeIdent(input) {
-  return Match2(TakeInitial(input), (Initial2, InitialRest) => Match2(TakeRemaining(InitialRest), (Remaining2, RemainingRest) => [`${Initial2}${Remaining2}`, RemainingRest], () => []), () => []);
-}
-function Ident(input) {
-  return TakeIdent(Trim(input));
-}
 // node_modules/typebox/build/type/script/token/unsigned_number.mjs
 var AllowedDigits2 = [...Digit, UnderScore];
-function IsLeadingDot(input) {
-  return IsMatch(Take([Dot], input));
-}
-function TakeFractional(input) {
-  return Match2(Many(AllowedDigits2, [UnderScore], input), (Digits, DigitsRest) => IsEqual(Digits, "") ? [] : [Digits, DigitsRest], () => []);
-}
-function LeadingDot(input) {
-  return Match2(Take([Dot], input), (Dot2, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`0${Dot2}${Fractional}`, FractionalRest], () => []), () => []);
-}
-function LeadingInteger(input) {
-  return Match2(UnsignedInteger(input), (Integer3, IntegerRest) => Match2(Take([Dot], IntegerRest), (Dot2, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`${Integer3}${Dot2}${Fractional}`, FractionalRest], () => [`${Integer3}`, DotRest]), () => [`${Integer3}`, IntegerRest]), () => []);
-}
-function TakeUnsignedNumber(input) {
-  return IsLeadingDot(input) ? LeadingDot(input) : LeadingInteger(input);
-}
-function UnsignedNumber(input) {
-  return TakeUnsignedNumber(Trim(input));
-}
-
-// node_modules/typebox/build/type/script/token/number.mjs
-function TakeSign2(input) {
-  return Optional2(Hyphen, input);
-}
-function TakeSignedNumber(input) {
-  return Match2(TakeSign2(input), (Sign, SignRest) => Match2(UnsignedNumber(SignRest), (UnsignedInteger2, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger2}`, UnsignedIntegerRest], () => []), () => []);
-}
-function Number3(input) {
-  return TakeSignedNumber(Trim(input));
-}
-// node_modules/typebox/build/type/script/token/until.mjs
-function TakeOne(input) {
-  const result = IsEqual(input, "") ? [] : [input.slice(0, 1), input.slice(1)];
-  return result;
-}
-function IsInputMatchSentinal(end, input) {
-  return ShiftLeft(end, (left, right) => input.startsWith(left) ? true : IsInputMatchSentinal(right, input), () => false);
-}
-function Until(end, input, result = "") {
-  return Match2(TakeOne(input), (One, Rest2) => IsInputMatchSentinal(end, input) ? [result, input] : Until(end, Rest2, `${result}${One}`), () => []);
-}
-
-// node_modules/typebox/build/type/script/token/span.mjs
-function MultiLine(start2, end, input) {
-  return Match2(Take([start2], input), (_2, Rest2) => Match2(Until([end], Rest2), (Until2, UntilRest) => Match2(Take([end], UntilRest), (_3, Rest3) => [`${Until2}`, Rest3], () => []), () => []), () => []);
-}
-function SingleLine(start2, end, input) {
-  return Match2(Take([start2], input), (_2, Rest2) => Match2(Until([NewLine, end], Rest2), (Until2, UntilRest) => Match2(Take([end], UntilRest), (_3, EndRest) => [`${Until2}`, EndRest], () => []), () => []), () => []);
-}
-function Span(start2, end, multiLine, input) {
-  return multiLine ? MultiLine(start2, end, Trim(input)) : SingleLine(start2, end, Trim(input));
-}
-// node_modules/typebox/build/type/script/token/string.mjs
-function TakeInitial2(quotes, input) {
-  return Take(quotes, input);
-}
-function TakeSpan(quote2, input) {
-  return Span(quote2, quote2, false, input);
-}
-function TakeString(quotes, input) {
-  return Match2(TakeInitial2(quotes, input), (Initial2, InitialRest) => TakeSpan(Initial2, `${Initial2}${InitialRest}`), () => []);
-}
-function String3(quotes, input) {
-  return TakeString(quotes, Trim(input));
-}
-// node_modules/typebox/build/type/script/token/until_1.mjs
-function Until_1(end, input) {
-  return Match2(Until(end, input), (Until2, UntilRest) => IsEqual(Until2, "") ? [] : [Until2, UntilRest], () => []);
-}
-// node_modules/typebox/build/type/script/parser.mjs
-var If = (result, left, right = () => []) => result.length === 2 ? left(result) : right();
-var GenericParameterExtendsEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [GenericParameterExtendsEqualsMapping(_0), input2]);
-var GenericParameterExtends = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("extends", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterExtendsMapping(_0), input2]);
-var GenericParameterEquals = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParameterEqualsMapping(_0), input2]);
-var GenericParameterIdentifier = (input) => If(Ident(input), ([_0, input2]) => [GenericParameterIdentifierMapping(_0), input2]);
-var GenericParameter = (input) => If(If(GenericParameterExtendsEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterExtends(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterEquals(input), ([_0, input2]) => [_0, input2], () => If(GenericParameterIdentifier(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [GenericParameterMapping(_0), input2]);
-var GenericParameterList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(GenericParameter(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericParameterList_0(input2, [...result, _0]), () => [result, input]);
-var GenericParameterList = (input) => If(If(If(GenericParameter(input), ([_0, input2]) => If(GenericParameterList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [GenericParameterListMapping(_0), input2]);
-var GenericParameters = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericParameterList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericParametersMapping(_0), input2]);
-var GenericCallArgumentList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => GenericCallArgumentList_0(input2, [...result, _0]), () => [result, input]);
-var GenericCallArgumentList = (input) => If(If(If(Type(input), ([_0, input2]) => If(GenericCallArgumentList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [GenericCallArgumentListMapping(_0), input2]);
-var GenericCallArguments = (input) => If(If(Const("<", input), ([_0, input2]) => If(GenericCallArgumentList(input2), ([_1, input3]) => If(Const(">", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericCallArgumentsMapping(_0), input2]);
-var GenericCall = (input) => If(If(Ident(input), ([_0, input2]) => If(GenericCallArguments(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [GenericCallMapping(_0), input2]);
-var OptionalSemiColon = (input) => If(If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalSemiColonMapping(_0), input2]);
-var KeywordString = (input) => If(Const("string", input), ([_0, input2]) => [KeywordStringMapping(_0), input2]);
-var KeywordNumber = (input) => If(Const("number", input), ([_0, input2]) => [KeywordNumberMapping(_0), input2]);
-var KeywordBoolean = (input) => If(Const("boolean", input), ([_0, input2]) => [KeywordBooleanMapping(_0), input2]);
-var KeywordUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [KeywordUndefinedMapping(_0), input2]);
-var KeywordNull = (input) => If(Const("null", input), ([_0, input2]) => [KeywordNullMapping(_0), input2]);
-var KeywordInteger = (input) => If(Const("integer", input), ([_0, input2]) => [KeywordIntegerMapping(_0), input2]);
-var KeywordBigInt = (input) => If(Const("bigint", input), ([_0, input2]) => [KeywordBigIntMapping(_0), input2]);
-var KeywordUnknown = (input) => If(Const("unknown", input), ([_0, input2]) => [KeywordUnknownMapping(_0), input2]);
-var KeywordAny = (input) => If(Const("any", input), ([_0, input2]) => [KeywordAnyMapping(_0), input2]);
-var KeywordObject = (input) => If(Const("object", input), ([_0, input2]) => [KeywordObjectMapping(_0), input2]);
-var KeywordNever = (input) => If(Const("never", input), ([_0, input2]) => [KeywordNeverMapping(_0), input2]);
-var KeywordSymbol = (input) => If(Const("symbol", input), ([_0, input2]) => [KeywordSymbolMapping(_0), input2]);
-var KeywordVoid = (input) => If(Const("void", input), ([_0, input2]) => [KeywordVoidMapping(_0), input2]);
-var KeywordThis = (input) => If(Const("this", input), ([_0, input2]) => [KeywordThisMapping(_0), input2]);
-var TemplateInterpolate = (input) => If(If(Const("${", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateInterpolateMapping(_0), input2]);
-var TemplateSpan = (input) => If(Until(["${", "`"], input), ([_0, input2]) => [TemplateSpanMapping(_0), input2]);
-var TemplateBody = (input) => If(If(If(TemplateSpan(input), ([_0, input2]) => If(TemplateInterpolate(input2), ([_1, input3]) => If(TemplateBody(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(TemplateSpan(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [TemplateBodyMapping(_0), input2]);
-var TemplateLiteralTypes = (input) => If(If(Const("`", input), ([_0, input2]) => If(TemplateBody(input2), ([_1, input3]) => If(Const("`", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [TemplateLiteralTypesMapping(_0), input2]);
-var TemplateLiteral = (input) => If(TemplateLiteralTypes(input), ([_0, input2]) => [TemplateLiteralMapping(_0), input2]);
-var Dependent2 = (input) => If(If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const("else", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If(If(Const("if", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("then", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [DependentMapping(_0), input2]);
-var LiteralBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [LiteralBigIntMapping(_0), input2]);
-var LiteralBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [LiteralBooleanMapping(_0), input2]);
-var LiteralNumber = (input) => If(Number3(input), ([_0, input2]) => [LiteralNumberMapping(_0), input2]);
-var LiteralString = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [LiteralStringMapping(_0), input2]);
-var KeyOf = (input) => If(If(If(Const("keyof", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [KeyOfMapping(_0), input2]);
-var IndexArray_0 = (input, result = []) => If(If(If(Const("[", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(Const("[", input), ([_0, input2]) => If(Const("]", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => IndexArray_0(input2, [...result, _0]), () => [result, input]);
-var IndexArray = (input) => If(IndexArray_0(input), ([_0, input2]) => [IndexArrayMapping(_0), input2]);
-var Extends2 = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const("?", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => If(Const(":", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExtendsMapping(_0), input2]);
-var Base = (input) => If(If(If(Const("(", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(KeywordString(input), ([_0, input2]) => [_0, input2], () => If(KeywordNumber(input), ([_0, input2]) => [_0, input2], () => If(KeywordBoolean(input), ([_0, input2]) => [_0, input2], () => If(KeywordUndefined(input), ([_0, input2]) => [_0, input2], () => If(KeywordNull(input), ([_0, input2]) => [_0, input2], () => If(KeywordInteger(input), ([_0, input2]) => [_0, input2], () => If(KeywordBigInt(input), ([_0, input2]) => [_0, input2], () => If(KeywordUnknown(input), ([_0, input2]) => [_0, input2], () => If(KeywordAny(input), ([_0, input2]) => [_0, input2], () => If(KeywordObject(input), ([_0, input2]) => [_0, input2], () => If(KeywordNever(input), ([_0, input2]) => [_0, input2], () => If(KeywordSymbol(input), ([_0, input2]) => [_0, input2], () => If(KeywordVoid(input), ([_0, input2]) => [_0, input2], () => If(KeywordThis(input), ([_0, input2]) => [_0, input2], () => If(LiteralBigInt(input), ([_0, input2]) => [_0, input2], () => If(LiteralBoolean(input), ([_0, input2]) => [_0, input2], () => If(LiteralNumber(input), ([_0, input2]) => [_0, input2], () => If(LiteralString(input), ([_0, input2]) => [_0, input2], () => If(TemplateLiteral(input), ([_0, input2]) => [_0, input2], () => If(Dependent2(input), ([_0, input2]) => [_0, input2], () => If(_Object_2(input), ([_0, input2]) => [_0, input2], () => If(_Tuple_(input), ([_0, input2]) => [_0, input2], () => If(_Constructor_(input), ([_0, input2]) => [_0, input2], () => If(_Function_2(input), ([_0, input2]) => [_0, input2], () => If(_Mapped_(input), ([_0, input2]) => [_0, input2], () => If(GenericCall(input), ([_0, input2]) => [_0, input2], () => If(Reference(input), ([_0, input2]) => [_0, input2], () => [])))))))))))))))))))))))))))), ([_0, input2]) => [BaseMapping(_0), input2]);
-var With = (input) => If(If(If(Const("with", input), ([_0, input2]) => If(WithObject(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithMapping(_0), input2]);
-var Factor = (input) => If(If(KeyOf(input), ([_0, input2]) => If(Base(input2), ([_1, input3]) => If(IndexArray(input3), ([_2, input4]) => If(Extends2(input4), ([_3, input5]) => If(With(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [FactorMapping(_0), input2]);
-var ExprTermTail = (input) => If(If(If(Const("&", input), ([_0, input2]) => If(Factor(input2), ([_1, input3]) => If(ExprTermTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTermTailMapping(_0), input2]);
-var ExprTerm = (input) => If(If(Factor(input), ([_0, input2]) => If(ExprTermTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprTermMapping(_0), input2]);
-var ExprTail = (input) => If(If(If(Const("|", input), ([_0, input2]) => If(ExprTerm(input2), ([_1, input3]) => If(ExprTail(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExprTailMapping(_0), input2]);
-var Expr = (input) => If(If(ExprTerm(input), ([_0, input2]) => If(ExprTail(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprMapping(_0), input2]);
-var ExprReadonly = (input) => If(If(Const("readonly", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprReadonlyMapping(_0), input2]);
-var ExprPipe = (input) => If(If(Const("|", input), ([_0, input2]) => If(Expr(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ExprPipeMapping(_0), input2]);
-var GenericType = (input) => If(If(GenericParameters(input), ([_0, input2]) => If(Const("=", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [GenericTypeMapping(_0), input2]);
-var InferType = (input) => If(If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("extends", input3), ([_2, input4]) => If(Expr(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Const("infer", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InferTypeMapping(_0), input2]);
-var Type = (input) => If(If(InferType(input), ([_0, input2]) => [_0, input2], () => If(ExprPipe(input), ([_0, input2]) => [_0, input2], () => If(ExprReadonly(input), ([_0, input2]) => [_0, input2], () => If(Expr(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [TypeMapping(_0), input2]);
-var PropertyKeyNumber = (input) => If(Number3(input), ([_0, input2]) => [PropertyKeyNumberMapping(_0), input2]);
-var PropertyKeyIdent = (input) => If(Ident(input), ([_0, input2]) => [PropertyKeyIdentMapping(_0), input2]);
-var PropertyKeyQuoted = (input) => If(String3(["'", '"'], input), ([_0, input2]) => [PropertyKeyQuotedMapping(_0), input2]);
-var PropertyKeyIndex = (input) => If(If(Const("[", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(If(KeywordInteger(input4), ([_02, input5]) => [_02, input5], () => If(KeywordNumber(input4), ([_02, input5]) => [_02, input5], () => If(KeywordString(input4), ([_02, input5]) => [_02, input5], () => If(KeywordSymbol(input4), ([_02, input5]) => [_02, input5], () => [])))), ([_3, input5]) => If(Const("]", input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyKeyIndexMapping(_0), input2]);
-var PropertyKey = (input) => If(If(PropertyKeyNumber(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIdent(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyQuoted(input), ([_0, input2]) => [_0, input2], () => If(PropertyKeyIndex(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [PropertyKeyMapping(_0), input2]);
-var Readonly2 = (input) => If(If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ReadonlyMapping(_0), input2]);
-var Optional3 = (input) => If(If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [OptionalMapping(_0), input2]);
-var Property = (input) => If(If(Readonly2(input), ([_0, input2]) => If(PropertyKey(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => If(Const(":", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [PropertyMapping(_0), input2]);
-var PropertyDelimiter = (input) => If(If(If(Const(",", input), ([_0, input2]) => If(Const(`
-`, input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => If(Const(`
-`, input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(",", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(`
-`, input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))))), ([_0, input2]) => [PropertyDelimiterMapping(_0), input2]);
-var PropertyList_0 = (input, result = []) => If(If(PropertyDelimiter(input), ([_0, input2]) => If(Property(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => PropertyList_0(input2, [...result, _0]), () => [result, input]);
-var PropertyList = (input) => If(If(If(Property(input), ([_0, input2]) => If(PropertyList_0(input2), ([_1, input3]) => If(If(PropertyDelimiter(input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PropertyListMapping(_0), input2]);
-var Properties = (input) => If(If(Const("{", input), ([_0, input2]) => If(PropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PropertiesMapping(_0), input2]);
-var _Object_2 = (input) => If(Properties(input), ([_0, input2]) => [_Object_Mapping(_0), input2]);
-var ElementNamed = (input) => If(If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [_0, input2], () => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ElementNamedMapping(_0), input2]);
-var ElementBase = (input) => If(If(ElementNamed(input), ([_0, input2]) => [_0, input2], () => If(If(Readonly2(input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => If(Optional3(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementBaseMapping(_0), input2]);
-var Element = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ElementBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ElementBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementMapping(_0), input2]);
-var ElementList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Element(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ElementList_0(input2, [...result, _0]), () => [result, input]);
-var ElementList = (input) => If(If(If(Element(input), ([_0, input2]) => If(ElementList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ElementListMapping(_0), input2]);
-var _Tuple_ = (input) => If(If(Const("[", input), ([_0, input2]) => If(ElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_Tuple_Mapping(_0), input2]);
-var ParameterReadonlyOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Const("readonly", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [ParameterReadonlyOptionalMapping(_0), input2]);
-var ParameterReadonly = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Const("readonly", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterReadonlyMapping(_0), input2]);
-var ParameterOptional = (input) => If(If(Ident(input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => If(Const(":", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [ParameterOptionalMapping(_0), input2]);
-var ParameterType = (input) => If(If(Ident(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(Type(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ParameterTypeMapping(_0), input2]);
-var ParameterBase = (input) => If(If(ParameterReadonlyOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterReadonly(input), ([_0, input2]) => [_0, input2], () => If(ParameterOptional(input), ([_0, input2]) => [_0, input2], () => If(ParameterType(input), ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [ParameterBaseMapping(_0), input2]);
-var Parameter2 = (input) => If(If(If(Const("...", input), ([_0, input2]) => If(ParameterBase(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(ParameterBase(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterMapping(_0), input2]);
-var ParameterList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Parameter2(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ParameterList_0(input2, [...result, _0]), () => [result, input]);
-var ParameterList = (input) => If(If(If(Parameter2(input), ([_0, input2]) => If(ParameterList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ParameterListMapping(_0), input2]);
-var _Function_2 = (input) => If(If(Const("(", input), ([_0, input2]) => If(ParameterList(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => If(Const("=>", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [_Function_Mapping(_0), input2]);
-var _Constructor_ = (input) => If(If(Const("new", input), ([_0, input2]) => If(Const("(", input2), ([_1, input3]) => If(ParameterList(input3), ([_2, input4]) => If(Const(")", input4), ([_3, input5]) => If(Const("=>", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => [[_0, _1, _2, _3, _4, _5], input7])))))), ([_0, input2]) => [_Constructor_Mapping(_0), input2]);
-var MappedReadonly = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("readonly", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("readonly", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedReadonlyMapping(_0), input2]);
-var MappedOptional = (input) => If(If(If(Const("+", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("-", input), ([_0, input2]) => If(Const("?", input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const("?", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])))), ([_0, input2]) => [MappedOptionalMapping(_0), input2]);
-var MappedAs = (input) => If(If(If(Const("as", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [MappedAsMapping(_0), input2]);
-var _Mapped_ = (input) => If(If(Const("{", input), ([_0, input2]) => If(MappedReadonly(input2), ([_1, input3]) => If(Const("[", input3), ([_2, input4]) => If(Ident(input4), ([_3, input5]) => If(Const("in", input5), ([_4, input6]) => If(Type(input6), ([_5, input7]) => If(MappedAs(input7), ([_6, input8]) => If(Const("]", input8), ([_7, input9]) => If(MappedOptional(input9), ([_8, input10]) => If(Const(":", input10), ([_9, input11]) => If(Type(input11), ([_10, input12]) => If(OptionalSemiColon(input12), ([_11, input13]) => If(Const("}", input13), ([_12, input14]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input14]))))))))))))), ([_0, input2]) => [_Mapped_Mapping(_0), input2]);
-var Reference = (input) => If(Ident(input), ([_0, input2]) => [ReferenceMapping(_0), input2]);
-var WithBigInt = (input) => If(BigInt3(input), ([_0, input2]) => [WithBigIntMapping(_0), input2]);
-var WithNumber = (input) => If(Number3(input), ([_0, input2]) => [WithNumberMapping(_0), input2]);
-var WithBoolean = (input) => If(If(Const("true", input), ([_0, input2]) => [_0, input2], () => If(Const("false", input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithBooleanMapping(_0), input2]);
-var WithString = (input) => If(String3(['"', "'"], input), ([_0, input2]) => [WithStringMapping(_0), input2]);
-var WithNull = (input) => If(Const("null", input), ([_0, input2]) => [WithNullMapping(_0), input2]);
-var WithUndefined = (input) => If(Const("undefined", input), ([_0, input2]) => [WithUndefinedMapping(_0), input2]);
-var WithProperty = (input) => If(If(PropertyKey(input), ([_0, input2]) => If(Const(":", input2), ([_1, input3]) => If(WithValue(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithPropertyMapping(_0), input2]);
-var WithPropertyList_0 = (input, result = []) => If(If(PropertyDelimiter(input), ([_0, input2]) => If(WithProperty(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithPropertyList_0(input2, [...result, _0]), () => [result, input]);
-var WithPropertyList = (input) => If(If(If(WithProperty(input), ([_0, input2]) => If(WithPropertyList_0(input2), ([_1, input3]) => If(If(PropertyDelimiter(input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithPropertyListMapping(_0), input2]);
-var WithObject = (input) => If(If(Const("{", input), ([_0, input2]) => If(WithPropertyList(input2), ([_1, input3]) => If(Const("}", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithObjectMapping(_0), input2]);
-var WithElementList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(WithValue(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => WithElementList_0(input2, [...result, _0]), () => [result, input]);
-var WithElementList = (input) => If(If(If(WithValue(input), ([_0, input2]) => If(WithElementList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [WithElementListMapping(_0), input2]);
-var WithArray = (input) => If(If(Const("[", input), ([_0, input2]) => If(WithElementList(input2), ([_1, input3]) => If(Const("]", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [WithArrayMapping(_0), input2]);
-var WithValue = (input) => If(If(WithBigInt(input), ([_0, input2]) => [_0, input2], () => If(WithNumber(input), ([_0, input2]) => [_0, input2], () => If(WithBoolean(input), ([_0, input2]) => [_0, input2], () => If(WithString(input), ([_0, input2]) => [_0, input2], () => If(WithNull(input), ([_0, input2]) => [_0, input2], () => If(WithUndefined(input), ([_0, input2]) => [_0, input2], () => If(WithObject(input), ([_0, input2]) => [_0, input2], () => If(WithArray(input), ([_0, input2]) => [_0, input2], () => [])))))))), ([_0, input2]) => [WithValueMapping(_0), input2]);
-var PatternBigInt = (input) => If(Const("-?(?:0|[1-9][0-9]*)n", input), ([_0, input2]) => [PatternBigIntMapping(_0), input2]);
-var PatternString = (input) => If(Const(".*", input), ([_0, input2]) => [PatternStringMapping(_0), input2]);
-var PatternNumber = (input) => If(Const("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", input), ([_0, input2]) => [PatternNumberMapping(_0), input2]);
-var PatternInteger = (input) => If(Const("-?(?:0|[1-9][0-9]*)", input), ([_0, input2]) => [PatternIntegerMapping(_0), input2]);
-var PatternNever = (input) => If(Const("(?!)", input), ([_0, input2]) => [PatternNeverMapping(_0), input2]);
-var PatternText = (input) => If(Until_1(["-?(?:0|[1-9][0-9]*)n", ".*", "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", "-?(?:0|[1-9][0-9]*)", "(?!)", "(", ")", "$", "|"], input), ([_0, input2]) => [PatternTextMapping(_0), input2]);
-var PatternBase = (input) => If(If(PatternBigInt(input), ([_0, input2]) => [_0, input2], () => If(PatternString(input), ([_0, input2]) => [_0, input2], () => If(PatternNumber(input), ([_0, input2]) => [_0, input2], () => If(PatternInteger(input), ([_0, input2]) => [_0, input2], () => If(PatternNever(input), ([_0, input2]) => [_0, input2], () => If(PatternGroup(input), ([_0, input2]) => [_0, input2], () => If(PatternText(input), ([_0, input2]) => [_0, input2], () => []))))))), ([_0, input2]) => [PatternBaseMapping(_0), input2]);
-var PatternGroup = (input) => If(If(Const("(", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const(")", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternGroupMapping(_0), input2]);
-var PatternUnion = (input) => If(If(If(PatternTerm(input), ([_0, input2]) => If(Const("|", input2), ([_1, input3]) => If(PatternUnion(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If(If(PatternTerm(input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [PatternUnionMapping(_0), input2]);
-var PatternTerm = (input) => If(If(PatternBase(input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [PatternTermMapping(_0), input2]);
-var PatternBody = (input) => If(If(PatternUnion(input), ([_0, input2]) => [_0, input2], () => If(PatternTerm(input), ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [PatternBodyMapping(_0), input2]);
-var Pattern = (input) => If(If(Const("^", input), ([_0, input2]) => If(PatternBody(input2), ([_1, input3]) => If(Const("$", input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [PatternMapping(_0), input2]);
-var InterfaceDeclarationHeritageList_0 = (input, result = []) => If(If(Const(",", input), ([_0, input2]) => If(Type(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => InterfaceDeclarationHeritageList_0(input2, [...result, _0]), () => [result, input]);
-var InterfaceDeclarationHeritageList = (input) => If(If(If(Type(input), ([_0, input2]) => If(InterfaceDeclarationHeritageList_0(input2), ([_1, input3]) => If(If(Const(",", input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageListMapping(_0), input2]);
-var InterfaceDeclarationHeritage = (input) => If(If(If(Const("extends", input), ([_0, input2]) => If(InterfaceDeclarationHeritageList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [InterfaceDeclarationHeritageMapping(_0), input2]);
-var InterfaceDeclarationGeneric = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(InterfaceDeclarationHeritage(input4), ([_3, input5]) => If(Properties(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [InterfaceDeclarationGenericMapping(_0), input2]);
-var InterfaceDeclaration = (input) => If(If(Const("interface", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(InterfaceDeclarationHeritage(input3), ([_2, input4]) => If(Properties(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [InterfaceDeclarationMapping(_0), input2]);
-var TypeAliasDeclarationGeneric = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(GenericParameters(input3), ([_2, input4]) => If(Const("=", input4), ([_3, input5]) => If(Type(input5), ([_4, input6]) => [[_0, _1, _2, _3, _4], input6]))))), ([_0, input2]) => [TypeAliasDeclarationGenericMapping(_0), input2]);
-var TypeAliasDeclaration = (input) => If(If(Const("type", input), ([_0, input2]) => If(Ident(input2), ([_1, input3]) => If(Const("=", input3), ([_2, input4]) => If(Type(input4), ([_3, input5]) => [[_0, _1, _2, _3], input5])))), ([_0, input2]) => [TypeAliasDeclarationMapping(_0), input2]);
-var ExportKeyword = (input) => If(If(If(Const("export", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ExportKeywordMapping(_0), input2]);
-var ModuleDeclarationDelimiter = (input) => If(If(If(Const(";", input), ([_0, input2]) => If(Const(`
-`, input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [_0, input2], () => If(If(Const(";", input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => If(If(Const(`
-`, input), ([_0, input2]) => [[_0], input2]), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ModuleDeclarationDelimiterMapping(_0), input2]);
-var ModuleDeclarationList_0 = (input, result = []) => If(If(ModuleDeclarationDelimiter(input), ([_0, input2]) => If(ModuleDeclaration(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => ModuleDeclarationList_0(input2, [...result, _0]), () => [result, input]);
-var ModuleDeclarationList = (input) => If(If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList_0(input2), ([_1, input3]) => If(If(ModuleDeclarationDelimiter(input3), ([_02, input4]) => [[_02], input4], () => [[], input3]), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [_0, input2], () => If([[], input], ([_0, input2]) => [_0, input2], () => [])), ([_0, input2]) => [ModuleDeclarationListMapping(_0), input2]);
-var ModuleDeclaration = (input) => If(If(ExportKeyword(input), ([_0, input2]) => If(If(InterfaceDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(InterfaceDeclaration(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclarationGeneric(input2), ([_02, input3]) => [_02, input3], () => If(TypeAliasDeclaration(input2), ([_02, input3]) => [_02, input3], () => [])))), ([_1, input3]) => If(OptionalSemiColon(input3), ([_2, input4]) => [[_0, _1, _2], input4]))), ([_0, input2]) => [ModuleDeclarationMapping(_0), input2]);
-var Module4 = (input) => If(If(ModuleDeclaration(input), ([_0, input2]) => If(ModuleDeclarationList(input2), ([_1, input3]) => [[_0, _1], input3])), ([_0, input2]) => [ModuleMapping(_0), input2]);
-var Script = (input) => If(If(Module4(input), ([_0, input2]) => [_0, input2], () => If(GenericType(input), ([_0, input2]) => [_0, input2], () => If(Type(input), ([_0, input2]) => [_0, input2], () => []))), ([_0, input2]) => [ScriptMapping(_0), input2]);
-
-// node_modules/typebox/build/type/engine/patterns/template.mjs
-function ParseTemplateIntoTypes(template) {
-  const parsed = TemplateLiteralTypes(`\`${template}\``);
-  const result = exports_guard.IsEqual(parsed.length, 2) ? parsed[0] : Unreachable();
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/template_literal/encode.mjs
-function JoinString(input) {
-  return input.join("|");
-}
-function UnwrapTemplateLiteralPattern(pattern) {
-  return pattern.slice(1, pattern.length - 1);
-}
-function EncodeLiteral(value, right, pattern) {
-  return EncodeTypes(right, `${pattern}${value}`);
-}
-function EncodeBigInt(right, pattern) {
-  return EncodeTypes(right, `${pattern}${BigIntPattern}`);
-}
-function EncodeInteger(right, pattern) {
-  return EncodeTypes(right, `${pattern}${IntegerPattern}`);
-}
-function EncodeNumber(right, pattern) {
-  return EncodeTypes(right, `${pattern}${NumberPattern}`);
-}
-function EncodeBoolean(right, pattern) {
-  return EncodeType(Union([Literal("false"), Literal("true")]), right, pattern);
-}
-function EncodeString(right, pattern) {
-  return EncodeTypes(right, `${pattern}${StringPattern}`);
-}
-function EncodeTemplateLiteral(templatePattern, right, pattern) {
-  return EncodeTypes(right, `${pattern}${UnwrapTemplateLiteralPattern(templatePattern)}`);
-}
-function EncodeTemplateLiteralDeferred(types, right, pattern) {
-  const templateLiteral = TemplateLiteralAction(types, {});
-  const result = EncodeType(templateLiteral, right, pattern);
-  return result;
-}
-function EncodeEnum(values, right, pattern) {
-  const evaluated = EvaluateEnum(values);
-  return EncodeType(evaluated, right, pattern);
-}
-function EncodeUnion(types, right, pattern, result = []) {
-  return exports_guard.ShiftLeft(types, (head, tail) => EncodeUnion(tail, right, pattern, [...result, EncodeType(head, [], "")]), () => EncodeTypes(right, `${pattern}(${JoinString(result)})`));
-}
-function EncodeType(type, right, pattern) {
-  return IsEnum(type) ? EncodeEnum(type.enum, right, pattern) : IsInteger2(type) ? EncodeInteger(right, pattern) : IsLiteral(type) ? EncodeLiteral(type.const, right, pattern) : IsBigInt2(type) ? EncodeBigInt(right, pattern) : IsBoolean3(type) ? EncodeBoolean(right, pattern) : IsNumber3(type) ? EncodeNumber(right, pattern) : IsString3(type) ? EncodeString(right, pattern) : IsTemplateLiteral(type) ? EncodeTemplateLiteral(type.pattern, right, pattern) : IsTemplateLiteralDeferred(type) ? EncodeTemplateLiteralDeferred(type.parameters[0], right, pattern) : IsUnion(type) ? EncodeUnion(type.anyOf, right, pattern) : NeverPattern;
-}
-function EncodeTypes(types, pattern) {
-  return exports_guard.ShiftLeft(types, (left, right) => EncodeType(left, right, pattern), () => pattern);
-}
-function EncodePattern(types) {
-  const encoded = EncodeTypes(types, "");
-  const result = `^${encoded}$`;
-  return result;
-}
-function TemplateLiteralEncode(types) {
-  const pattern = EncodePattern(types);
-  const result = TemplateLiteralCreate(pattern);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/template_literal/instantiate.mjs
-function TemplateLiteralAction(types, options) {
-  const result = CanInstantiate(types) ? exports_memory.Update(TemplateLiteralEncode(types), {}, options) : TemplateLiteralDeferred(types, options);
-  return result;
-}
-function TemplateLiteralInstantiate(context, state, types, options) {
-  const instantiatedTypes = InstantiateTypes(context, state, types);
-  return TemplateLiteralAction(instantiatedTypes, options);
-}
-
-// node_modules/typebox/build/type/types/template_literal.mjs
-function TemplateLiteralDeferred(types, options = {}) {
-  return Deferred("TemplateLiteral", [types], options);
-}
-function IsTemplateLiteralDeferred(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "action") && exports_guard.IsEqual(value.action, "TemplateLiteral");
-}
-function TemplateLiteralFromTypes(types) {
-  return TemplateLiteralAction(types, {});
-}
-function TemplateLiteralFromString(template) {
-  const types = ParseTemplateIntoTypes(template);
-  return TemplateLiteralFromTypes(types);
-}
-function TemplateLiteral2(input, options = {}) {
-  const type = exports_guard.IsString(input) ? TemplateLiteralFromString(input) : TemplateLiteralFromTypes(input);
-  return exports_memory.Update(type, {}, options);
-}
-function IsTemplateLiteral(value) {
-  return IsKind(value, "TemplateLiteral");
-}
-
-// node_modules/typebox/build/type/extends/result.mjs
-var exports_result = {};
-__export(exports_result, {
-  ExtendsFalse: () => ExtendsFalse,
-  ExtendsTrue: () => ExtendsTrue,
-  ExtendsUnion: () => ExtendsUnion,
-  IsExtendsFalse: () => IsExtendsFalse,
-  IsExtendsTrue: () => IsExtendsTrue,
-  IsExtendsTrueLike: () => IsExtendsTrueLike,
-  IsExtendsUnion: () => IsExtendsUnion,
-  Match: () => Match3
-});
-function ExtendsUnion(inferred) {
-  return exports_memory.Create({ ["~kind"]: "ExtendsUnion" }, { inferred });
-}
-function IsExtendsUnion(value) {
-  return exports_guard.IsObject(value) && exports_guard.HasPropertyKey(value, "~kind") && exports_guard.HasPropertyKey(value, "inferred") && exports_guard.IsEqual(value["~kind"], "ExtendsUnion") && exports_guard.IsObject(value.inferred);
-}
-function ExtendsTrue(inferred) {
-  return exports_memory.Create({ ["~kind"]: "ExtendsTrue" }, { inferred });
-}
-function IsExtendsTrue(value) {
-  return exports_guard.IsObject(value) && exports_guard.HasPropertyKey(value, "~kind") && exports_guard.HasPropertyKey(value, "inferred") && exports_guard.IsEqual(value["~kind"], "ExtendsTrue") && exports_guard.IsObject(value.inferred);
-}
-function ExtendsFalse() {
-  return exports_memory.Create({ ["~kind"]: "ExtendsFalse" }, {});
-}
-function IsExtendsFalse(value) {
-  return exports_guard.IsObject(value) && exports_guard.HasPropertyKey(value, "~kind") && exports_guard.IsEqual(value["~kind"], "ExtendsFalse");
-}
-function IsExtendsTrueLike(value) {
-  return IsExtendsUnion(value) || IsExtendsTrue(value);
-}
-function Match3(result, true_, false_) {
-  return IsExtendsTrueLike(result) ? true_(result.inferred) : false_();
-}
-
-// node_modules/typebox/build/type/extends/extends_right.mjs
-function ExtendsRightInfer(inferred, name2, left, right) {
-  return Match3(ExtendsLeft(inferred, left, right), (checkInferred) => ExtendsTrue(exports_memory.Assign(exports_memory.Assign(inferred, checkInferred), { [name2]: left })), () => ExtendsFalse());
-}
-function ExtendsRightAny(inferred, _left) {
-  return ExtendsTrue(inferred);
-}
-function ExtendsRightDependent(inferred, left, if_, then_, else_) {
-  return Match3(ExtendsLeft(inferred, left, if_), (inferred2) => Match3(ExtendsLeft(inferred2, left, then_), (inferred3) => ExtendsTrue(inferred3), () => ExtendsFalse()), () => Match3(ExtendsLeft(inferred, left, else_), (inferred2) => ExtendsTrue(inferred2), () => ExtendsFalse()));
-}
-function ExtendsRightEnum(inferred, left, right) {
-  const evaluated = EvaluateEnum(right);
-  return ExtendsLeft(inferred, left, evaluated);
-}
-function ExtendsRightIntersect(inferred, left, right) {
-  return exports_guard.ShiftLeft(right, (head, tail) => Match3(ExtendsLeft(inferred, left, head), (inferred2) => ExtendsRightIntersect(inferred2, left, tail), () => ExtendsFalse()), () => ExtendsTrue(inferred));
-}
-function ExtendsRightTemplateLiteral(inferred, left, right) {
-  const evaluated = EvaluateTemplateLiteral(right);
-  return ExtendsLeft(inferred, left, evaluated);
-}
-function ExtendsRightUnion(inferred, left, right) {
-  return exports_guard.ShiftLeft(right, (head, tail) => Match3(ExtendsLeft(inferred, left, head), (inferred2) => ExtendsTrue(inferred2), () => ExtendsRightUnion(inferred, left, tail)), () => ExtendsFalse());
-}
-function ExtendsRight(inferred, left, right) {
-  return IsAny(right) ? ExtendsRightAny(inferred, left) : IsDependent(right) ? ExtendsRightDependent(inferred, left, right.if, right.then, right.else) : IsEnum(right) ? ExtendsRightEnum(inferred, left, right.enum) : IsInfer(right) ? ExtendsRightInfer(inferred, right.name, left, right.extends) : IsIntersect(right) ? ExtendsRightIntersect(inferred, left, right.allOf) : IsTemplateLiteral(right) ? ExtendsRightTemplateLiteral(inferred, left, right.pattern) : IsUnion(right) ? ExtendsRightUnion(inferred, left, right.anyOf) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/any.mjs
-function ExtendsAny(inferred, left, right) {
-  return IsInfer(right) ? ExtendsRight(inferred, left, right) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsUnion(inferred);
-}
-
-// node_modules/typebox/build/type/extends/array.mjs
-function ExtendsImmutable(left, right) {
-  const isImmutableLeft = IsImmutable(left);
-  const isImmutableRight = IsImmutable(right);
-  return isImmutableLeft && isImmutableRight ? true : !isImmutableLeft && isImmutableRight ? true : isImmutableLeft && !isImmutableRight ? false : true;
-}
-function ExtendsArray(inferred, arrayLeft, left, right) {
-  return IsArray2(right) ? ExtendsImmutable(arrayLeft, right) ? ExtendsLeft(inferred, left, right.items) : ExtendsFalse() : ExtendsRight(inferred, arrayLeft, right);
-}
-
-// node_modules/typebox/build/type/extends/bigint.mjs
-function ExtendsBigInt(inferred, left, right) {
-  return IsBigInt2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/boolean.mjs
-function ExtendsBoolean(inferred, left, right) {
-  return IsBoolean3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/parameters.mjs
-function ParameterCompare(inferred, left, leftRest, right, rightRest) {
-  const checkLeft = IsInfer(right) ? left : right;
-  const checkRight = IsInfer(right) ? right : left;
-  const isLeftOptional = IsOptional(left);
-  const isRightOptional = IsOptional(right);
-  return !isLeftOptional && isRightOptional ? ExtendsFalse() : Match3(ExtendsLeft(inferred, checkLeft, checkRight), (inferred2) => ExtendsParameters(inferred2, leftRest, rightRest), () => ExtendsFalse());
-}
-function ParameterRight(inferred, left, leftRest, rightRest) {
-  return exports_guard.ShiftLeft(rightRest, (head, tail) => ParameterCompare(inferred, left, leftRest, head, tail), () => IsOptional(left) ? ExtendsTrue(inferred) : ExtendsFalse());
-}
-function ParametersLeft(inferred, left, rightRest) {
-  return exports_guard.ShiftLeft(left, (head, tail) => ParameterRight(inferred, head, tail, rightRest), () => ExtendsTrue(inferred));
-}
-function ExtendsParameters(inferred, left, right) {
-  return ParametersLeft(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/return_type.mjs
-function ExtendsReturnType(inferred, left, right) {
-  return IsVoid(right) ? ExtendsTrue(inferred) : ExtendsLeft(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/constructor.mjs
-function ExtendsConstructor(inferred, parameters, returnType, right) {
-  return IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : IsConstructor2(right) ? Match3(ExtendsParameters(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType(inferred2, returnType, right["instanceType"]), () => ExtendsFalse()) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/dependent.mjs
-function ExtendsDependent(inferred, if_, then_, else_, right) {
-  return Match3(ExtendsLeft(inferred, if_, right), () => ExtendsLeft(inferred, then_, right), () => ExtendsLeft(inferred, else_, right));
-}
-
-// node_modules/typebox/build/type/extends/enum.mjs
-function ExtendsEnum(inferred, left, right) {
-  const evaluated = EvaluateEnum(left);
-  return ExtendsLeft(inferred, evaluated, right);
-}
-
-// node_modules/typebox/build/type/extends/function.mjs
-function ExtendsFunction(inferred, parameters, returnType, right) {
-  return IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : IsFunction2(right) ? Match3(ExtendsParameters(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType(inferred2, returnType, right["returnType"]), () => ExtendsFalse()) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/integer.mjs
-function ExtendsInteger(inferred, left, right) {
-  return IsInteger2(right) ? ExtendsTrue(inferred) : IsNumber3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/intersect.mjs
-function ExtendsIntersect(inferred, left, right) {
-  const evaluated = EvaluateIntersect(left);
-  return ExtendsLeft(inferred, evaluated, right);
-}
-
-// node_modules/typebox/build/type/extends/literal.mjs
-function ExtendsLiteralValue(inferred, left, right) {
-  return left === right ? ExtendsTrue(inferred) : ExtendsFalse();
-}
-function ExtendsLiteralBigInt(inferred, left, right) {
-  return IsLiteral(right) ? ExtendsLiteralValue(inferred, left, right.const) : IsBigInt2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, Literal(left), right);
-}
-function ExtendsLiteralBoolean(inferred, left, right) {
-  return IsLiteral(right) ? ExtendsLiteralValue(inferred, left, right.const) : IsBoolean3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, Literal(left), right);
-}
-function ExtendsLiteralNumber(inferred, left, right) {
-  return IsLiteral(right) ? ExtendsLiteralValue(inferred, left, right.const) : IsNumber3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, Literal(left), right);
-}
-function ExtendsLiteralString(inferred, left, right) {
-  return IsLiteral(right) ? ExtendsLiteralValue(inferred, left, right.const) : IsString3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, Literal(left), right);
-}
-function ExtendsLiteral(inferred, left, right) {
-  return exports_guard.IsBigInt(left.const) ? ExtendsLiteralBigInt(inferred, left.const, right) : exports_guard.IsBoolean(left.const) ? ExtendsLiteralBoolean(inferred, left.const, right) : exports_guard.IsNumber(left.const) ? ExtendsLiteralNumber(inferred, left.const, right) : exports_guard.IsString(left.const) ? ExtendsLiteralString(inferred, left.const, right) : Unreachable();
-}
-
-// node_modules/typebox/build/type/extends/never.mjs
-function ExtendsNever(inferred, left, right) {
-  return IsInfer(right) ? ExtendsRight(inferred, left, right) : ExtendsTrue(inferred);
-}
-
-// node_modules/typebox/build/type/extends/null.mjs
-function ExtendsNull(inferred, left, right) {
-  return IsNull2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/number.mjs
-function ExtendsNumber(inferred, left, right) {
-  return IsNumber3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/object.mjs
-function ExtendsPropertyOptional(inferred, left, right) {
-  return IsOptional(left) ? IsOptional(right) ? ExtendsTrue(inferred) : ExtendsFalse() : ExtendsTrue(inferred);
-}
-function ExtendsProperty(inferred, left, right) {
-  return IsInfer(right) && IsNever(right.extends) ? ExtendsFalse() : Match3(ExtendsLeft(inferred, left, right), (inferred2) => ExtendsPropertyOptional(inferred2, left, right), () => ExtendsFalse());
-}
-function ExtractInferredProperties(keys, properties2) {
-  return keys.reduce((result, key) => {
-    return key in properties2 ? IsExtendsTrueLike(properties2[key]) ? { ...result, ...properties2[key].inferred } : Unreachable() : Unreachable();
-  }, {});
-}
-function ExtendsPropertiesComparer(inferred, left, right) {
-  const properties2 = {};
-  for (const rightKey of exports_guard.Keys(right)) {
-    properties2[rightKey] = rightKey in left ? ExtendsProperty({}, left[rightKey], right[rightKey]) : IsOptional(right[rightKey]) ? IsInfer(right[rightKey]) ? ExtendsTrue(exports_memory.Assign(inferred, { [right[rightKey].name]: right[rightKey].extends })) : ExtendsTrue(inferred) : ExtendsFalse();
-  }
-  const checked = exports_guard.Values(properties2).every((result) => IsExtendsTrueLike(result));
-  const extracted = checked ? ExtractInferredProperties(exports_guard.Keys(properties2), properties2) : {};
-  return checked ? ExtendsTrue(extracted) : ExtendsFalse();
-}
-function ExtendsProperties(inferred, left, right) {
-  const compared = ExtendsPropertiesComparer(inferred, left, right);
-  return IsExtendsTrueLike(compared) ? ExtendsTrue(exports_memory.Assign(inferred, compared.inferred)) : ExtendsFalse();
-}
-function ExtendsObjectToObject(inferred, left, right) {
-  return ExtendsProperties(inferred, left, right);
-}
-function RecordMergeInferred(left, right) {
-  return exports_guard.Keys(right).reduce((result, key) => {
-    return {
-      ...result,
-      [key]: exports_guard.HasPropertyKey(left, key) ? IsUnion(result[key]) ? Union([...result[key].anyOf, right[key]]) : Union([left[key], right[key]]) : right[key]
-    };
-  }, left);
-}
-function ExtendsRecordComparer(properties2, keys, type, result) {
-  return exports_guard.ShiftLeft(keys, (left, right) => Match3(ExtendsLeft({}, properties2[left], type), (inferred) => ExtendsRecordComparer(properties2, right, type, RecordMergeInferred(result, inferred)), () => ExtendsFalse()), () => ExtendsTrue(result));
-}
-function ExtendsObjectToRecord(inferred, properties2, _pattern, value) {
-  const keys = exports_guard.Keys(properties2);
-  const result = ExtendsRecordComparer(properties2, keys, value, inferred);
-  return result;
-}
-function ExtendsObject(inferred, left, right) {
-  return IsRecord(right) ? ExtendsObjectToRecord(inferred, left, RecordPattern(right), RecordValue(right)) : IsObject2(right) ? ExtendsObjectToObject(inferred, left, right.properties) : ExtendsRight(inferred, _Object_(left), right);
-}
-
-// node_modules/typebox/build/type/extends/record.mjs
-function FromObject2(inferred, properties2) {
-  return exports_guard.IsEqual(exports_guard.Keys(properties2).length, 0) ? ExtendsTrue(inferred) : ExtendsFalse();
-}
-function FromRecord(inferred, _leftKey, leftValue, _rightKey, rightValue) {
-  return ExtendsLeft(inferred, leftValue, rightValue);
-}
-function ExtendsRecord(inferred, leftPattern, leftValue, right) {
-  return IsRecord(right) ? FromRecord(inferred, RecordPatternToType(leftPattern), leftValue, RecordPatternToType(RecordPattern(right)), RecordValue(right)) : IsObject2(right) ? FromObject2(inferred, right.properties) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/string.mjs
-function ExtendsString(inferred, left, right) {
-  return IsString3(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/symbol.mjs
-function ExtendsSymbol(inferred, left, right) {
-  return IsSymbol2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/template_literal.mjs
-function ExtendsTemplateLiteral(inferred, left, right) {
-  const evaluated = EvaluateTemplateLiteral(left);
-  return ExtendsLeft(inferred, evaluated, right);
-}
-
-// node_modules/typebox/build/type/extends/inference.mjs
-function Inferrable(name2, type) {
-  return exports_memory.Create({ "~kind": "Inferrable" }, { name: name2, type }, {});
-}
-function IsInferable(value) {
-  return exports_guard.IsObject(value) && exports_guard.HasPropertyKey(value, "~kind") && exports_guard.HasPropertyKey(value, "name") && exports_guard.HasPropertyKey(value, "type") && exports_guard.IsEqual(value["~kind"], "Inferrable") && exports_guard.IsString(value.name) && exports_guard.IsObject(value.type);
-}
-function TryRestInferable(type) {
-  return IsRest(type) ? IsInfer(type.items) ? IsArray2(type.items.extends) ? Inferrable(type.items.name, type.items.extends.items) : IsUnknown(type.items.extends) ? Inferrable(type.items.name, type.items.extends) : undefined : Unreachable() : undefined;
-}
-function TryInferable(type) {
-  return IsInfer(type) ? Inferrable(type.name, type.extends) : undefined;
-}
-function TryInferResults(rest3, right, result = []) {
-  return exports_guard.ShiftLeft(rest3, (head, tail) => Match3(ExtendsLeft({}, head, right), () => TryInferResults(tail, right, [...result, head]), () => {
-    return;
-  }), () => result);
-}
-function InferTupleResult(inferred, name2, left, right) {
-  const results = TryInferResults(left, right);
-  return exports_guard.IsArray(results) ? ExtendsTrue(exports_memory.Assign(inferred, { [name2]: Tuple(results) })) : ExtendsFalse();
-}
-function InferUnionResult(inferred, name2, left, right) {
-  const results = TryInferResults(left, right);
-  return exports_guard.IsArray(results) ? ExtendsTrue(exports_memory.Assign(inferred, { [name2]: Union(results) })) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/tuple.mjs
-function Reverse(types) {
-  return [...types].reverse();
-}
-function ApplyReverse(types, reversed) {
-  return reversed ? Reverse(types) : types;
-}
-function Reversed(types) {
-  const first = types.length > 0 ? types[0] : undefined;
-  const inferrable = IsSchema(first) ? TryRestInferable(first) : undefined;
-  return IsSchema(inferrable);
-}
-function ElementsCompare(inferred, reversed, left, leftRest, right, rightRest) {
-  return Match3(ExtendsLeft(inferred, left, right), (checkInferred) => Elements(checkInferred, reversed, leftRest, rightRest), () => ExtendsFalse());
-}
-function ElementsLeft(inferred, reversed, leftRest, right, rightRest) {
-  const inferable = TryRestInferable(right);
-  return IsInferable(inferable) ? InferTupleResult(inferred, inferable["name"], ApplyReverse(leftRest, reversed), inferable["type"]) : exports_guard.ShiftLeft(leftRest, (head, tail) => ElementsCompare(inferred, reversed, head, tail, right, rightRest), () => ExtendsFalse());
-}
-function ElementsRight(inferred, reversed, leftRest, rightRest) {
-  return exports_guard.ShiftLeft(rightRest, (head, tail) => ElementsLeft(inferred, reversed, leftRest, head, tail), () => exports_guard.IsEqual(leftRest.length, 0) ? ExtendsTrue(inferred) : ExtendsFalse());
-}
-function Elements(inferred, reversed, leftRest, rightRest) {
-  return ElementsRight(inferred, reversed, leftRest, rightRest);
-}
-function ExtendsTupleToTuple(inferred, left, right) {
-  const instantiatedRight = InstantiateElements(inferred, State([], []), right);
-  const reversed = Reversed(instantiatedRight);
-  return Elements(inferred, reversed, ApplyReverse(left, reversed), ApplyReverse(instantiatedRight, reversed));
-}
-function ExtendsTupleToArray(inferred, left, right) {
-  const inferrable = TryInferable(right);
-  return IsInferable(inferrable) ? InferUnionResult(inferred, inferrable["name"], left, inferrable["type"]) : exports_guard.ShiftLeft(left, (head, tail) => Match3(ExtendsLeft(inferred, head, right), (inferred2) => ExtendsTupleToArray(inferred2, tail, right), () => ExtendsFalse()), () => ExtendsTrue(inferred));
-}
-function ExtendsTuple(inferred, left, right) {
-  const instantiatedLeft = InstantiateElements(inferred, State([], []), left);
-  return IsTuple(right) ? ExtendsTupleToTuple(inferred, instantiatedLeft, right.items) : IsArray2(right) ? ExtendsTupleToArray(inferred, instantiatedLeft, right.items) : ExtendsRight(inferred, Tuple(instantiatedLeft), right);
-}
-
-// node_modules/typebox/build/type/extends/undefined.mjs
-function ExtendsUndefined(inferred, left, right) {
-  return IsVoid(right) ? ExtendsTrue(inferred) : IsUndefined2(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/union.mjs
-function ExtendsUnionSome(inferred, type, unionTypes) {
-  return exports_guard.ShiftLeft(unionTypes, (head, tail) => Match3(ExtendsLeft(inferred, type, head), (inferred2) => ExtendsTrue(inferred2), () => ExtendsUnionSome(inferred, type, tail)), () => ExtendsFalse());
-}
-function ExtendsUnionLeft(inferred, left, right) {
-  return exports_guard.ShiftLeft(left, (head, tail) => Match3(ExtendsUnionSome(inferred, head, right), (inferred2) => ExtendsUnionLeft(inferred2, tail, right), () => ExtendsFalse()), () => ExtendsTrue(inferred));
-}
-function ExtendsUnion2(inferred, left, right) {
-  const inferrable = TryInferable(right);
-  return IsInferable(inferrable) ? InferUnionResult(inferred, inferrable.name, left, inferrable.type) : IsUnion(right) ? ExtendsUnionLeft(inferred, left, right.anyOf) : ExtendsUnionLeft(inferred, left, [right]);
-}
-
-// node_modules/typebox/build/type/extends/unknown.mjs
-function ExtendsUnknown(inferred, left, right) {
-  return IsInfer(right) ? ExtendsRight(inferred, left, right) : IsAny(right) ? ExtendsTrue(inferred) : IsUnknown(right) ? ExtendsTrue(inferred) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/extends/void.mjs
-function ExtendsVoid(inferred, left, right) {
-  return IsVoid(right) ? ExtendsTrue(inferred) : ExtendsRight(inferred, left, right);
-}
-
-// node_modules/typebox/build/type/extends/extends_left.mjs
-function ExtendsLeft(inferred, left, right) {
-  return IsAny(left) ? ExtendsAny(inferred, left, right) : IsArray2(left) ? ExtendsArray(inferred, left, left.items, right) : IsBigInt2(left) ? ExtendsBigInt(inferred, left, right) : IsBoolean3(left) ? ExtendsBoolean(inferred, left, right) : IsConstructor2(left) ? ExtendsConstructor(inferred, left.parameters, left.instanceType, right) : IsDependent(left) ? ExtendsDependent(inferred, left.if, left.then, left.else, right) : IsEnum(left) ? ExtendsEnum(inferred, left.enum, right) : IsFunction2(left) ? ExtendsFunction(inferred, left.parameters, left.returnType, right) : IsInteger2(left) ? ExtendsInteger(inferred, left, right) : IsIntersect(left) ? ExtendsIntersect(inferred, left.allOf, right) : IsLiteral(left) ? ExtendsLiteral(inferred, left, right) : IsNever(left) ? ExtendsNever(inferred, left, right) : IsNull2(left) ? ExtendsNull(inferred, left, right) : IsNumber3(left) ? ExtendsNumber(inferred, left, right) : IsObject2(left) ? ExtendsObject(inferred, left.properties, right) : IsRecord(left) ? ExtendsRecord(inferred, RecordPattern(left), RecordValue(left), right) : IsString3(left) ? ExtendsString(inferred, left, right) : IsSymbol2(left) ? ExtendsSymbol(inferred, left, right) : IsTemplateLiteral(left) ? ExtendsTemplateLiteral(inferred, left.pattern, right) : IsTuple(left) ? ExtendsTuple(inferred, left.items, right) : IsUndefined2(left) ? ExtendsUndefined(inferred, left, right) : IsUnion(left) ? ExtendsUnion2(inferred, left.anyOf, right) : IsUnknown(left) ? ExtendsUnknown(inferred, left, right) : IsVoid(left) ? ExtendsVoid(inferred, left, right) : ExtendsFalse();
-}
-
-// node_modules/typebox/build/type/engine/interface/instantiate.mjs
-function InterfaceOperation(heritage, properties2) {
-  const result = EvaluateIntersect([...heritage, _Object_(properties2)]);
-  return result;
-}
-function InterfaceAction(heritage, properties2, options) {
-  const result = CanInstantiate(heritage) ? exports_memory.Update(InterfaceOperation(heritage, properties2), {}, options) : InterfaceDeferred(heritage, properties2, options);
-  return result;
-}
-function InterfaceInstantiate(context, state, heritage, properties2, options) {
-  const instantiatedHeritage = InstantiateTypes(context, state, heritage);
-  const instantiatedProperties = InstantiateProperties(context, state, properties2);
-  return InterfaceAction(instantiatedHeritage, instantiatedProperties, options);
-}
-
-// node_modules/typebox/build/type/action/interface.mjs
-function InterfaceDeferred(heritage, properties2, options = {}) {
-  return Deferred("Interface", [heritage, properties2], options);
-}
-function IsInterfaceDeferred(value) {
-  return IsSchema(value) && exports_guard.HasPropertyKey(value, "action") && exports_guard.IsEqual(value.action, "Interface");
-}
-function Interface(heritage, properties2, options = {}) {
-  return InterfaceAction(heritage, properties2, options);
-}
-
-// node_modules/typebox/build/type/engine/cyclic/check.mjs
-function FromRef(stack, context, ref2) {
-  return stack.includes(ref2) ? true : FromType3([...stack, ref2], context, context[ref2]);
-}
-function FromProperties(stack, context, properties2) {
-  const types = PropertyValues(properties2);
-  return FromTypes2(stack, context, types);
-}
-function FromTypes2(stack, context, types) {
-  return exports_guard.ShiftLeft(types, (left, right) => FromType3(stack, context, left) ? true : FromTypes2(stack, context, right), () => false);
-}
-function FromType3(stack, context, type) {
-  return IsRef(type) ? FromRef(stack, context, type.$ref) : IsArray2(type) ? FromType3(stack, context, type.items) : IsConstructor2(type) ? FromTypes2(stack, context, [...type.parameters, type.instanceType]) : IsFunction2(type) ? FromTypes2(stack, context, [...type.parameters, type.returnType]) : IsInterfaceDeferred(type) ? FromProperties(stack, context, type.parameters[1]) : IsIntersect(type) ? FromTypes2(stack, context, type.allOf) : IsObject2(type) ? FromProperties(stack, context, type.properties) : IsUnion(type) ? FromTypes2(stack, context, type.anyOf) : IsTuple(type) ? FromTypes2(stack, context, type.items) : IsRecord(type) ? FromType3(stack, context, RecordValue(type)) : false;
-}
-function CyclicCheck(stack, context, type) {
-  const result = FromType3(stack, context, type);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/cyclic/candidates.mjs
-function ResolveCandidateKeys(context, keys) {
-  return keys.reduce((result, left) => {
-    return CyclicCheck([left], context, context[left]) ? [...result, left] : result;
-  }, []);
-}
-function CyclicCandidates(context) {
-  const keys = PropertyKeys(context);
-  const result = ResolveCandidateKeys(context, keys);
-  return result;
-}
-// node_modules/typebox/build/type/engine/cyclic/dependencies.mjs
-function FromRef2(context, ref2, result) {
-  return result.includes(ref2) ? result : (ref2 in context) ? FromType4(context, context[ref2], [...result, ref2]) : Unreachable();
-}
-function FromProperties2(context, properties2, result) {
-  const types = PropertyValues(properties2);
-  return FromTypes3(context, types, result);
-}
-function FromTypes3(context, types, result) {
-  return types.reduce((result2, left) => {
-    return FromType4(context, left, result2);
-  }, result);
-}
-function FromType4(context, type, result) {
-  return IsRef(type) ? FromRef2(context, type.$ref, result) : IsArray2(type) ? FromType4(context, type.items, result) : IsConstructor2(type) ? FromTypes3(context, [...type.parameters, type.instanceType], result) : IsFunction2(type) ? FromTypes3(context, [...type.parameters, type.returnType], result) : IsInterfaceDeferred(type) ? FromProperties2(context, type.parameters[1], result) : IsIntersect(type) ? FromTypes3(context, type.allOf, result) : IsObject2(type) ? FromProperties2(context, type.properties, result) : IsUnion(type) ? FromTypes3(context, type.anyOf, result) : IsTuple(type) ? FromTypes3(context, type.items, result) : IsRecord(type) ? FromType4(context, RecordValue(type), result) : result;
-}
-function CyclicDependencies(context, key, type) {
-  const result = FromType4(context, type, [key]);
-  return result;
-}
-// node_modules/typebox/build/type/engine/cyclic/extends.mjs
-function FromRef3(_ref) {
-  return Any();
-}
-function FromProperties3(properties2) {
-  return exports_guard.Keys(properties2).reduce((result, key) => {
-    return { ...result, [key]: FromType5(properties2[key]) };
-  }, {});
-}
-function FromTypes4(types) {
-  return types.reduce((result, left) => {
-    return [...result, FromType5(left)];
-  }, []);
-}
-function FromType5(type) {
-  return IsRef(type) ? FromRef3(type.$ref) : IsArray2(type) ? _Array_(FromType5(type.items), ArrayOptions(type)) : IsConstructor2(type) ? Constructor(FromTypes4(type.parameters), FromType5(type.instanceType)) : IsFunction2(type) ? _Function_(FromTypes4(type.parameters), FromType5(type.returnType)) : IsIntersect(type) ? Intersect(FromTypes4(type.allOf)) : IsObject2(type) ? _Object_(FromProperties3(type.properties)) : IsRecord(type) ? Record(RecordKey(type), FromType5(RecordValue(type))) : IsUnion(type) ? Union(FromTypes4(type.anyOf)) : IsTuple(type) ? Tuple(FromTypes4(type.items)) : type;
-}
-function CyclicAnyFromParameters(defs, ref2) {
-  return ref2 in defs ? FromType5(defs[ref2]) : Unknown();
-}
-function CyclicExtends(type) {
-  return CyclicAnyFromParameters(type.$defs, type.$ref);
-}
-// node_modules/typebox/build/type/engine/cyclic/instantiate.mjs
-function CyclicInterface(context, heritage, properties2) {
-  const instantiatedHeritage = InstantiateTypes(context, State([], []), heritage);
-  const instantiatedProperties = InstantiateProperties({}, State([], []), properties2);
-  const evaluatedInterface = EvaluateIntersect([...instantiatedHeritage, _Object_(instantiatedProperties)]);
-  return evaluatedInterface;
-}
-function CyclicDefinitions(context, dependencies) {
-  const keys = exports_guard.Keys(context).filter((key) => dependencies.includes(key));
-  return keys.reduce((result, key) => {
-    const type = context[key];
-    const instantiatedType = IsInterfaceDeferred(type) ? CyclicInterface(context, type.parameters[0], type.parameters[1]) : type;
-    return { ...result, [key]: instantiatedType };
-  }, {});
-}
-function InstantiateCyclic(context, ref2, type) {
-  const dependencies = CyclicDependencies(context, ref2, type);
-  const definitions = CyclicDefinitions(context, dependencies);
-  const result = Cyclic(definitions, ref2);
-  return result;
-}
-// node_modules/typebox/build/type/engine/cyclic/target.mjs
-function Resolve(defs, ref2) {
-  return ref2 in defs ? IsRef(defs[ref2]) ? Resolve(defs, defs[ref2].$ref) : defs[ref2] : Never();
-}
-function CyclicTarget(defs, ref2) {
-  const result = Resolve(defs, ref2);
-  return result;
-}
-// node_modules/typebox/build/type/extends/extends.mjs
-function Canonical(type) {
-  return IsCyclic(type) ? CyclicExtends(type) : IsUnsafe(type) ? Unknown() : type;
-}
-function Extends(inferred, left, right) {
-  const canonicalLeft = Canonical(left);
-  const canonicalRight = Canonical(right);
-  return ExtendsLeft(inferred, canonicalLeft, canonicalRight);
-}
-// node_modules/typebox/build/type/engine/evaluate/compare.mjs
-var CompareResultEqual = 0;
-var CompareResultDisjoint = 1;
-var CompareResultLeftInside = 2;
-var CompareResultRightInside = 3;
-function Compare(left, right) {
-  const extendsCheck = [Extends({}, left, right), Extends({}, right, left)];
-  return exports_result.IsExtendsTrueLike(extendsCheck[0]) && exports_result.IsExtendsTrueLike(extendsCheck[1]) ? CompareResultEqual : exports_result.IsExtendsTrueLike(extendsCheck[0]) && exports_result.IsExtendsFalse(extendsCheck[1]) ? CompareResultLeftInside : exports_result.IsExtendsFalse(extendsCheck[0]) && exports_result.IsExtendsTrueLike(extendsCheck[1]) ? CompareResultRightInside : CompareResultDisjoint;
-}
-
-// node_modules/typebox/build/type/engine/evaluate/broaden.mjs
-function BroadenFilter(type, types, result = [], all = types) {
-  return exports_guard.ShiftLeft(types, (left, right) => {
-    const compare = Compare(type, left);
-    return exports_guard.IsEqual(compare, CompareResultLeftInside) || exports_guard.IsEqual(compare, CompareResultEqual) ? all : exports_guard.IsEqual(compare, CompareResultDisjoint) ? BroadenFilter(type, right, [...result, left], all) : BroadenFilter(type, right, result, all);
-  }, () => [...result, type]);
-}
-function BroadenType(type, types, result) {
-  const evaluated = EvaluateType(type);
-  return IsAny(evaluated) ? [evaluated] : IsUnknown(evaluated) ? [evaluated] : IsNever(evaluated) ? BroadenTypes(types, result) : IsObject2(evaluated) ? BroadenTypes(types, [...result, evaluated]) : BroadenTypes(types, BroadenFilter(evaluated, result));
-}
-function BroadenTypes(types, result = []) {
-  return exports_guard.ShiftLeft(types, (left, right) => BroadenType(left, right, result), () => result);
-}
-function Broaden(types) {
-  const broadened = BroadenTypes(types);
-  const flattened = Flatten(broadened);
-  return flattened;
-}
-// node_modules/typebox/build/type/engine/evaluate/instantiate.mjs
-function EvaluateAction(type, options) {
-  const result = exports_memory.Update(EvaluateType(type), {}, options);
-  return result;
-}
-function EvaluateInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return EvaluateAction(instantiatedType, options);
-}
-// node_modules/typebox/build/type/engine/call/distribute_arguments.mjs
-function CollectDistributionNames(expression, result = []) {
-  return IsDeferred(expression) && exports_guard.IsEqual(expression.action, "Conditional") ? IsRef(expression.parameters[0]) ? CollectDistributionNames(expression.parameters[2], CollectDistributionNames(expression.parameters[3], [...result, expression.parameters[0]["$ref"]])) : CollectDistributionNames(expression.parameters[2], CollectDistributionNames(expression.parameters[3], result)) : IsDeferred(expression) && exports_guard.IsEqual(expression.action, "Mapped") ? IsDeferred(expression.parameters[1]) && exports_guard.IsEqual(expression.parameters[1].action, "KeyOf") && IsRef(expression.parameters[1].parameters[0]) ? [...result, expression.parameters[1].parameters[0]["$ref"]] : result : result;
-}
-function BuildDistributionArray(parameters, names) {
-  return parameters.reduce((result, left) => [...result, names.includes(left.name)], []);
-}
-function ZipDistributionArray(arguments_2, distributionArray, result = []) {
-  return exports_guard.ShiftLeft(arguments_2, (argumentLeft, argumentRight) => exports_guard.ShiftLeft(distributionArray, (booleanLeft, booleanRight) => ZipDistributionArray(argumentRight, booleanRight, [...result, [booleanLeft, argumentLeft]]), () => result), () => result);
-}
-function CanonicalArgument(type) {
-  return IsTemplateLiteral(type) ? EvaluateTemplateLiteral(type.pattern) : IsEnum(type) ? EvaluateEnum(type.enum) : type;
-}
-function Expand(type) {
-  const canonicalArgument = CanonicalArgument(type);
-  return IsUnion(canonicalArgument) ? [...canonicalArgument.anyOf] : [canonicalArgument];
-}
-function Append(current, type) {
-  return current.reduce((result, left) => [...result, [...left, type]], []);
-}
-function Cross(current, variants) {
-  return variants.reduce((result, left) => {
-    return [...result, ...Append(current, left)];
-  }, []);
-}
-function Distribute2(zipped) {
-  return zipped.reduce((result, left) => {
-    return exports_guard.IsEqual(left[0], true) ? Cross(result, Expand(left[1])) : Cross(result, [left[1]]);
-  }, [[]]);
-}
-function DistributeArguments(parameters, arguments_2, expression) {
-  const distributionNames = CollectDistributionNames(expression);
-  const distributionArray = BuildDistributionArray(parameters, distributionNames);
-  const zippedArguments = ZipDistributionArray(arguments_2, distributionArray);
-  return IsDeferred(expression) && exports_guard.IsEqual(expression.action, "Conditional") ? Distribute2(zippedArguments) : IsDeferred(expression) && exports_guard.IsEqual(expression.action, "Mapped") ? Distribute2(zippedArguments) : [arguments_2];
-}
-
-// node_modules/typebox/build/type/engine/call/resolve_target.mjs
-function FromNotResolvable() {
-  return ["(not-resolvable)", Never()];
-}
-function FromNotGeneric() {
-  return ["(not-generic)", Never()];
-}
-function FromGeneric(name2, parameters, expression) {
-  return [name2, Generic(parameters, expression)];
-}
-function FromRef4(context, ref2, arguments_2) {
-  return ref2 in context ? FromType6(context, ref2, context[ref2], arguments_2) : FromNotResolvable();
-}
-function FromType6(context, name2, target2, arguments_2) {
-  return IsGeneric(target2) ? FromGeneric(name2, target2.parameters, target2.expression) : IsRef(target2) ? FromRef4(context, target2.$ref, arguments_2) : FromNotGeneric();
-}
-function ResolveTarget(context, target2, arguments_2) {
-  return FromType6(context, "(anonymous)", target2, arguments_2);
-}
-
-// node_modules/typebox/build/type/engine/call/resolve_arguments.mjs
-function AssertArgumentExtends(name2, type, extends_) {
-  if (IsInfer(type) || IsCall(type) || exports_result.IsExtendsTrueLike(Extends({}, type, extends_)))
-    return;
-  const cause = { parameter: name2, expect: extends_, actual: type };
-  throw new Error(`Argument for parameter ${name2} does not satisfy constraint`, { cause });
-}
-function BindArgument(context, state, name2, extends_, type) {
-  const instantiatedArgument = InstantiateType(context, state, type);
-  AssertArgumentExtends(name2, instantiatedArgument, extends_);
-  return exports_memory.Assign(context, { [name2]: instantiatedArgument });
-}
-function BindArguments(context, state, parameterLeft, parameterRight, arguments_2) {
-  const instantiatedExtends = InstantiateType(context, state, parameterLeft.extends);
-  const instantiatedEquals = InstantiateType(context, state, parameterLeft.equals);
-  return exports_guard.ShiftLeft(arguments_2, (left, right) => BindParameters(BindArgument(context, state, parameterLeft["name"], instantiatedExtends, left), state, parameterRight, right), () => BindParameters(BindArgument(context, state, parameterLeft["name"], instantiatedExtends, instantiatedEquals), state, parameterRight, []));
-}
-function BindParameters(context, state, parameters, arguments_2) {
-  return exports_guard.ShiftLeft(parameters, (left, right) => BindArguments(context, state, left, right, arguments_2), () => context);
-}
-function ResolveArgumentsContext(context, state, parameters, arguments_2) {
-  return BindParameters(context, state, parameters, arguments_2);
-}
-
-// node_modules/typebox/build/type/engine/call/instantiate.mjs
-var instantiationDepth = 0;
-var instantiationCount = 0;
-function InstantiationAssert() {
-  if (exports_guard.IsLessThan(instantiationCount, exports_settings.Get().maxInstantiationCount))
-    return;
-  throw Error("Type instantiation is excessively deep and possibly infinite");
-}
-function InstantiationIncrement() {
-  InstantiationAssert();
-  instantiationCount++;
-  instantiationDepth++;
-}
-function InstantiationDecrement() {
-  instantiationDepth--;
-  if (exports_guard.IsEqual(instantiationDepth, 0))
-    instantiationCount = 0;
-}
-function Peek(state) {
-  const result = exports_guard.IsGreaterThan(state.callstack.length, 0) ? state.callstack[state.callstack.length - 1] : "";
-  return result;
-}
-function IsTailCall(state, name2) {
-  const result = exports_guard.IsEqual(Peek(state), name2);
-  return result;
-}
-function CallDispatch(context, state, target2, parameters, expression, arguments_2) {
-  InstantiationIncrement();
-  try {
-    const argumentsContext = ResolveArgumentsContext(context, state, parameters, arguments_2);
-    const returnType = InstantiateType(argumentsContext, State([...state["callstack"], target2["$ref"]], state["visited"]), expression);
-    return InstantiateType(argumentsContext, State([], []), returnType);
-  } finally {
-    InstantiationDecrement();
-  }
-}
-function CallDistributed(context, state, target2, parameters, expression, distributedArguments) {
-  return distributedArguments.reduce((result, arguments_2) => {
-    const returnType = CallDispatch(context, state, target2, parameters, expression, arguments_2);
-    return [...result, returnType];
-  }, []);
-}
-function CallImmediate(context, state, target2, parameters, expression, arguments_2) {
-  const distributedArguments = DistributeArguments(parameters, arguments_2, expression);
-  const returnTypes = CallDistributed(context, state, target2, parameters, expression, distributedArguments);
-  const result = exports_guard.IsEqual(returnTypes.length, 1) ? returnTypes[0] : EvaluateUnion(returnTypes);
-  return result;
-}
-function CallInstantiate(context, state, target2, arguments_2) {
-  const instantiatedArguments = InstantiateTypes(context, state, arguments_2);
-  const resolved2 = ResolveTarget(context, target2, arguments_2);
-  const name2 = resolved2[0];
-  const type = resolved2[1];
-  const result = IsGeneric(type) ? IsTailCall(state, name2) ? CallConstruct(Ref(name2), instantiatedArguments) : CallImmediate(context, state, Ref(name2), type.parameters, type.expression, instantiatedArguments) : CallConstruct(target2, instantiatedArguments);
-  return result;
-}
-
-// node_modules/typebox/build/type/types/call.mjs
-function CallConstruct(target2, arguments_2) {
-  return exports_memory.Create({ ["~kind"]: "Call" }, { type: "call", target: target2, arguments: arguments_2 }, {});
-}
-function Call(target2, arguments_2) {
-  return CallInstantiate({}, State([], []), target2, arguments_2);
-}
-function IsCall(value) {
-  return IsKind(value, "Call");
-}
-
-// node_modules/typebox/build/type/engine/immutable/instantiate_remove.mjs
-function RemoveImmutableOperation(type) {
-  return exports_memory.Discard(type, ["~immutable"]);
-}
-function RemoveImmutableAction(type, options) {
-  const result = exports_memory.Update(RemoveImmutableOperation(type), {}, options);
-  return result;
-}
-function RemoveImmutableInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return RemoveImmutableAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/mapping.mjs
-function ApplyMapping(mapping, value) {
-  return mapping(value);
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/from_literal.mjs
-function FromLiteral3(mapping, value) {
-  return exports_guard.IsString(value) ? Literal(ApplyMapping(mapping, value)) : Literal(value);
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/from_template_literal.mjs
-function FromTemplateLiteral(mapping, pattern) {
-  const evaluated = EvaluateTemplateLiteral(pattern);
-  const result = FromType7(mapping, evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/from_union.mjs
-function FromUnion2(mapping, types) {
-  const result = types.map((type) => FromType7(mapping, type));
-  return Union(result);
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/from_type.mjs
-function FromType7(mapping, type) {
-  return IsLiteral(type) ? FromLiteral3(mapping, type.const) : IsTemplateLiteral(type) ? FromTemplateLiteral(mapping, type.pattern) : IsUnion(type) ? FromUnion2(mapping, type.anyOf) : type;
-}
-
-// node_modules/typebox/build/type/action/capitalize.mjs
-function CapitalizeDeferred(type, options = {}) {
-  return Deferred("Capitalize", [type], options);
-}
-function Capitalize(type, options = {}) {
-  return CapitalizeAction(type, options);
-}
-
-// node_modules/typebox/build/type/action/lowercase.mjs
-function LowercaseDeferred(type, options = {}) {
-  return Deferred("Lowercase", [type], options);
-}
-function Lowercase(type, options = {}) {
-  return LowercaseAction(type, options);
-}
-
-// node_modules/typebox/build/type/action/uncapitalize.mjs
-function UncapitalizeDeferred(type, options = {}) {
-  return Deferred("Uncapitalize", [type], options);
-}
-function Uncapitalize(type, options = {}) {
-  return UncapitalizeAction(type, options);
-}
-
-// node_modules/typebox/build/type/action/uppercase.mjs
-function UppercaseDeferred(type, options = {}) {
-  return Deferred("Uppercase", [type], options);
-}
-function Uppercase(type, options = {}) {
-  return UppercaseAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/intrinsics/instantiate.mjs
-var CapitalizeMapping = (input) => input[0].toUpperCase() + input.slice(1);
-var LowercaseMapping = (input) => input.toLowerCase();
-var UncapitalizeMapping = (input) => input[0].toLowerCase() + input.slice(1);
-var UppercaseMapping = (input) => input.toUpperCase();
-function CapitalizeAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType7(CapitalizeMapping, type), {}, options) : CapitalizeDeferred(type, options);
-  return result;
-}
-function LowercaseAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType7(LowercaseMapping, type), {}, options) : LowercaseDeferred(type, options);
-  return result;
-}
-function UncapitalizeAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType7(UncapitalizeMapping, type), {}, options) : UncapitalizeDeferred(type, options);
-  return result;
-}
-function UppercaseAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType7(UppercaseMapping, type), {}, options) : UppercaseDeferred(type, options);
-  return result;
-}
-function CapitalizeInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return CapitalizeAction(instantiatedType, options);
-}
-function LowercaseInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return LowercaseAction(instantiatedType, options);
-}
-function UncapitalizeInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return UncapitalizeAction(instantiatedType, options);
-}
-function UppercaseInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return UppercaseAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/conditional.mjs
-function ConditionalDeferred(left, right, true_, false_, options = {}) {
-  return Deferred("Conditional", [left, right, true_, false_], options);
-}
-function Conditional(left, right, true_, false_, options = {}) {
-  return ConditionalAction({}, State([], []), left, right, true_, false_, options);
-}
-
-// node_modules/typebox/build/type/engine/conditional/instantiate.mjs
-function ConditionalOperation(context, state, left, right, true_, false_) {
-  const extendsResult = Extends(context, left, right);
-  return exports_result.IsExtendsUnion(extendsResult) ? Union([InstantiateType(extendsResult.inferred, state, true_), InstantiateType(context, state, false_)]) : exports_result.IsExtendsTrue(extendsResult) ? InstantiateType(extendsResult.inferred, state, true_) : InstantiateType(context, state, false_);
-}
-function ConditionalAction(context, state, left, right, true_, false_, options) {
-  const result = CanInstantiate([left, right]) ? exports_memory.Update(ConditionalOperation(context, state, left, right, true_, false_), {}, options) : ConditionalDeferred(left, right, true_, false_, options);
-  return result;
-}
-function ConditionalInstantiate(context, state, left, right, true_, false_, options) {
-  const instantiatedLeft = InstantiateType(context, state, left);
-  const instantiatedRight = InstantiateType(context, state, right);
-  return ConditionalAction(context, state, instantiatedLeft, instantiatedRight, true_, false_, options);
-}
-// node_modules/typebox/build/type/action/constructor_parameters.mjs
-function ConstructorParametersDeferred(type, options = {}) {
-  return Deferred("ConstructorParameters", [type], options);
-}
-function ConstructorParameters(type, options = {}) {
-  return ConstructorParametersAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/constructor_parameters/instantiate.mjs
-function ConstructorParametersOperation(type) {
-  const parameters = IsConstructor2(type) ? type["parameters"] : [];
-  const instantiatedParameters = InstantiateElements({}, State([], []), parameters);
-  const result = Tuple(instantiatedParameters);
-  return result;
-}
-function ConstructorParametersAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(ConstructorParametersOperation(type), {}, options) : ConstructorParametersDeferred(type, options);
-  return result;
-}
-function ConstructorParametersInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return ConstructorParametersAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/exclude.mjs
-function ExcludeDeferred(left, right, options = {}) {
-  return Deferred("Exclude", [left, right], options);
-}
-function Exclude(left, right, options = {}) {
-  return ExcludeAction(left, right, options);
-}
-
-// node_modules/typebox/build/type/engine/exclude/instantiate.mjs
-function ExcludeAction(left, right, options) {
-  const result = CanInstantiate([left, right]) ? exports_memory.Update(ExcludeOperation(left, right), {}, options) : ExcludeDeferred(left, right, options);
-  return result;
-}
-function ExcludeInstantiate(context, state, left, right, options) {
-  const instantiatedLeft = InstantiateType(context, state, left);
-  const instantiatedRight = InstantiateType(context, state, right);
-  return ExcludeAction(instantiatedLeft, instantiatedRight, options);
-}
-
-// node_modules/typebox/build/type/action/extract.mjs
-function ExtractDeferred(left, right, options = {}) {
-  return Deferred("Extract", [left, right], options);
-}
-function Extract(left, right, options = {}) {
-  return ExtractAction(left, right, options);
-}
-
-// node_modules/typebox/build/type/engine/extract/operation.mjs
-function ExtractType(left, right) {
-  const check2 = Extends({}, left, right);
-  const result = exports_result.IsExtendsTrueLike(check2) ? [left] : [];
-  return result;
-}
-function ExtractUnion(left, right, result = []) {
-  return exports_guard.ShiftLeft(left, (head, tail) => ExtractUnion(tail, right, [...result, ...ExtractType(head, right)]), () => result);
-}
-function ExtractOperation(left, right) {
-  const evaluated = EvaluateType(left);
-  const canonical = IsUnion(evaluated) ? evaluated.anyOf : [evaluated];
-  const remaining = ExtractUnion(canonical, right);
-  const result = EvaluateUnion(remaining);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/extract/instantiate.mjs
-function ExtractAction(left, right, options) {
-  const result = CanInstantiate([left, right]) ? exports_memory.Update(ExtractOperation(left, right), {}, options) : ExtractDeferred(left, right, options);
-  return result;
-}
-function ExtractInstantiate(context, state, left, right, options) {
-  const instantiatedLeft = InstantiateType(context, state, left);
-  const instantiatedRight = InstantiateType(context, state, right);
-  return ExtractAction(instantiatedLeft, instantiatedRight, options);
-}
-
-// node_modules/typebox/build/type/engine/helpers/keys_to_indexer.mjs
-function KeysToLiterals(keys) {
-  return keys.reduce((result, left) => {
-    return IsLiteralValue(left) ? [...result, Literal(left)] : result;
-  }, []);
-}
-function KeysToIndexer(keys) {
-  const literals = KeysToLiterals(keys);
-  const result = Union(literals);
-  return result;
-}
-
-// node_modules/typebox/build/type/action/indexed.mjs
-function IndexDeferred(type, indexer, options = {}) {
-  return Deferred("Index", [type, indexer], options);
-}
-function Index(type, indexer_or_keys, options = {}) {
-  const indexer = exports_guard.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
-  return IndexAction(type, indexer, options);
-}
-
-// node_modules/typebox/build/type/engine/object/from_cyclic.mjs
-function FromCyclic(defs, ref2) {
-  const target2 = CyclicTarget(defs, ref2);
-  const result = FromType8(target2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/object/from_dependent.mjs
-function FromDependent(if_, then_, else_) {
-  const evaluated = EvaluateDependent(if_, then_, else_);
-  const result = FromType8(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/object/from_intersect.mjs
-function CollapseIntersectProperties(left, right) {
-  const leftKeys = exports_guard.Keys(left).filter((key) => !exports_guard.HasPropertyKey(right, key));
-  const rightKeys = exports_guard.Keys(right).filter((key) => !exports_guard.HasPropertyKey(left, key));
-  const sharedKeys = exports_guard.Keys(left).filter((key) => exports_guard.HasPropertyKey(right, key));
-  const leftProperties = leftKeys.reduce((result, key) => ({ ...result, [key]: left[key] }), {});
-  const rightProperties = rightKeys.reduce((result, key) => ({ ...result, [key]: right[key] }), {});
-  const sharedProperties = sharedKeys.reduce((result, key) => ({ ...result, [key]: EvaluateIntersect([left[key], right[key]]) }), {});
-  const unique = exports_memory.Assign(leftProperties, rightProperties);
-  const shared = exports_memory.Assign(unique, sharedProperties);
-  return shared;
-}
-function FromIntersect(types) {
-  return types.reduce((result, left) => {
-    return CollapseIntersectProperties(result, FromType8(left));
-  }, {});
-}
-
-// node_modules/typebox/build/type/engine/object/from_object.mjs
-function FromObject3(properties2) {
-  return properties2;
-}
-
-// node_modules/typebox/build/type/engine/object/from_tuple.mjs
-function FromTuple(types) {
-  const object2 = TupleToObject(Tuple(types));
-  const result = FromType8(object2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/object/from_union.mjs
-function CollapseUnionProperties(left, right) {
-  const sharedKeys = exports_guard.Keys(left).filter((key) => (key in right));
-  const result = sharedKeys.reduce((result2, key) => {
-    return { ...result2, [key]: EvaluateUnion([left[key], right[key]]) };
-  }, {});
-  return result;
-}
-function ReduceVariants(types, result) {
-  return exports_guard.ShiftLeft(types, (left, right) => ReduceVariants(right, CollapseUnionProperties(result, FromType8(left))), () => result);
-}
-function FromUnion3(types) {
-  return exports_guard.ShiftLeft(types, (left, right) => ReduceVariants(right, FromType8(left)), () => Unreachable());
-}
-
-// node_modules/typebox/build/type/engine/object/from_type.mjs
-function FromType8(type) {
-  return IsCyclic(type) ? FromCyclic(type.$defs, type.$ref) : IsDependent(type) ? FromDependent(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect(type.allOf) : IsUnion(type) ? FromUnion3(type.anyOf) : IsTuple(type) ? FromTuple(type.items) : IsObject2(type) ? FromObject3(type.properties) : {};
-}
-
-// node_modules/typebox/build/type/engine/object/collapse.mjs
-function CollapseToObject(type) {
-  const properties2 = FromType8(type);
-  const result = _Object_(properties2);
-  return result;
-}
 // node_modules/typebox/build/type/engine/helpers/keys.mjs
 var integerKeyPattern = new RegExp("^(?:0|[1-9][0-9]*)$");
-function ConvertToIntegerKey(value) {
-  const normal = `${value}`;
-  return integerKeyPattern.test(normal) ? parseInt(normal) : value;
-}
-
-// node_modules/typebox/build/type/engine/indexed/from_array.mjs
-function NormalizeLiteral(value) {
-  return Literal(ConvertToIntegerKey(value));
-}
-function NormalizeIndexerTypes(types) {
-  return types.map((type) => NormalizeIndexer(type));
-}
-function NormalizeIndexer(type) {
-  return IsIntersect(type) ? Intersect(NormalizeIndexerTypes(type.allOf)) : IsUnion(type) ? Union(NormalizeIndexerTypes(type.anyOf)) : IsLiteral(type) ? NormalizeLiteral(type.const) : type;
-}
-function FromArray2(type, indexer) {
-  const normalizedIndexer = NormalizeIndexer(indexer);
-  const check2 = Extends({}, normalizedIndexer, Number2());
-  const result = exports_result.IsExtendsTrueLike(check2) ? type : IsLiteral(indexer) && exports_guard.IsEqual(indexer.const, "length") ? Number2() : Never();
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_cyclic.mjs
-function FromCyclic2(defs, ref2) {
-  const target2 = CyclicTarget(defs, ref2);
-  const result = FromType9(target2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_dependent.mjs
-function FromDependent2(if_, then_, else_) {
-  const evaluated = EvaluateDependent(if_, then_, else_);
-  const result = FromType9(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_enum.mjs
-function FromEnum(values) {
-  const evaluated = EvaluateEnum(values);
-  const result = FromType9(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_intersect.mjs
-function FromIntersect2(types) {
-  const evaluated = EvaluateIntersect(types);
-  const result = FromType9(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_literal.mjs
-function FromLiteral4(value) {
-  const result = [`${value}`];
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_template_literal.mjs
-function FromTemplateLiteral2(pattern) {
-  const evaluated = EvaluateTemplateLiteral(pattern);
-  const result = FromType9(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_union.mjs
-function FromUnion4(types) {
-  return types.reduce((result, left) => {
-    return [...result, ...FromType9(left)];
-  }, []);
-}
-
-// node_modules/typebox/build/type/engine/indexable/from_type.mjs
-function FromType9(type) {
-  return IsCyclic(type) ? FromCyclic2(type.$defs, type.$ref) : IsDependent(type) ? FromDependent2(type.if, type.then, type.else) : IsEnum(type) ? FromEnum(type.enum) : IsIntersect(type) ? FromIntersect2(type.allOf) : IsLiteral(type) ? FromLiteral4(type.const) : IsTemplateLiteral(type) ? FromTemplateLiteral2(type.pattern) : IsUnion(type) ? FromUnion4(type.anyOf) : [];
-}
-
-// node_modules/typebox/build/type/engine/indexable/to_indexable_keys.mjs
-function ToIndexableKeys(type) {
-  const result = FromType9(type);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/this/expand_this.mjs
-function FromTypes5(properties2, types) {
-  return types.map((type) => FromType10(properties2, type));
-}
-function FromType10(properties2, type) {
-  return IsArray2(type) ? _Array_(FromType10(properties2, type.items)) : IsConstructor2(type) ? Constructor(FromTypes5(properties2, type.parameters), FromType10(properties2, type.instanceType)) : IsFunction2(type) ? _Function_(FromTypes5(properties2, type.parameters), FromType10(properties2, type.returnType)) : IsTuple(type) ? Tuple(FromTypes5(properties2, type.items)) : IsUnion(type) ? Union(FromTypes5(properties2, type.anyOf)) : IsIntersect(type) ? Intersect(FromTypes5(properties2, type.allOf)) : IsThis(type) ? _Object_(properties2) : type;
-}
-function ExpandThis(properties2, type) {
-  const result = FromType10(properties2, type);
-  return result;
-}
 
 // node_modules/typebox/build/type/engine/indexed/from_object.mjs
-function IndexProperty(properties2, key) {
-  const selectedType = key in properties2 ? properties2[key] : Never();
-  const result = ExpandThis(properties2, selectedType);
-  return result;
-}
-function IndexProperties(properties2, keys) {
-  return keys.reduce((result, left) => {
-    return [...result, IndexProperty(properties2, left)];
-  }, []);
-}
-function FromIndexer(properties2, indexer) {
-  const keys = ToIndexableKeys(indexer);
-  const variants = IndexProperties(properties2, keys);
-  const result = EvaluateUnion(variants);
-  return result;
-}
 var NumericKeyPattern = new RegExp(IntegerKey);
-function NumericKeys(keys) {
-  const result = keys.filter((key) => NumericKeyPattern.test(key));
-  return result;
-}
-function FromIndexerNumber(properties2) {
-  const keys = PropertyKeys(properties2);
-  const numericKeys = NumericKeys(keys);
-  const variants = IndexProperties(properties2, numericKeys);
-  const result = EvaluateUnion(variants);
-  return result;
-}
-function FromObject4(properties2, indexer) {
-  const result = IsNumber3(indexer) ? FromIndexerNumber(properties2) : FromIndexer(properties2, indexer);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/indexed/array_indexer.mjs
-function ConvertLiteral(value) {
-  return Literal(ConvertToIntegerKey(value));
-}
-function ArrayIndexerTypes(types) {
-  return types.map((type) => FormatArrayIndexer(type));
-}
-function FormatArrayIndexer(type) {
-  return IsIntersect(type) ? Intersect(ArrayIndexerTypes(type.allOf)) : IsUnion(type) ? Union(ArrayIndexerTypes(type.anyOf)) : IsLiteral(type) ? ConvertLiteral(type.const) : type;
-}
-
-// node_modules/typebox/build/type/engine/indexed/from_tuple.mjs
-function IndexElementsWithIndexer(types, indexer) {
-  return types.reduceRight((result, right, index) => {
-    const check2 = Extends({}, Literal(index), indexer);
-    return exports_result.IsExtendsTrueLike(check2) ? [right, ...result] : result;
-  }, []);
-}
-function FromTupleWithIndexer(types, indexer) {
-  const formattedArrayIndexer = FormatArrayIndexer(indexer);
-  const elements = IndexElementsWithIndexer(types, formattedArrayIndexer);
-  return EvaluateUnionFast(elements);
-}
-function FromTupleWithoutIndexer(types) {
-  return EvaluateUnionFast(types);
-}
-function FromTuple2(types, indexer) {
-  return IsLiteral(indexer) && exports_guard.IsEqual(indexer.const, "length") ? Literal(types.length) : IsNumber3(indexer) || IsInteger2(indexer) ? FromTupleWithoutIndexer(types) : FromTupleWithIndexer(types, indexer);
-}
-
-// node_modules/typebox/build/type/engine/indexed/from_type.mjs
-function FromType11(type, indexer) {
-  return IsArray2(type) ? FromArray2(type.items, indexer) : IsObject2(type) ? FromObject4(type.properties, indexer) : IsTuple(type) ? FromTuple2(type.items, indexer) : Never();
-}
-
-// node_modules/typebox/build/type/engine/indexed/instantiate.mjs
-function NormalizeType(type) {
-  const result = IsCyclic(type) || IsDependent(type) || IsIntersect(type) || IsUnion(type) ? CollapseToObject(type) : type;
-  return result;
-}
-function IndexAction(type, indexer, options) {
-  const result = CanInstantiate([type, indexer]) ? exports_memory.Update(FromType11(NormalizeType(type), indexer), {}, options) : IndexDeferred(type, indexer, options);
-  return result;
-}
-function IndexInstantiate(context, state, type, indexer, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  const instantiatedIndexer = InstantiateType(context, state, indexer);
-  return IndexAction(instantiatedType, instantiatedIndexer, options);
-}
-
-// node_modules/typebox/build/type/action/instance_type.mjs
-function InstanceTypeDeferred(type, options = {}) {
-  return Deferred("InstanceType", [type], options);
-}
-function InstanceType(type, options = {}) {
-  return InstanceTypeAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/instance_type/instantiate.mjs
-function InstanceTypeOperation(type) {
-  return IsConstructor2(type) ? type["instanceType"] : Never();
-}
-function InstanceTypeAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(InstanceTypeOperation(type), {}, options) : InstanceTypeDeferred(type, options);
-  return result;
-}
-function InstanceTypeInstantiate(context, state, type, options = {}) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return InstanceTypeAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/keyof.mjs
-function KeyOfDeferred(type, options = {}) {
-  return Deferred("KeyOf", [type], options);
-}
-function KeyOf2(type, options = {}) {
-  return KeyOfAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_any.mjs
-function FromAny() {
-  return Union([Number2(), String2(), Symbol2()]);
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_array.mjs
-function FromArray3(_type) {
-  return Number2();
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_object.mjs
-function FromPropertyKeys(keys) {
-  const result = keys.reduce((result2, left) => {
-    return IsLiteralValue(left) ? [...result2, Literal(ConvertToIntegerKey(left))] : Unreachable();
-  }, []);
-  return result;
-}
-function FromObject5(properties2) {
-  const propertyKeys = exports_guard.Keys(properties2);
-  const variants = FromPropertyKeys(propertyKeys);
-  const result = EvaluateUnionFast(variants);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_record.mjs
-function FromRecord2(type) {
-  return RecordKey(type);
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_tuple.mjs
-function FromTuple3(types) {
-  const result = types.map((_2, index) => Literal(index));
-  return EvaluateUnionFast(result);
-}
-
-// node_modules/typebox/build/type/engine/keyof/from_type.mjs
-function FromType12(type) {
-  return IsAny(type) ? FromAny() : IsArray2(type) ? FromArray3(type.items) : IsObject2(type) ? FromObject5(type.properties) : IsRecord(type) ? FromRecord2(type) : IsTuple(type) ? FromTuple3(type.items) : Never();
-}
-
-// node_modules/typebox/build/type/engine/keyof/instantiate.mjs
-function NormalizeType2(type) {
-  const result = IsCyclic(type) || IsDependent(type) || IsIntersect(type) || IsUnion(type) ? CollapseToObject(type) : type;
-  return result;
-}
-function KeyOfAction(type, options) {
-  return CanInstantiate([type]) ? exports_memory.Update(FromType12(NormalizeType2(type)), {}, options) : KeyOfDeferred(type, options);
-}
-function KeyOfInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return KeyOfAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/mapped.mjs
-function MappedDeferred(identifier2, type, as, property, options = {}) {
-  return Deferred("Mapped", [identifier2, type, as, property], options);
-}
-function Mapped(identifier2, type, as, property, options = {}) {
-  return MappedAction({}, State([], []), identifier2, type, as, property, options);
-}
-
-// node_modules/typebox/build/type/engine/mapped/mapped_variants.mjs
-function FromTemplateLiteral3(pattern) {
-  const evaluated = EvaluateTemplateLiteral(pattern);
-  const result = FromType13(evaluated);
-  return result;
-}
-function FromUnion5(types) {
-  return types.reduce((result, left) => {
-    return [...result, ...FromType13(left)];
-  }, []);
-}
-function FromEnum2(values) {
-  const evaluated = EvaluateEnum(values);
-  const result = FromType13(evaluated);
-  return result;
-}
-function FromLiteral5(value) {
-  const result = exports_guard.IsNumber(value) ? [Literal(`${value}`)] : [Literal(value)];
-  return result;
-}
-function FromType13(type) {
-  const result = IsEnum(type) ? FromEnum2(type.enum) : IsLiteral(type) ? FromLiteral5(type.const) : IsTemplateLiteral(type) ? FromTemplateLiteral3(type.pattern) : IsUnion(type) ? FromUnion5(type.anyOf) : [type];
-  return result;
-}
-function MappedVariants(type) {
-  const result = FromType13(type);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/mapped/mapped_operation.mjs
-function CanonicalAs(instantiatedAs) {
-  const result = IsTemplateLiteral(instantiatedAs) ? EvaluateTemplateLiteral(instantiatedAs.pattern) : instantiatedAs;
-  return result;
-}
-function MappedVariant(context, state, identifier2, variant, as, property) {
-  const variantContext = exports_memory.Assign(context, { [identifier2["name"]]: variant });
-  const instantiatedAs = InstantiateType(variantContext, state, as);
-  const canonicalAs = CanonicalAs(instantiatedAs);
-  const instantiatedProperty = InstantiateType(variantContext, state, property);
-  return IsLiteralNumber(canonicalAs) || IsLiteralString(canonicalAs) ? { [canonicalAs.const]: instantiatedProperty } : {};
-}
-function MappedProperties(context, state, identifier2, variants, as, property) {
-  return variants.reduce((result, left) => {
-    return [...result, MappedVariant(context, state, identifier2, left, as, property)];
-  }, []);
-}
-function MappedObjects(properties2) {
-  return properties2.reduce((result, left) => {
-    return [...result, _Object_(left)];
-  }, []);
-}
-function MappedOperation(context, state, identifier2, type, as, property) {
-  const variants = MappedVariants(type);
-  const mappedProperties = MappedProperties(context, state, identifier2, variants, as, property);
-  const mappedObjects = MappedObjects(mappedProperties);
-  const result = EvaluateIntersect(mappedObjects);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/mapped/instantiate.mjs
-function MappedAction(context, state, identifier2, type, as, property, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(MappedOperation(context, state, identifier2, type, as, property), {}, options) : MappedDeferred(identifier2, type, as, property, options);
-  return result;
-}
-function MappedInstantiate(context, state, identifier2, type, as, property, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return MappedAction(context, state, identifier2, instantiatedType, as, property, options);
-}
-
-// node_modules/typebox/build/type/engine/module/instantiate.mjs
-function InstantiateCyclics(context, declarations2, cyclicKeys) {
-  const declarationContext = exports_memory.Assign(context, declarations2);
-  const declarationKeys = exports_guard.Keys(declarations2).filter((key) => cyclicKeys.includes(key));
-  return declarationKeys.reduce((result, key) => {
-    return { ...result, [key]: InstantiateCyclic(declarationContext, key, declarations2[key]) };
-  }, {});
-}
-function InstantiateNonCyclics(context, declarations2, cyclicKeys) {
-  const declarationContext = exports_memory.Assign(context, declarations2);
-  const declarationKeys = exports_guard.Keys(declarations2).filter((key) => !cyclicKeys.includes(key));
-  return declarationKeys.reduce((result, key) => {
-    return { ...result, [key]: InstantiateType(declarationContext, State([], []), declarations2[key]) };
-  }, {});
-}
-function InstantiateModule(context, declarations2, options) {
-  const cyclicCandidates = CyclicCandidates(declarations2);
-  const instantiatedCyclics = InstantiateCyclics(context, declarations2, cyclicCandidates);
-  const instantiatedNonCyclics = InstantiateNonCyclics(context, declarations2, cyclicCandidates);
-  const instantiatedModule = { ...instantiatedCyclics, ...instantiatedNonCyclics };
-  return exports_memory.Update(instantiatedModule, {}, options);
-}
-function ModuleInstantiate(context, _state, declarations2, options) {
-  const instantiatedModule = InstantiateModule(context, declarations2, options);
-  return instantiatedModule;
-}
-
-// node_modules/typebox/build/type/action/non_nullable.mjs
-function NonNullableDeferred(type, options = {}) {
-  return Deferred("NonNullable", [type], options);
-}
-function NonNullable(type, options = {}) {
-  return NonNullableAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/non_nullable/instantiate.mjs
-function NonNullableOperation(type) {
-  const excluded = Union([Null(), Undefined()]);
-  return ExcludeAction(type, excluded, {});
-}
-function NonNullableAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(NonNullableOperation(type), {}, options) : NonNullableDeferred(type, options);
-  return result;
-}
-function NonNullableInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return NonNullableAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/omit.mjs
-function OmitDeferred(type, indexer, options = {}) {
-  return Deferred("Omit", [type, indexer], options);
-}
-function Omit(type, indexer_or_keys, options = {}) {
-  const indexer = exports_guard.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
-  return OmitAction(type, indexer, options);
-}
-
-// node_modules/typebox/build/type/engine/indexable/to_indexable.mjs
-function ToIndexable(type) {
-  const collapsed = CollapseToObject(type);
-  const result = IsObject2(collapsed) ? collapsed.properties : Unreachable();
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/omit/from_type.mjs
-function FromKeys(properties2, keys) {
-  const result = exports_guard.Keys(properties2).reduce((result2, key) => {
-    return keys.includes(key) ? result2 : { ...result2, [key]: properties2[key] };
-  }, {});
-  return result;
-}
-function FromType14(type, indexer) {
-  const indexable = ToIndexable(type);
-  const indexableKeys = ToIndexableKeys(indexer);
-  const omitted = FromKeys(indexable, indexableKeys);
-  const result = _Object_(omitted);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/omit/instantiate.mjs
-function OmitAction(type, indexer, options) {
-  const result = CanInstantiate([type, indexer]) ? exports_memory.Update(FromType14(type, indexer), {}, options) : OmitDeferred(type, indexer, options);
-  return result;
-}
-function OmitInstantiate(context, state, type, indexer, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  const instantiatedIndexer = InstantiateType(context, state, indexer);
-  return OmitAction(instantiatedType, instantiatedIndexer, options);
-}
-
-// node_modules/typebox/build/type/action/parameters.mjs
-function ParametersDeferred(type, options = {}) {
-  return Deferred("Parameters", [type], options);
-}
-function Parameters(type, options = {}) {
-  return ParametersAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/parameters/instantiate.mjs
-function ParametersOperation(type) {
-  const parameters = IsFunction2(type) ? type["parameters"] : [];
-  const instantiatedParameters = InstantiateElements({}, State([], []), parameters);
-  const result = Tuple(instantiatedParameters);
-  return result;
-}
-function ParametersAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(ParametersOperation(type), {}, options) : ParametersDeferred(type, options);
-  return result;
-}
-function ParametersInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return ParametersAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/partial.mjs
-function PartialDeferred(type, options = {}) {
-  return Deferred("Partial", [type], options);
-}
-function Partial(type, options = {}) {
-  return PartialAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/partial/from_cyclic.mjs
-function FromCyclic3(defs, ref2) {
-  const target2 = CyclicTarget(defs, ref2);
-  const partial = FromType15(target2);
-  const result = Cyclic(exports_memory.Assign(defs, { [ref2]: partial }), ref2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/partial/from_dependent.mjs
-function FromDependent3(if_, then_, else_) {
-  const evaluated = EvaluateDependent(if_, then_, else_);
-  const result = FromType15(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/partial/from_intersect.mjs
-function FromIntersect3(types) {
-  const evaluated = EvaluateIntersect(types);
-  const result = FromType15(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/partial/from_union.mjs
-function FromUnion6(types) {
-  const result = types.map((type) => FromType15(type));
-  return Union(result);
-}
-
-// node_modules/typebox/build/type/engine/partial/from_object.mjs
-function FromObject6(properties2) {
-  const mapped = exports_guard.Keys(properties2).reduce((result2, left) => {
-    return { ...result2, [left]: AddOptional(properties2[left]) };
-  }, {});
-  const result = _Object_(mapped);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/partial/from_type.mjs
-function FromType15(type) {
-  return IsCyclic(type) ? FromCyclic3(type.$defs, type.$ref) : IsDependent(type) ? FromDependent3(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect3(type.allOf) : IsUnion(type) ? FromUnion6(type.anyOf) : IsObject2(type) ? FromObject6(type.properties) : _Object_({});
-}
-
-// node_modules/typebox/build/type/engine/partial/instantiate.mjs
-function PartialAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType15(type), {}, options) : PartialDeferred(type, options);
-  return result;
-}
-function PartialInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return PartialAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/pick.mjs
-function PickDeferred(type, indexer, options = {}) {
-  return Deferred("Pick", [type, indexer], options);
-}
-function Pick(type, indexer_or_keys, options = {}) {
-  const indexer = exports_guard.IsArray(indexer_or_keys) ? KeysToIndexer(indexer_or_keys) : indexer_or_keys;
-  return PickAction(type, indexer, options);
-}
-
-// node_modules/typebox/build/type/engine/pick/from_type.mjs
-function FromKeys2(properties2, keys) {
-  const result = exports_guard.Keys(properties2).reduce((result2, key) => {
-    return keys.includes(key) ? exports_memory.Assign(result2, { [key]: properties2[key] }) : result2;
-  }, {});
-  return result;
-}
-function FromType16(type, indexer) {
-  const indexable = ToIndexable(type);
-  const keys = ToIndexableKeys(indexer);
-  const applied = FromKeys2(indexable, keys);
-  const result = _Object_(applied);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/pick/instantiate.mjs
-function PickAction(type, indexer, options) {
-  const result = CanInstantiate([type, indexer]) ? exports_memory.Update(FromType16(type, indexer), {}, options) : PickDeferred(type, indexer, options);
-  return result;
-}
-function PickInstantiate(context, state, type, indexer, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  const instantiatedIndexer = InstantiateType(context, state, indexer);
-  return PickAction(instantiatedType, instantiatedIndexer, options);
-}
-
-// node_modules/typebox/build/type/action/readonly_object.mjs
-function ReadonlyObjectDeferred(type, options = {}) {
-  return Deferred("ReadonlyObject", [type], options);
-}
-function ReadonlyObject(type, options = {}) {
-  return ReadonlyObjectAction(type, options);
-}
-var ReadonlyType = ReadonlyObject;
-
-// node_modules/typebox/build/type/engine/readonly_object/from_array.mjs
-function FromArray4(type) {
-  const result = AddImmutable(_Array_(type));
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_cyclic.mjs
-function FromCyclic4(defs, ref2) {
-  const target2 = CyclicTarget(defs, ref2);
-  const partial = FromType17(target2);
-  const result = Cyclic(exports_memory.Assign(defs, { [ref2]: partial }), ref2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_dependent.mjs
-function FromDependent4(if_, then_, else_) {
-  const evaluated = EvaluateDependent(if_, then_, else_);
-  const result = FromType17(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_intersect.mjs
-function FromIntersect4(types) {
-  const evaluated = EvaluateIntersect(types);
-  const result = FromType17(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_object.mjs
-function FromObject7(properties2) {
-  const mapped = exports_guard.Keys(properties2).reduce((result2, left) => {
-    return { ...result2, [left]: AddReadonly(properties2[left]) };
-  }, {});
-  const result = _Object_(mapped);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_tuple.mjs
-function FromTuple4(types) {
-  const result = AddImmutable(Tuple(types));
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_union.mjs
-function FromUnion7(types) {
-  const result = types.map((type) => FromType17(type));
-  return Union(result);
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/from_type.mjs
-function FromType17(type) {
-  return IsArray2(type) ? FromArray4(type.items) : IsCyclic(type) ? FromCyclic4(type.$defs, type.$ref) : IsDependent(type) ? FromDependent4(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect4(type.allOf) : IsObject2(type) ? FromObject7(type.properties) : IsTuple(type) ? FromTuple4(type.items) : IsUnion(type) ? FromUnion7(type.anyOf) : type;
-}
-
-// node_modules/typebox/build/type/engine/readonly_object/instantiate.mjs
-function ReadonlyObjectAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType17(type), {}, options) : ReadonlyObjectDeferred(type);
-  return result;
-}
-function ReadonlyObjectInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return ReadonlyObjectAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/engine/ref/instantiate.mjs
-function RefInstantiate(context, state, type, ref2) {
-  return state.visited.includes(ref2) ? type : (ref2 in context) ? InstantiateType(context, State(state["callstack"], [...state["visited"], ref2]), context[ref2]) : type;
-}
-
-// node_modules/typebox/build/type/engine/required/from_cyclic.mjs
-function FromCyclic5(defs, ref2) {
-  const target2 = CyclicTarget(defs, ref2);
-  const partial = FromType18(target2);
-  const result = Cyclic(exports_memory.Assign(defs, { [ref2]: partial }), ref2);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/required/from_dependent.mjs
-function FromDependent5(if_, then_, else_) {
-  const evaluated = EvaluateDependent(if_, then_, else_);
-  const result = FromType18(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/required/from_intersect.mjs
-function FromIntersect5(types) {
-  const evaluated = EvaluateIntersect(types);
-  const result = FromType18(evaluated);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/required/from_union.mjs
-function FromUnion8(types) {
-  const result = types.map((type) => FromType18(type));
-  return Union(result);
-}
-
-// node_modules/typebox/build/type/engine/required/from_object.mjs
-function FromObject8(properties2) {
-  const mapped = exports_guard.Keys(properties2).reduce((result2, left) => {
-    return { ...result2, [left]: RemoveOptional(properties2[left]) };
-  }, {});
-  const result = _Object_(mapped);
-  return result;
-}
-
-// node_modules/typebox/build/type/engine/required/from_type.mjs
-function FromType18(type) {
-  return IsCyclic(type) ? FromCyclic5(type.$defs, type.$ref) : IsDependent(type) ? FromDependent5(type.if, type.then, type.else) : IsIntersect(type) ? FromIntersect5(type.allOf) : IsUnion(type) ? FromUnion8(type.anyOf) : IsObject2(type) ? FromObject8(type.properties) : _Object_({});
-}
-
-// node_modules/typebox/build/type/action/required.mjs
-function RequiredDeferred(type, options = {}) {
-  return Deferred("Required", [type], options);
-}
-function Required(type, options = {}) {
-  return RequiredAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/required/instantiate.mjs
-function RequiredAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(FromType18(type), {}, options) : RequiredDeferred(type, options);
-  return result;
-}
-function RequiredInstantiate(context, state, type, options) {
-  const instaniatedType = InstantiateType(context, state, type);
-  return RequiredAction(instaniatedType, options);
-}
-
-// node_modules/typebox/build/type/action/return_type.mjs
-function ReturnTypeDeferred(type, options = {}) {
-  return Deferred("ReturnType", [type], options);
-}
-function ReturnType(type, options = {}) {
-  return ReturnTypeAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/return_type/instantiate.mjs
-function ReturnTypeOperation(type) {
-  return IsFunction2(type) ? type["returnType"] : Never();
-}
-function ReturnTypeAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(ReturnTypeOperation(type), {}, options) : ReturnTypeDeferred(type, options);
-  return result;
-}
-function ReturnTypeInstantiate(context, state, type, options = {}) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return ReturnTypeAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/with.mjs
-function WithDeferred(type, options) {
-  return Deferred("With", [type, options], {});
-}
-function With2(type, options) {
-  return WithAction(type, options);
-}
-
-// node_modules/typebox/build/type/engine/with/instantiate.mjs
-function WithAction(type, options) {
-  const result = CanInstantiate([type]) ? exports_memory.Update(type, {}, options) : WithDeferred(type, options);
-  return result;
-}
-function WithInstantiate(context, state, type, options) {
-  const instaniatedType = InstantiateType(context, state, type);
-  return WithAction(instaniatedType, options);
-}
-
-// node_modules/typebox/build/type/engine/rest/spread.mjs
-function SpreadElement(type) {
-  const result = IsRest(type) ? IsTuple(type.items) ? RestSpread(type.items.items) : IsInfer(type.items) ? [type] : IsRef(type.items) ? [type] : [Never()] : [type];
-  return result;
-}
-function RestSpread(types) {
-  const result = types.reduce((result2, left) => {
-    return [...result2, ...SpreadElement(left)];
-  }, []);
-  return result;
-}
-// node_modules/typebox/build/type/engine/instantiate.mjs
-function State(callstack, visited) {
-  return { callstack, visited };
-}
-function CanInstantiate(types) {
-  return exports_guard.ShiftLeft(types, (left, right) => IsRef(left) ? false : CanInstantiate(right), () => true);
-}
-function InstantiateProperties(context, state, properties2) {
-  return exports_guard.Keys(properties2).reduce((result, key) => {
-    return { ...result, [key]: InstantiateType(context, state, properties2[key]) };
-  }, {});
-}
-function InstantiateElements(context, state, types) {
-  const elements = InstantiateTypes(context, state, types);
-  const result = RestSpread(elements);
-  return result;
-}
-function InstantiateTypes(context, state, types) {
-  return types.map((type) => InstantiateType(context, state, type));
-}
-function WithModifiers(type, instantiatedType) {
-  const withOptional = IsOptional(type) ? AddOptionalAction(instantiatedType, {}) : instantiatedType;
-  const withReadonly = IsReadonly(type) ? AddReadonlyAction(withOptional, {}) : withOptional;
-  const withImmutable = IsImmutable(type) ? AddImmutableAction(withReadonly, {}) : withReadonly;
-  return withImmutable;
-}
-function InstantiateDeferred(context, state, action, parameters, options) {
-  return exports_guard.IsEqual(action, "AddImmutable") ? AddImmutableInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "RemoveImmutable") ? RemoveImmutableInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "AddReadonly") ? AddReadonlyInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "RemoveReadonly") ? RemoveReadonlyInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "AddOptional") ? AddOptionalInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "RemoveOptional") ? RemoveOptionalInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Capitalize") ? CapitalizeInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Conditional") ? ConditionalInstantiate(context, state, parameters[0], parameters[1], parameters[2], parameters[3], options) : exports_guard.IsEqual(action, "ConstructorParameters") ? ConstructorParametersInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Evaluate") ? EvaluateInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Exclude") ? ExcludeInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "Extract") ? ExtractInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "Index") ? IndexInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "InstanceType") ? InstanceTypeInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Interface") ? InterfaceInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "KeyOf") ? KeyOfInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Lowercase") ? LowercaseInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Mapped") ? MappedInstantiate(context, state, parameters[0], parameters[1], parameters[2], parameters[3], options) : exports_guard.IsEqual(action, "Module") ? ModuleInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "NonNullable") ? NonNullableInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Pick") ? PickInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "Parameters") ? ParametersInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Partial") ? PartialInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Omit") ? OmitInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "ReadonlyObject") ? ReadonlyObjectInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Record") ? RecordInstantiate(context, state, parameters[0], parameters[1], options) : exports_guard.IsEqual(action, "Required") ? RequiredInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "ReturnType") ? ReturnTypeInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "TemplateLiteral") ? TemplateLiteralInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Uncapitalize") ? UncapitalizeInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "Uppercase") ? UppercaseInstantiate(context, state, parameters[0], options) : exports_guard.IsEqual(action, "With") ? WithInstantiate(context, state, parameters[0], parameters[1]) : Deferred(action, parameters, options);
-}
-function InstantiateImmediate(context, state, type) {
-  const instantiatedType = IsRef(type) ? RefInstantiate(context, state, type, type.$ref) : IsArray2(type) ? _Array_(InstantiateType(context, state, type.items), ArrayOptions(type)) : IsCall(type) ? CallInstantiate(context, state, type.target, type.arguments) : IsConstructor2(type) ? Constructor(InstantiateTypes(context, state, type.parameters), InstantiateType(context, state, type.instanceType), ConstructorOptions(type)) : IsFunction2(type) ? _Function_(InstantiateTypes(context, state, type.parameters), InstantiateType(context, state, type.returnType), FunctionOptions(type)) : IsDependent(type) ? Dependent(InstantiateType(context, state, type.if), InstantiateType(context, state, type.then), InstantiateType(context, state, type.else), DependentOptions(type)) : IsIntersect(type) ? Intersect(InstantiateTypes(context, state, type.allOf), IntersectOptions(type)) : IsObject2(type) ? _Object_(InstantiateProperties(context, state, type.properties), ObjectOptions(type)) : IsRecord(type) ? RecordFromPattern(RecordPattern(type), InstantiateType(context, state, RecordValue(type))) : IsRest(type) ? Rest(InstantiateType(context, state, type.items)) : IsTuple(type) ? Tuple(InstantiateElements(context, state, type.items), TupleOptions(type)) : IsUnion(type) ? Union(InstantiateTypes(context, state, type.anyOf), UnionOptions(type)) : type;
-  const withModifiers = WithModifiers(type, instantiatedType);
-  return withModifiers;
-}
-function InstantiateType(context, state, type) {
-  const result = IsDeferred(type) ? InstantiateDeferred(context, state, type.action, type.parameters, type.options) : InstantiateImmediate(context, state, type);
-  return result;
-}
-function Instantiate(context, type) {
-  return InstantiateType(context, State([], []), type);
-}
-
-// node_modules/typebox/build/type/engine/immutable/instantiate_add.mjs
-function AddImmutableOperation(type) {
-  return exports_memory.Update(type, { "~immutable": true }, {});
-}
-function AddImmutableAction(type, options) {
-  const result = exports_memory.Update(AddImmutableOperation(type), {}, options);
-  return result;
-}
-function AddImmutableInstantiate(context, state, type, options) {
-  const instantiatedType = InstantiateType(context, state, type);
-  return AddImmutableAction(instantiatedType, options);
-}
-
-// node_modules/typebox/build/type/action/_add_immutable.mjs
-function AddImmutableDeferred(type, options = {}) {
-  return Deferred("AddImmutable", [type], options);
-}
-function AddImmutable(type, options = {}) {
-  return AddImmutableAction(type, options);
-}
-// node_modules/typebox/build/type/action/evaluate.mjs
-function EvaluateDeferred(type, options = {}) {
-  return Deferred("Evaluate", [type], options);
-}
-function Evaluate(type, options = {}) {
-  return EvaluateAction(type, options);
-}
-// node_modules/typebox/build/type/action/module.mjs
-function ModuleDeferred(declarations2, options = {}) {
-  return Deferred("Module", [declarations2], options);
-}
-function Module6(declarations2, options = {}) {
-  return ModuleInstantiate({}, State([], []), declarations2, options);
-}
-// node_modules/typebox/build/type/script/script.mjs
-function Script2(...args2) {
-  const [context, input, options] = exports_arguments.Match(args2, {
-    2: (script, options2) => exports_guard.IsString(script) ? [{}, script, options2] : [script, options2, {}],
-    3: (context2, script, options2) => [context2, script, options2],
-    1: (script) => [{}, script, {}]
-  });
-  const result = Script(input);
-  const parsed = exports_guard.IsArray(result) && exports_guard.IsEqual(result.length, 2) ? InstantiateType(context, State([], []), result[0]) : Never();
-  return exports_memory.Update(parsed, {}, options);
-}
-// node_modules/typebox/build/typebox.mjs
-var exports_typebox = {};
-__export(exports_typebox, {
-  Any: () => Any,
-  Array: () => _Array_,
-  BigInt: () => BigInt2,
-  Boolean: () => Boolean2,
-  Call: () => Call,
-  Capitalize: () => Capitalize,
-  Codec: () => Codec,
-  Conditional: () => Conditional,
-  Constructor: () => Constructor,
-  ConstructorParameters: () => ConstructorParameters,
-  Cyclic: () => Cyclic,
-  Decode: () => Decode,
-  DecodeBuilder: () => DecodeBuilder,
-  Dependent: () => Dependent,
-  Encode: () => Encode,
-  EncodeBuilder: () => EncodeBuilder,
-  Enum: () => Enum,
-  Evaluate: () => Evaluate,
-  Exclude: () => Exclude,
-  Extends: () => Extends,
-  ExtendsResult: () => exports_result,
-  Extract: () => Extract,
-  Function: () => _Function_,
-  Generic: () => Generic,
-  Identifier: () => Identifier,
-  Immutable: () => Immutable,
-  Index: () => Index,
-  Infer: () => Infer,
-  InstanceType: () => InstanceType,
-  Instantiate: () => Instantiate,
-  Integer: () => Integer,
-  Interface: () => Interface,
-  Intersect: () => Intersect,
-  IsAny: () => IsAny,
-  IsArray: () => IsArray2,
-  IsBigInt: () => IsBigInt2,
-  IsBoolean: () => IsBoolean3,
-  IsCall: () => IsCall,
-  IsCodec: () => IsCodec,
-  IsConstructor: () => IsConstructor2,
-  IsCyclic: () => IsCyclic,
-  IsDependent: () => IsDependent,
-  IsEnum: () => IsEnum,
-  IsEnumValue: () => IsEnumValue,
-  IsFunction: () => IsFunction2,
-  IsGeneric: () => IsGeneric,
-  IsIdentifier: () => IsIdentifier,
-  IsImmutable: () => IsImmutable,
-  IsInfer: () => IsInfer,
-  IsInteger: () => IsInteger2,
-  IsIntersect: () => IsIntersect,
-  IsKind: () => IsKind,
-  IsLiteral: () => IsLiteral,
-  IsNever: () => IsNever,
-  IsNull: () => IsNull2,
-  IsNumber: () => IsNumber3,
-  IsObject: () => IsObject2,
-  IsOptional: () => IsOptional,
-  IsParameter: () => IsParameter,
-  IsReadonly: () => IsReadonly,
-  IsRecord: () => IsRecord,
-  IsRef: () => IsRef,
-  IsRefine: () => IsRefine,
-  IsRest: () => IsRest,
-  IsSchema: () => IsSchema,
-  IsString: () => IsString3,
-  IsSymbol: () => IsSymbol2,
-  IsTemplateLiteral: () => IsTemplateLiteral,
-  IsThis: () => IsThis,
-  IsTuple: () => IsTuple,
-  IsUndefined: () => IsUndefined2,
-  IsUnion: () => IsUnion,
-  IsUnknown: () => IsUnknown,
-  IsUnsafe: () => IsUnsafe,
-  IsVoid: () => IsVoid,
-  KeyOf: () => KeyOf2,
-  Literal: () => Literal,
-  Lowercase: () => Lowercase,
-  Mapped: () => Mapped,
-  Module: () => Module6,
-  Never: () => Never,
-  NonNullable: () => NonNullable,
-  Null: () => Null,
-  Number: () => Number2,
-  Object: () => _Object_,
-  Omit: () => Omit,
-  Optional: () => Optional,
-  Parameter: () => Parameter,
-  Parameters: () => Parameters,
-  Partial: () => Partial,
-  Pick: () => Pick,
-  Readonly: () => Readonly,
-  ReadonlyObject: () => ReadonlyObject,
-  ReadonlyType: () => ReadonlyType,
-  Record: () => Record,
-  RecordKey: () => RecordKey,
-  RecordPattern: () => RecordPattern,
-  RecordValue: () => RecordValue,
-  Ref: () => Ref,
-  Refine: () => Refine,
-  Required: () => Required,
-  Rest: () => Rest,
-  ReturnType: () => ReturnType,
-  Script: () => Script2,
-  String: () => String2,
-  Symbol: () => Symbol2,
-  TemplateLiteral: () => TemplateLiteral2,
-  This: () => This,
-  Tuple: () => Tuple,
-  Uncapitalize: () => Uncapitalize,
-  Undefined: () => Undefined,
-  Union: () => Union,
-  Unknown: () => Unknown,
-  Unsafe: () => Unsafe,
-  Uppercase: () => Uppercase,
-  Void: () => Void,
-  With: () => With2
-});
 // src/tool-schema.ts
 function stringEnum(values, options) {
-  return exports_typebox.Unsafe({
+  return Unsafe({
     type: "string",
     enum: values,
     ...options?.description ? { description: options.description } : {}
   });
 }
-var signalGrepSchema = exports_typebox.Object({
-  column: exports_typebox.Optional(exports_typebox.Integer({
+var signalGrepSchema = _Object_({
+  column: Optional(Integer({
     minimum: 1,
     description: "1-based UTF-16 column for exact compiler navigation; requires path and line."
   })),
-  query: exports_typebox.Optional(exports_typebox.String({
+  query: Optional(String2({
     maxLength: 256,
     description: "With mode=files, a filename/path/fuzzy query (optional); with mode=concept or hybrid, a required natural-language question. Hybrid uses the same query as exact literal text and as the local concept query. Discovery modes preserve their requested path. Concept and hybrid require an explicitly installed local model."
   })),
-  scope: exports_typebox.Optional(stringEnum(["strict", "expand"], {
+  scope: Optional(stringEnum(["strict", "expand"], {
     description: "Content search scope: strict never expands a zero-result path; expand (default) retries from project cwd. Applies to ordinary, multi-term and role searches."
   })),
-  wholeWord: exports_typebox.Optional(exports_typebox.Boolean({
+  wholeWord: Optional(Boolean2({
     description: "Single-pattern search only: require ripgrep Unicode word boundaries around the match. Works with regex or literal=true."
   })),
-  anyOf: exports_typebox.Optional(exports_typebox.Array(exports_typebox.String({ maxLength: MAX_LITERAL_TERM_BYTES }), {
+  anyOf: Optional(_Array_(String2({ maxLength: MAX_LITERAL_TERM_BYTES }), {
     minItems: MIN_ANY_OF_TERMS,
     maxItems: MAX_ANY_OF_TOTAL_TERMS,
     description: `Exact literal union: ${String(MIN_ANY_OF_TERMS)}-${String(MAX_ANY_OF_TOTAL_TERMS)} distinct case-sensitive single-line terms, at most ${String(MAX_LITERAL_TERM_BYTES)} UTF-8 bytes each. Requests above ${String(MAX_ANY_OF_TERMS)} terms are split into version-checked chunks and merged. Returns every retained occurrence attributed to its term. Omit pattern, allOf, within, roles, literal and ignoreCase.`
   })),
-  allOf: exports_typebox.Optional(exports_typebox.Array(exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }), {
+  allOf: Optional(_Array_(String2({ maxLength: MAX_PATH_CHARACTERS }), {
     minItems: 2,
     maxItems: 3,
     description: "Explicit AND: 2-3 distinct case-sensitive literal terms, all in one file (default) or one function. Omit pattern, roles, literal and ignoreCase."
   })),
-  within: exports_typebox.Optional(stringEnum(["file", "function"], {
+  within: Optional(stringEnum(["file", "function"], {
     description: "Only valid with allOf; omit for ordinary single-pattern searches. function requires JS/TS/TSX and counts only that implementation's own code, excluding nested callbacks, strings/comments/types. Not proof of a shared execution path."
   })),
-  roles: exports_typebox.Optional(exports_typebox.Array(stringEnum([
+  roles: Optional(_Array_(stringEnum([
     "declaration",
     "call",
     "import",
@@ -25993,11 +17884,11 @@ var signalGrepSchema = exports_typebox.Object({
     minItems: 1,
     description: "Filter each single-pattern occurrence by syntax role (JS/TS/TSX/Go). Roles may be candidates, especially Go call/conversion ambiguity. Cannot combine with allOf."
   })),
-  changes: exports_typebox.Optional(exports_typebox.Object({
-    base: exports_typebox.Optional(exports_typebox.String({
+  changes: Optional(_Object_({
+    base: Optional(String2({
       description: "Git base commit/ref; default HEAD, pinned to a commit at query time."
     })),
-    target: exports_typebox.Optional(exports_typebox.String({
+    target: Optional(String2({
       description: "Optional target commit/ref. Omit for final working-tree contents including unignored untracked files, not just the staged index."
     })),
     scope: stringEnum(["files", "lines"], {
@@ -26007,80 +17898,80 @@ var signalGrepSchema = exports_typebox.Object({
       description: "Choose final/new content or deleted/old content. Historical inspect and continuation remain bound to that commit/blob."
     })
   })),
-  sourceCursor: exports_typebox.Optional(exports_typebox.String({
+  sourceCursor: Optional(String2({
     description: "Missing-source continuation token. Copy nextRequest exactly: mode=inspect plus sourceCursor only. Same token replays the same page; changed or expired sources fail clearly."
   })),
-  symbol: exports_typebox.Optional(exports_typebox.String({
+  symbol: Optional(String2({
     description: "Binding name for imports/tests/impact; semantic modes accept it only when it identifies one source occurrence. Prefer exact path+line+column when the name repeats."
   })),
-  pattern: exports_typebox.Optional(exports_typebox.String({
+  pattern: Optional(String2({
     maxLength: MAX_PATTERN_CHARACTERS,
     description: "Ordinary search: regex or literal=true text. mode=structure: ast-grep code pattern, at most 4 KiB, including $NAME and $$$ARGS metavariables; no regex/literal options. Omit for discovery, semantic navigation, inspection and cursors."
   })),
-  path: exports_typebox.Optional(exports_typebox.String({
+  path: Optional(String2({
     maxLength: MAX_PATH_CHARACTERS,
     description: "Search root or source file. A zero-result content search expands from cwd unless scope=strict. Compiler navigation stays within admitted workspace sources. Absolute paths and .. traversal may resolve outside cwd, except protected external system areas and .git internals; Git changes mode remains cwd-scoped."
   })),
-  paths: exports_typebox.Optional(exports_typebox.Array(exports_typebox.String(), {
+  paths: Optional(_Array_(String2(), {
     minItems: 1,
     maxItems: MAX_SELECTED_PATHS,
     description: "Exact retained files to select together from a cursor. A new search accepts one path; split multiple roots into separate requests."
   })),
-  glob: exports_typebox.Optional(exports_typebox.Union([
-    exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }),
-    exports_typebox.Array(exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }), {
+  glob: Optional(Union([
+    String2({ maxLength: MAX_PATH_CHARACTERS }),
+    _Array_(String2({ maxLength: MAX_PATH_CHARACTERS }), {
       maxItems: MAX_FILE_FILTER_ITEMS
     })
   ], {
     description: "Include glob or globs, for example '*.ts' or 'src/**'."
   })),
-  exclude: exports_typebox.Optional(exports_typebox.Union([
-    exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }),
-    exports_typebox.Array(exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }), {
+  exclude: Optional(Union([
+    String2({ maxLength: MAX_PATH_CHARACTERS }),
+    _Array_(String2({ maxLength: MAX_PATH_CHARACTERS }), {
       maxItems: MAX_FILE_FILTER_ITEMS
     })
   ], {
     description: "Exclude file/path globs (not content negation); applied after include globs. A leading ! is optional."
   })),
-  literal: exports_typebox.Optional(exports_typebox.Boolean({ description: "Treat pattern as literal text." })),
-  ignoreCase: exports_typebox.Optional(exports_typebox.Boolean({
+  literal: Optional(Boolean2({ description: "Treat pattern as literal text." })),
+  ignoreCase: Optional(Boolean2({
     description: "true for insensitive, false for sensitive; omitted uses smart-case."
   })),
-  hidden: exports_typebox.Optional(exports_typebox.Boolean({ description: "Search hidden files (default true; .git is always excluded)." })),
-  redact: exports_typebox.Optional(exports_typebox.Boolean({
+  hidden: Optional(Boolean2({ description: "Search hidden files (default true; .git is always excluded)." })),
+  redact: Optional(Boolean2({
     description: "Optional display-only masking for credential-like values and private-key bodies. Default false. It never changes searched files, admitted matches, counts, or cursor completeness."
   })),
-  modifiedAfter: exports_typebox.Optional(exports_typebox.Integer({
+  modifiedAfter: Optional(Integer({
     minimum: 0,
     maximum: Number.MAX_SAFE_INTEGER,
     description: "Worktree modification-time lower bound, inclusive, as a Unix timestamp in milliseconds. Not valid with Git changes."
   })),
-  modifiedBefore: exports_typebox.Optional(exports_typebox.Integer({
+  modifiedBefore: Optional(Integer({
     minimum: 0,
     maximum: Number.MAX_SAFE_INTEGER,
     description: "Worktree modification-time upper bound, exclusive, as a Unix timestamp in milliseconds. Not valid with Git changes."
   })),
-  maxFilesToParse: exports_typebox.Optional(exports_typebox.Integer({
+  maxFilesToParse: Optional(Integer({
     minimum: 1,
     maximum: MAX_CONFIGURABLE_STRUCTURE_FILES,
     description: `Maximum source files parsed by one structural analysis request (default 200, max ${String(MAX_CONFIGURABLE_STRUCTURE_FILES)}). Candidate discovery still searches the full requested scope.`
   })),
-  conceptLimit: exports_typebox.Optional(exports_typebox.Integer({
+  conceptLimit: Optional(Integer({
     minimum: 1,
     maximum: MAX_HYBRID_CONCEPT_LIMIT,
     description: `mode=hybrid only: retain the top semantic candidates after overlap deduplication (default ${String(DEFAULT_HYBRID_CONCEPT_LIMIT)}, max ${String(MAX_HYBRID_CONCEPT_LIMIT)}). Literal evidence has an independent retention budget and is never displaced by this limit.`
   })),
-  context: exports_typebox.Optional(exports_typebox.Integer({
+  context: Optional(Integer({
     minimum: 0,
     maximum: MAX_CONTEXT_LINES,
     description: "New search only: nearby lines (0-20). MUST be omitted for inspect, which selects its own bounded source window."
   })),
-  limit: exports_typebox.Optional(exports_typebox.Integer({
+  limit: Optional(Integer({
     minimum: 1,
     maximum: MAX_PAGE_SIZE,
     description: "New search only: explicit detail-page match limit (max 100). Normally omit to preserve automatic summarization; not valid for inspect."
   })),
-  mode: exports_typebox.Optional(stringEnum([
+  mode: Optional(stringEnum([
     "auto",
     "summary",
     "matches",
@@ -26103,26 +17994,26 @@ var signalGrepSchema = exports_typebox.Object({
   ], {
     description: "Ordinary search defaults to auto; summary/matches request explicit pages. files uses query, structure uses an AST pattern, concept uses natural-language query, and hybrid uses one query for exact literal plus concept evidence in a single snapshot. definitions/references/implementations/callers/callees require a workspace path and exact line+column or unique symbol; dependencies/dependents require only a workspace file path. inspect/outline/imports/tests/impact retain their documented location selectors. tests supports JS/TS/TSX sources; Python supports outline, not related-test navigation. Compiler results are static evidence; concept and related-test results remain candidates."
   })),
-  line: exports_typebox.Optional(exports_typebox.Number({
+  line: Optional(Number2({
     description: "1-indexed source line for path inspection/navigation/impact. Omit with matchIndex, matchIndices or targets."
   })),
-  matchIndex: exports_typebox.Optional(exports_typebox.Number({
+  matchIndex: Optional(Number2({
     description: "1-based retained match index for cursor-scoped inspect; replaces path and line."
   })),
-  matchIndices: exports_typebox.Optional(exports_typebox.Array(exports_typebox.Integer({ minimum: 1 }), {
+  matchIndices: Optional(_Array_(Integer({ minimum: 1 }), {
     minItems: 1,
     maxItems: MAX_INSPECT_TARGETS,
     description: "Inspect up to five visible match numbers together using the same cursor; mutually exclusive with matchIndex, path, line and targets."
   })),
-  targets: exports_typebox.Optional(exports_typebox.Array(exports_typebox.Object({
-    path: exports_typebox.String({ maxLength: MAX_PATH_CHARACTERS }),
-    line: exports_typebox.Integer({ minimum: 1 })
+  targets: Optional(_Array_(_Object_({
+    path: String2({ maxLength: MAX_PATH_CHARACTERS }),
+    line: Integer({ minimum: 1 })
   }), {
     minItems: 1,
     maxItems: MAX_INSPECT_TARGETS,
     description: "Inspect known path/line locations together without a cursor. The complete batch shares one 16 KiB response budget."
   })),
-  cursor: exports_typebox.Optional(exports_typebox.String({ description: "Opaque cursor from a previous stable search snapshot." }))
+  cursor: Optional(String2({ description: "Opaque cursor from a previous stable search snapshot." }))
 });
 
 // src/model-error.ts
@@ -26176,12 +18067,12 @@ function modelErrorText(error) {
 // src/omp-index.ts
 var SIGNAL_GREP_LABEL = "baoer_signal_grep";
 var OMP_REPLACED_SEARCH_TOOLS = new Set(["grep", "glob"]);
-function expandTilde(path2) {
-  if (path2 === "~")
-    return homedir3();
-  if (path2.startsWith("~/"))
-    return join5(homedir3(), path2.slice(2));
-  return path2;
+function expandTilde(path) {
+  if (path === "~")
+    return homedir2();
+  if (path.startsWith("~/"))
+    return join4(homedir2(), path.slice(2));
+  return path;
 }
 function ompProfile() {
   const value = process.env.OMP_PROFILE ?? process.env.PI_PROFILE;
@@ -26200,7 +18091,7 @@ function ompAgentDir() {
     return expandTilde(configured);
   const configDir = process.env.PI_CONFIG_DIR || ".omp";
   const profile = ompProfile();
-  return profile ? join5(homedir3(), configDir, "profiles", profile, "agent") : join5(homedir3(), configDir, "agent");
+  return profile ? join4(homedir2(), configDir, "profiles", profile, "agent") : join4(homedir2(), configDir, "agent");
 }
 function selectSearchTools(pi, replaceAlternatives) {
   const current = pi.getActiveTools();
@@ -26221,10 +18112,10 @@ async function registerOmpSignalGrepExtension(pi, searchPolicyAssets = new URL("
     structure: createCtagsStructureProvider()
   }));
   const policy = new SearchPolicy(searchPolicyAssets);
-  const resolvedConfig = config ?? await readSignalGrepConfigFile(join5(ompAgentDir(), SIGNAL_GREP_CONFIG_FILE));
-  const { locale: locale2 } = resolvedConfig;
+  const resolvedConfig = config ?? await readSignalGrepConfigFile(join4(ompAgentDir(), SIGNAL_GREP_CONFIG_FILE));
+  const { locale } = resolvedConfig;
   const enforcement = normalizeSearchEnforcement(resolvedConfig.enforceSearch, "OMP extension config");
-  let selection2 = Promise.resolve();
+  let selection = Promise.resolve();
   const updateSelection = async () => {
     const current = pi.getActiveTools();
     const next = selectSearchTools(pi, enforcement === "hard");
@@ -26232,8 +18123,8 @@ async function registerOmpSignalGrepExtension(pi, searchPolicyAssets = new URL("
       await pi.setActiveTools(next);
   };
   const selectTools = () => {
-    selection2 = selection2.then(updateSelection);
-    return selection2;
+    selection = selection.then(updateSelection);
+    return selection;
   };
   pi.registerTool({
     name: SIGNAL_GREP_LABEL,
@@ -26244,15 +18135,15 @@ async function registerOmpSignalGrepExtension(pi, searchPolicyAssets = new URL("
     promptGuidelines: signalGrepPromptGuidelines(),
     parameters: signalGrepSchema,
     renderCall(params, _options, theme) {
-      return renderSignalGrepCall(params, locale2, theme);
+      return renderSignalGrepCall(params, locale, theme);
     },
     renderResult(result, options, theme) {
-      return renderSignalGrepResult(result, resultOptions(options, result), locale2, theme);
+      return renderSignalGrepResult(result, resultOptions(options, result), locale, theme);
     },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
         const result = await runtime.search(params, ctx.cwd, signal, resolveContextBudget(ctx.getContextUsage()));
-        ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale2));
+        ctx.ui.setStatus(SESSION_STATUS_KEY, runtime.formatSessionStatus(locale));
         return {
           content: [{ type: "text", text: result.text }],
           details: result.details

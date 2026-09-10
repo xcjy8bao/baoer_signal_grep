@@ -7,7 +7,7 @@ import { navigateSemantics } from "./semantic-navigation.js";
 import { dirname, resolve } from "node:path";
 import { AnalysisStore } from "./analysis-store.js";
 import type { AnalysisItem, AnalysisResultSet, CoverageStatus } from "./analysis-types.js";
-import { abortError, ConceptUnavailableError, CursorError, SignalGrepError } from "./errors.js";
+import { abortError, CursorError, SignalGrepError } from "./errors.js";
 import { findGitRepository } from "./git-repository.js";
 import { isPathInsideCwd } from "./path-policy.js";
 import { resolveInspectionTarget } from "./inspect.js";
@@ -470,7 +470,6 @@ export class EvidenceService {
             })
             .catch((error: unknown) => {
               if (signal?.aborted || groupSignal.aborted) throw error;
-              if (!(error instanceof ConceptUnavailableError)) throw error;
               conceptFailure = error;
               return undefined;
             }),

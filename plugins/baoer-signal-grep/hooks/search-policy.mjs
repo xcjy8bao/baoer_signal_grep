@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
-var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/search-policy-shell.ts
 import { fileURLToPath } from "node:url";
@@ -1448,8 +1446,8 @@ var Module2 = (() => {
     var ENVIRONMENT_IS_NODE = typeof process == "object" && typeof process.versions == "object" && typeof process.versions.node == "string" && process.type != "renderer";
     var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIRONMENT_IS_WORKER;
     if (ENVIRONMENT_IS_NODE) {
-      const { createRequire: createRequire2 } = await import("module");
-      var require = createRequire2(import.meta.url);
+      const { createRequire } = await import("module");
+      var require = createRequire(import.meta.url);
     }
     Module.currentQueryProgressCallback = null;
     Module.currentProgressCallback = null;

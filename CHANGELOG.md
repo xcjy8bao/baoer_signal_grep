@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.6-1] - 2026-09-10
+
+- Preserve literal evidence when hybrid Concept retrieval reports any non-cancellation provider failure. The semantic branch is marked `skipped`, the diagnostic remains visible in partial coverage, and literal search ownership is not discarded.
+- Refresh the published Claude/Codex/Kimi search-policy hook, OMP extension and MCP server artifacts so the package contents match the current source and release metadata.
+
 ## [1.5.6] - 2026-09-10
 
 - Fix Concept token-window binary search stalls on UTF-16 surrogate-pair interiors (emoji and other astral characters). `maximumTokenSafeEnd` and `overlapStart` now strictly advance `low`, minimum overlap progress crosses a complete code point, and `tokenSafeWindows` rejects a non-advancing overlap instead of spinning until the 10-minute deadline.
