@@ -13,6 +13,10 @@ const MAX_SHELL_NESTING = 4;
 export interface ShellSearchMatch {
   kind: SearchKind;
   command: string;
+  argv: readonly (string | null)[];
+  hasUntranslatedShellSyntax: boolean;
+  hasVariableAssignments: boolean;
+  hasSyntaxError: boolean;
   commandIndex: number;
   startByte: number;
   endByte: number;
@@ -24,18 +28,63 @@ interface InspectionState {
   nextCommandIndex: number;
 }
 
+function decodeBashDoubleQuoted(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character !== "\\") {
+      result += character;
+      continue;
+    }
+    const next = value[index + 1];
+    if (next === undefined || !["$", "`", '"', "\\", "\n"].includes(next)) {
+      result += character;
+      continue;
+    }
+    if (next !== "\n") result += next;
+    index += 1;
+  }
+  return result;
+}
+
+function decodePowerShellSingleQuoted(value: string): string | null {
+  if (!(value.length >= 2 && value.startsWith("'") && value.endsWith("'"))) return null;
+  const body = value.slice(1, -1);
+  let result = "";
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character !== "'") {
+      result += character;
+      continue;
+    }
+    if (body[index + 1] !== "'") return null;
+    result += "'";
+    index += 1;
+  }
+  return result;
+}
+
 function literalWord(node: Node, language: ShellLanguage): string | null {
   const text = node.text;
   if (language === "powershell") {
-    if (text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replaceAll("''", "'");
+    const singleQuoted = decodePowerShellSingleQuoted(text);
+    if (singleQuoted !== null) return singleQuoted;
     if (node.descendantsOfType(["variable", "sub_expression"]).length > 0) return null;
-    const unquoted = text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text;
+    const quoted = text.length >= 2 && text.startsWith('"') && text.endsWith('"');
+    if (!quoted && !["command_name", "generic_token", "command_parameter"].includes(node.type))
+      return null;
+    const unquoted = quoted ? text.slice(1, -1) : text;
     return unquoted.replace(/`([`"'$])/gu, "$1");
   }
-  if (node.type === "raw_string") return text.slice(1, -1);
-  if (node.type === "word" || node.type === "string_content" || node.type === "number")
-    return text.replace(/\\(.)/gsu, "$1");
+  if (node.type === "raw_string")
+    return text.length >= 2 && text.startsWith("'") && text.endsWith("'")
+      ? text.slice(1, -1)
+      : null;
+  if (node.type === "string_content") return decodeBashDoubleQuoted(text);
+  if (node.type === "word" || node.type === "number") return text.replace(/\\(.)/gsu, "$1");
   if (["command_name", "concatenation", "string"].includes(node.type)) {
+    if (node.type === "string" && !(text.length >= 2 && text.startsWith('"') && text.endsWith('"')))
+      return null;
     let result = "";
     for (const child of node.namedChildren) {
       if (!child) continue;
@@ -48,7 +97,7 @@ function literalWord(node: Node, language: ShellLanguage): string | null {
   return null;
 }
 
-function commandWords(node: Node, language: ShellLanguage): Array<string | null> {
+function commandWordNodes(node: Node, language: ShellLanguage): Node[] {
   const name = node.childForFieldName(language === "bash" ? "name" : "command_name");
   if (!name) return [];
   const args =
@@ -60,7 +109,35 @@ function commandWords(node: Node, language: ShellLanguage): Array<string | null>
             (child): child is Node =>
               child !== null && !["command_argument_sep", "redirection"].includes(child.type),
           ) ?? []);
-  return [literalWord(name, language), ...args.map((arg) => literalWord(arg, language))];
+  return [name, ...args];
+}
+
+function commandWords(node: Node, language: ShellLanguage): Array<string | null> {
+  return commandWordNodes(node, language).map((word) => literalWord(word, language));
+}
+
+function hasUntranslatedShellSyntax(node: Node, language: ShellLanguage): boolean {
+  const text = node.text;
+  if (language === "powershell") {
+    if (text.length >= 2 && text.startsWith("'") && text.endsWith("'"))
+      return decodePowerShellSingleQuoted(text) === null;
+    const quoted = text.length >= 2 && text.startsWith('"') && text.endsWith('"');
+    const quotedBody = quoted ? text.slice(1, -1) : "";
+    return (
+      text.includes("`") ||
+      quotedBody.includes('"') ||
+      (!quoted && /['"]/u.test(text)) ||
+      (!quoted && text.startsWith("~"))
+    );
+  }
+  if (["raw_string", "string", "string_content"].includes(node.type)) return false;
+  if (["word", "number", "command_name"].includes(node.type))
+    return /[*?[\]{}]/u.test(text) || text.startsWith("~") || text.startsWith("=");
+  if (node.type === "concatenation")
+    return node.namedChildren.some(
+      (child) => child !== null && hasUntranslatedShellSyntax(child, language),
+    );
+  return false;
 }
 
 function isSafePipelineFilter(
@@ -147,6 +224,7 @@ export class ShellSearchPolicy {
       if (!tree)
         throw new Error("Search policy parsing exceeded its time budget; simplify the command");
       try {
+        const hasSyntaxError = tree.rootNode.hasError;
         const commands = tree.rootNode.descendantsOfType("command");
         for (const node of commands) {
           if (!node) continue;
@@ -161,6 +239,15 @@ export class ShellSearchPolicy {
             return {
               kind: decision.kind,
               command: decision.command ?? "search command",
+              argv: words,
+              hasUntranslatedShellSyntax:
+                node.descendantsOfType("redirection").length > 0 ||
+                commandWordNodes(node, language).some((word) =>
+                  hasUntranslatedShellSyntax(word, language),
+                ),
+              hasVariableAssignments:
+                language === "bash" && node.descendantsOfType("variable_assignment").length > 0,
+              hasSyntaxError,
               commandIndex,
               startByte: node.startIndex,
               endByte: node.endIndex,

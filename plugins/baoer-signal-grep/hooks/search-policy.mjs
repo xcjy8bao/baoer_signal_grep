@@ -1,5 +1,343 @@
 #!/usr/bin/env node
 
+// src/search-policy-recovery.ts
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+// src/errors.ts
+class SignalGrepError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "SignalGrepError";
+  }
+}
+
+// src/types.ts
+var MAX_SEARCH_STORAGE_BYTES = 32 * 1024 * 1024;
+var MAX_RESULT_BYTES = 16 * 1024;
+var MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
+var MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024;
+var MAX_PATH_CHARACTERS = 4096;
+var MAX_PATTERN_CHARACTERS = 64 * 1024;
+var MAX_FILE_FILTER_ITEMS = 64;
+
+// src/request.ts
+function list(value) {
+  if (value === undefined)
+    return [];
+  return (Array.isArray(value) ? value : [value]).filter((item) => item.length > 0);
+}
+function validateText(value, field, maxCharacters, singleLine = false) {
+  if (!value.isWellFormed() || /\0/.test(value) || singleLine && /[\r\n]/.test(value))
+    throw new SignalGrepError(`${field} must be well-formed text without NUL or line breaks`);
+  if (value.length > maxCharacters)
+    throw new SignalGrepError(`${field} is too long (maximum ${String(maxCharacters)} characters); use a shorter value or a narrower working directory`);
+}
+function validateSearchPath(value, field = "path") {
+  validateText(value.replace(/^@/, ""), field, MAX_PATH_CHARACTERS, true);
+}
+function validateRawSearchInput(input) {
+  if (input.pattern !== undefined)
+    validateText(input.pattern, "pattern", MAX_PATTERN_CHARACTERS);
+  if (input.path !== undefined) {
+    validateSearchPath(input.path);
+  }
+  for (const [field, value] of [
+    ["glob", input.glob],
+    ["exclude", input.exclude]
+  ]) {
+    const values = list(value);
+    if (values.length > MAX_FILE_FILTER_ITEMS)
+      throw new SignalGrepError(`${field} accepts at most ${String(MAX_FILE_FILTER_ITEMS)} entries`);
+    values.forEach((item) => validateText(item, field, MAX_PATH_CHARACTERS, true));
+  }
+  for (const [field, value] of [
+    ["modifiedAfter", input.modifiedAfter],
+    ["modifiedBefore", input.modifiedBefore]
+  ]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+      throw new SignalGrepError(`${field} must be a non-negative Unix timestamp in milliseconds`);
+  }
+  if (input.modifiedAfter !== undefined && input.modifiedBefore !== undefined && input.modifiedAfter > input.modifiedBefore)
+    throw new SignalGrepError("modifiedAfter must be earlier than or equal to modifiedBefore");
+}
+
+// src/search-policy-recovery.ts
+var MANUAL_REASON = "the command is not one standalone static rg search using the supported option and single-target subset";
+function manual() {
+  return { kind: "manual", reason: MANUAL_REASON };
+}
+function pushGlob(value, include, exclude, exclusionSeen) {
+  if (value.length === 0 || value.startsWith("\\!") || value.startsWith("!!"))
+    return;
+  if (value.startsWith("!")) {
+    if (value.length === 1)
+      return;
+    exclude.push(value.slice(1));
+    return true;
+  }
+  if (exclusionSeen)
+    return;
+  include.push(value);
+  return false;
+}
+function parseRipgrepArguments(args2) {
+  let pattern;
+  const paths = [];
+  const glob = [];
+  const exclude = [];
+  let literal = false;
+  let ignoreCase = false;
+  let hidden = false;
+  let wholeWord = false;
+  let noConfig = false;
+  let optionsEnded = false;
+  let exclusionSeen = false;
+  const takePattern = (value) => {
+    if (pattern !== undefined)
+      return false;
+    pattern = value;
+    return true;
+  };
+  for (let index = 0;index < args2.length; index += 1) {
+    const value = args2[index];
+    if (value === undefined)
+      return;
+    if (optionsEnded || !value.startsWith("-") || value === "-") {
+      if (!takePattern(value))
+        paths.push(value);
+      continue;
+    }
+    if (value === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (value.startsWith("--")) {
+      const separator = value.indexOf("=");
+      const option = separator < 0 ? value : value.slice(0, separator);
+      const inlineValue = separator < 0 ? undefined : value.slice(separator + 1);
+      if ([
+        "--line-number",
+        "--no-line-number",
+        "--heading",
+        "--no-heading",
+        "--with-filename",
+        "--no-filename"
+      ].includes(option)) {
+        if (inlineValue !== undefined)
+          return;
+        continue;
+      }
+      if (option === "--no-config") {
+        if (inlineValue !== undefined)
+          return;
+        noConfig = true;
+        continue;
+      }
+      if (option === "--fixed-strings" || option === "--no-fixed-strings") {
+        if (inlineValue !== undefined)
+          return;
+        literal = option === "--fixed-strings";
+        continue;
+      }
+      if (["--ignore-case", "--case-sensitive", "--smart-case"].includes(option)) {
+        if (inlineValue !== undefined)
+          return;
+        ignoreCase = option === "--ignore-case" ? true : option === "--case-sensitive" ? false : undefined;
+        continue;
+      }
+      if (option === "--hidden" || option === "--no-hidden") {
+        if (inlineValue !== undefined)
+          return;
+        hidden = option === "--hidden";
+        continue;
+      }
+      if (option === "--word-regexp" || option === "--no-word-regexp") {
+        if (inlineValue !== undefined)
+          return;
+        wholeWord = option === "--word-regexp";
+        continue;
+      }
+      if (option === "--regexp") {
+        const next = inlineValue ?? args2[index + 1];
+        if (next === undefined || !takePattern(next))
+          return;
+        if (inlineValue === undefined)
+          index += 1;
+        continue;
+      }
+      if (option === "--glob") {
+        const next = inlineValue ?? args2[index + 1];
+        if (next === undefined)
+          return;
+        const excluded = pushGlob(next, glob, exclude, exclusionSeen);
+        if (excluded === undefined)
+          return;
+        exclusionSeen ||= excluded;
+        if (inlineValue === undefined)
+          index += 1;
+        continue;
+      }
+      if (option === "--color") {
+        const next = inlineValue ?? args2[index + 1];
+        if (next === undefined || !["never", "auto", "always", "ansi"].includes(next))
+          return;
+        if (inlineValue === undefined)
+          index += 1;
+        continue;
+      }
+      return;
+    }
+    for (let offset = 1;offset < value.length; offset += 1) {
+      const option = value[offset];
+      if (option === undefined)
+        return;
+      if (["n", "N", "H"].includes(option))
+        continue;
+      if (option === "F") {
+        literal = true;
+        continue;
+      }
+      if (option === "i" || option === "s" || option === "S") {
+        ignoreCase = option === "i" ? true : option === "s" ? false : undefined;
+        continue;
+      }
+      if (option === "w") {
+        wholeWord = true;
+        continue;
+      }
+      if (option === "e") {
+        const next = value.slice(offset + 1) || args2[index + 1];
+        if (next === undefined || !takePattern(next))
+          return;
+        if (value.slice(offset + 1).length === 0)
+          index += 1;
+        offset = value.length;
+        continue;
+      }
+      if (option === "g") {
+        const next = value.slice(offset + 1) || args2[index + 1];
+        if (next === undefined)
+          return;
+        const excluded = pushGlob(next, glob, exclude, exclusionSeen);
+        if (excluded === undefined)
+          return;
+        exclusionSeen ||= excluded;
+        if (value.slice(offset + 1).length === 0)
+          index += 1;
+        offset = value.length;
+        continue;
+      }
+      return;
+    }
+  }
+  if (pattern === undefined || paths.length > 1 || paths[0] === "-")
+    return;
+  return {
+    pattern,
+    path: paths[0] ?? ".",
+    literal,
+    ignoreCase,
+    hidden,
+    wholeWord,
+    glob,
+    exclude,
+    noConfig,
+    pathWasProvided: paths.length === 1
+  };
+}
+function listValue(values) {
+  if (values.length === 0)
+    return;
+  return values.length === 1 ? values[0] : [...values];
+}
+function isStandalone(command, match) {
+  if (match.nestedDepth > 0)
+    return false;
+  const bytes = Buffer.from(command, "utf8");
+  if (match.startByte < 0 || match.endByte > bytes.length || match.startByte > match.endByte)
+    return false;
+  return bytes.subarray(0, match.startByte).toString("utf8").trim().length === 0 && bytes.subarray(match.endByte).toString("utf8").trim().length === 0;
+}
+function isPlatformPathSeparator(character) {
+  return character === sep || process.platform === "win32" && character === "/";
+}
+function hasNormalizationSensitivePath(path) {
+  if (isPlatformPathSeparator(path.at(-1) ?? ""))
+    return true;
+  if (process.platform === "win32" && /^[A-Za-z]:(?![\\/])/u.test(path))
+    return true;
+  const segments = path.split(process.platform === "win32" ? /[\\/]/u : "/");
+  let namedSegmentSeen = isAbsolute(path);
+  for (const segment of segments) {
+    if (segment === "..")
+      return true;
+    if (segment === ".") {
+      if (namedSegmentSeen)
+        return true;
+      continue;
+    }
+    if (segment.length > 0)
+      namedSegmentSeen = true;
+  }
+  return false;
+}
+function isRipgrepExecutable(executable, language) {
+  const name2 = executable.split(/[\\/]/u).at(-1) ?? executable;
+  const normalized = language === "powershell" || process.platform === "win32" ? name2.toLowerCase() : name2;
+  return normalized === "rg" || normalized === "ripgrep" || (language === "powershell" || process.platform === "win32") && (normalized === "rg.exe" || normalized === "ripgrep.exe");
+}
+function recoverShellSearch(command, match, workingDirectory) {
+  if (!isStandalone(command, match) || workingDirectory === undefined || match.kind !== "content")
+    return manual();
+  if (match.hasVariableAssignments || match.hasUntranslatedShellSyntax || match.hasSyntaxError)
+    return manual();
+  if (!match.argv.every((value) => value !== null))
+    return manual();
+  const argv = match.argv;
+  const executable = argv[0];
+  if (executable === undefined || !isRipgrepExecutable(executable, match.language))
+    return manual();
+  const parsed = parseRipgrepArguments(argv.slice(1));
+  if (!parsed)
+    return manual();
+  if (!parsed.noConfig && (process.env.RIPGREP_CONFIG_PATH?.length ?? 0) > 0)
+    return manual();
+  if (!parsed.pathWasProvided)
+    return manual();
+  if (parsed.path.length === 0)
+    return manual();
+  if (hasNormalizationSensitivePath(parsed.path))
+    return manual();
+  const base = resolve(workingDirectory);
+  const path = resolve(base, parsed.path);
+  const localPath = relative(base, path);
+  if (isAbsolute(localPath) || localPath === ".." || localPath.startsWith(`..${sep}`))
+    return manual();
+  if (path.split(/[\\/]/u).some((part) => part.toLowerCase() === ".git"))
+    return manual();
+  const glob = listValue(parsed.glob);
+  const exclude = listValue(parsed.exclude);
+  const request = {
+    pattern: parsed.pattern,
+    ...parsed.literal ? { literal: true } : {},
+    ...parsed.ignoreCase === undefined ? {} : { ignoreCase: parsed.ignoreCase },
+    ...parsed.wholeWord ? { wholeWord: true } : {},
+    ...glob === undefined ? {} : { glob },
+    ...exclude === undefined ? {} : { exclude },
+    hidden: parsed.hidden,
+    path,
+    scope: "strict"
+  };
+  try {
+    validateRawSearchInput(request);
+  } catch (error) {
+    if (error instanceof SignalGrepError)
+      return manual();
+    throw error;
+  }
+  return { kind: "concrete", request: JSON.stringify(request) };
+}
+
 // src/search-policy-shell.ts
 import { fileURLToPath } from "node:url";
 
@@ -3367,21 +3705,68 @@ function classifyCommand(argv, language, depth = 0) {
 // src/search-policy-shell.ts
 var MAX_POLICY_COMMAND_BYTES = 64 * 1024;
 var MAX_SHELL_NESTING = 4;
+function decodeBashDoubleQuoted(value) {
+  let result = "";
+  for (let index = 0;index < value.length; index += 1) {
+    const character = value[index];
+    if (character !== "\\") {
+      result += character;
+      continue;
+    }
+    const next = value[index + 1];
+    if (next === undefined || !["$", "`", '"', "\\", `
+`].includes(next)) {
+      result += character;
+      continue;
+    }
+    if (next !== `
+`)
+      result += next;
+    index += 1;
+  }
+  return result;
+}
+function decodePowerShellSingleQuoted(value) {
+  if (!(value.length >= 2 && value.startsWith("'") && value.endsWith("'")))
+    return null;
+  const body2 = value.slice(1, -1);
+  let result = "";
+  for (let index = 0;index < body2.length; index += 1) {
+    const character = body2[index];
+    if (character !== "'") {
+      result += character;
+      continue;
+    }
+    if (body2[index + 1] !== "'")
+      return null;
+    result += "'";
+    index += 1;
+  }
+  return result;
+}
 function literalWord(node, language) {
   const text = node.text;
   if (language === "powershell") {
-    if (text.startsWith("'") && text.endsWith("'"))
-      return text.slice(1, -1).replaceAll("''", "'");
+    const singleQuoted = decodePowerShellSingleQuoted(text);
+    if (singleQuoted !== null)
+      return singleQuoted;
     if (node.descendantsOfType(["variable", "sub_expression"]).length > 0)
       return null;
-    const unquoted = text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text;
+    const quoted = text.length >= 2 && text.startsWith('"') && text.endsWith('"');
+    if (!quoted && !["command_name", "generic_token", "command_parameter"].includes(node.type))
+      return null;
+    const unquoted = quoted ? text.slice(1, -1) : text;
     return unquoted.replace(/`([`"'$])/gu, "$1");
   }
   if (node.type === "raw_string")
-    return text.slice(1, -1);
-  if (node.type === "word" || node.type === "string_content" || node.type === "number")
+    return text.length >= 2 && text.startsWith("'") && text.endsWith("'") ? text.slice(1, -1) : null;
+  if (node.type === "string_content")
+    return decodeBashDoubleQuoted(text);
+  if (node.type === "word" || node.type === "number")
     return text.replace(/\\(.)/gsu, "$1");
   if (["command_name", "concatenation", "string"].includes(node.type)) {
+    if (node.type === "string" && !(text.length >= 2 && text.startsWith('"') && text.endsWith('"')))
+      return null;
     let result = "";
     for (const child of node.namedChildren) {
       if (!child)
@@ -3395,12 +3780,32 @@ function literalWord(node, language) {
   }
   return null;
 }
-function commandWords(node, language) {
+function commandWordNodes(node, language) {
   const name2 = node.childForFieldName(language === "bash" ? "name" : "command_name");
   if (!name2)
     return [];
   const args2 = language === "bash" ? node.childrenForFieldName("argument").filter((child) => child !== null) : node.childForFieldName("command_elements")?.namedChildren.filter((child) => child !== null && !["command_argument_sep", "redirection"].includes(child.type)) ?? [];
-  return [literalWord(name2, language), ...args2.map((arg) => literalWord(arg, language))];
+  return [name2, ...args2];
+}
+function commandWords(node, language) {
+  return commandWordNodes(node, language).map((word) => literalWord(word, language));
+}
+function hasUntranslatedShellSyntax(node, language) {
+  const text = node.text;
+  if (language === "powershell") {
+    if (text.length >= 2 && text.startsWith("'") && text.endsWith("'"))
+      return decodePowerShellSingleQuoted(text) === null;
+    const quoted = text.length >= 2 && text.startsWith('"') && text.endsWith('"');
+    const quotedBody = quoted ? text.slice(1, -1) : "";
+    return text.includes("`") || quotedBody.includes('"') || !quoted && /['"]/u.test(text) || !quoted && text.startsWith("~");
+  }
+  if (["raw_string", "string", "string_content"].includes(node.type))
+    return false;
+  if (["word", "number", "command_name"].includes(node.type))
+    return /[*?[\]{}]/u.test(text) || text.startsWith("~") || text.startsWith("=");
+  if (node.type === "concatenation")
+    return node.namedChildren.some((child) => child !== null && hasUntranslatedShellSyntax(child, language));
+  return false;
 }
 function isSafePipelineFilter(node, language, words) {
   const executable = words[0];
@@ -3462,6 +3867,7 @@ class ShellSearchPolicy {
       if (!tree)
         throw new Error("Search policy parsing exceeded its time budget; simplify the command");
       try {
+        const hasSyntaxError = tree.rootNode.hasError;
         const commands = tree.rootNode.descendantsOfType("command");
         for (const node of commands) {
           if (!node)
@@ -3474,6 +3880,10 @@ class ShellSearchPolicy {
             return {
               kind: decision.kind,
               command: decision.command ?? "search command",
+              argv: words,
+              hasUntranslatedShellSyntax: node.descendantsOfType("redirection").length > 0 || commandWordNodes(node, language).some((word) => hasUntranslatedShellSyntax(word, language)),
+              hasVariableAssignments: language === "bash" && node.descendantsOfType("variable_assignment").length > 0,
+              hasSyntaxError,
               commandIndex,
               startByte: node.startIndex,
               endByte: node.endIndex,
@@ -3516,12 +3926,13 @@ function isInputRecord(input) {
 function recovery(kind) {
   return kind === "files" ? '{"mode":"files","query":"<filename or path>","path":"<scope>"}' : '{"pattern":"<search text>","path":"<scope>","scope":"strict"}';
 }
-function blockedMatch(match) {
+function blockedMatch(command, match, workingDirectory) {
   const location = match.nestedDepth > 0 ? `nested ${match.language} command #${match.commandIndex}` : `${match.language} subcommand #${match.commandIndex}`;
-  const request = recovery(match.kind);
+  const recovered = recoverShellSearch(command, match, workingDirectory);
+  const repair = recovered.kind === "concrete" ? `retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${recovered.request}` : `an equivalent request was not generated because ${recovered.reason}; manually translate the search, then retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${recovery(match.kind)}`;
   return {
     block: true,
-    reason: `baoer_signal_grep search policy blocked direct ${match.kind} search at ${location} (${match.command} …, bytes ${match.startByte}-${match.endByte}); the atomic shell call did not run. Split out non-search operations, then retry exactly once through baoer_signal_grep (possibly MCP-prefixed) with ${request}. Do not include this denial in the retry, repeat it through another shell/script, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
+    reason: `baoer_signal_grep search policy blocked direct ${match.kind} search at ${location} (${match.command} …, bytes ${match.startByte}-${match.endByte}); the atomic shell call did not run. Split out non-search operations, then ${repair}. Do not include this denial in the retry, repeat it through another shell/script, or weaken the search. If baoer_signal_grep is unavailable, report that connection error once without attempting another search.`
   };
 }
 function blockedTool(kind, toolName) {
@@ -3551,10 +3962,12 @@ class SearchPolicy {
     if (typeof command !== "string")
       throw new Error("Search policy expected a shell command string");
     const shell = typeof fields.shell === "string" ? fields.shell : "";
+    const workingDirectoryValue = fields.workdir ?? fields.cwd;
+    const workingDirectory = workingDirectoryValue === undefined ? process.cwd() : typeof workingDirectoryValue === "string" && workingDirectoryValue.length > 0 ? workingDirectoryValue : undefined;
     const language = /powershell|pwsh/iu.test(`${toolName} ${shell}`) || process.platform === "win32" && toolName !== "bash" ? "powershell" : "bash";
     const match = await this.#shell.inspect(command, language);
     signal?.throwIfAborted();
-    return match ? blockedMatch(match) : undefined;
+    return match ? blockedMatch(command, match, workingDirectory) : undefined;
   }
 }
 
