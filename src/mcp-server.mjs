@@ -130,7 +130,7 @@ var package_default = {
     bun: ">=1.4.0",
     node: ">=22.19.0"
   },
-  packageManager: "bun@1.4.0",
+  packageManager: "bun@1.4.2",
   knip: {
     entry: [
       "src/mcp-server.ts"
