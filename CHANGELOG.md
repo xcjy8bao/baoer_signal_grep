@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.6-2] - 2026-09-10
+
+- Preserve executable permissions on the published MCP and Concept worker entrypoints so npm-installed bins can be launched by Node-based hosts.
+
 ## [1.5.6-1] - 2026-09-10
 
 - Preserve literal evidence when hybrid Concept retrieval reports any non-cancellation provider failure. The semantic branch is marked `skipped`, the diagnostic remains visible in partial coverage, and literal search ownership is not discarded.
