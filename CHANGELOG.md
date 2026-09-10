@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.6-3] - 2026-09-10
+
+- Provide ready-to-copy `baoer_signal_grep` requests when the hard search policy blocks a static standalone `rg` or `ripgrep` command that can be translated without ambiguity, while preserving search options, the original working-directory scope, and conservative manual recovery for unsupported shell behavior.
+
 ## [1.5.6-2] - 2026-09-10
 
 - Preserve executable permissions on the published MCP and Concept worker entrypoints so npm-installed bins can be launched by Node-based hosts.
