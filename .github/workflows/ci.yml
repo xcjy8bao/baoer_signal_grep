@@ -36,6 +36,15 @@ jobs:
         run: bun run check
       - name: Verify generated artifacts
         run: git diff --exit-code -- src plugins
+      - name: Upload generated artifacts for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-artifacts-quality
+          path: |
+            src/*.mjs
+            plugins/baoer-signal-grep/**/*.mjs
+          if-no-files-found: error
       - name: Verify package contents
         run: bun run pack:check
 
@@ -75,6 +84,15 @@ jobs:
         run: bun run build
       - name: Verify generated artifacts
         run: git diff --exit-code -- src plugins
+      - name: Upload generated artifacts for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-artifacts-${{ matrix.os }}-${{ matrix.node }}
+          path: |
+            src/*.mjs
+            plugins/baoer-signal-grep/**/*.mjs
+          if-no-files-found: error
       - name: Check Node entrypoint
         run: node src/mcp-server.mjs --help
       - name: Verify package contents
