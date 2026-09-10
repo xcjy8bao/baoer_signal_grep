@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
-var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/mcp.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -9,7 +7,7 @@ import { URL as URL2 } from "node:url";
 // package.json
 var package_default = {
   name: "baoer_signal_grep",
-  version: "1.5.6",
+  version: "1.5.6-1",
   description: "Context-efficient local search for files, documents, notes and logs across Pi, OMP and MCP clients",
   keywords: [
     "ai-agent",
@@ -1733,8 +1731,8 @@ class JsonRpcChannel {
 `),
       body
     ]);
-    await new Promise((resolve7, reject) => {
-      this.#stdin.write(frame, (error) => error ? reject(error) : resolve7());
+    await new Promise((resolve, reject) => {
+      this.#stdin.write(frame, (error) => error ? reject(error) : resolve());
     });
   }
   async request(method, params) {
@@ -1949,7 +1947,7 @@ class OwnedTaskQueue {
 }
 
 // src/typescript-client.ts
-import { createRequire as createRequire2 } from "node:module";
+import { createRequire } from "node:module";
 import { dirname, join as join2 } from "node:path";
 var compilerQueue = new OwnedTaskQueue;
 var TYPESCRIPT_QUERY_TIMEOUT_MS = 20000;
@@ -1974,7 +1972,7 @@ function serverRequest(method, params) {
 function executablePath() {
   const packageName = `@typescript/typescript-${process.platform}-${process.arch}`;
   try {
-    const metadata = createRequire2(import.meta.url).resolve(`${packageName}/package.json`);
+    const metadata = createRequire(import.meta.url).resolve(`${packageName}/package.json`);
     return join2(dirname(metadata), "lib", process.platform === "win32" ? "tsc.exe" : "tsc");
   } catch (error) {
     throw new SignalGrepError(`TypeScript semantic provider is unavailable for ${process.platform}/${process.arch}; reinstall with optional dependencies enabled`, { cause: error });
@@ -2674,21 +2672,21 @@ async function parseSyntax(path, text, signal, pattern) {
 }
 
 // src/impact-bindings.ts
-async function bindImpactCandidates(target, files, occurrences, access2) {
-  const syntax = await access2.syntax(target.document);
+async function bindImpactCandidates(target, files, occurrences, access) {
+  const syntax = await access.syntax(target.document);
   const name = syntax.nodes.find((node) => node.start >= target.symbol.start && node.end <= target.symbol.end && target.document.text.slice(node.start, node.end) === target.symbol.name && node.kind.endsWith("identifier"));
   if (!name)
     throw new SignalGrepError("Impact compiler target has no exact identifier position");
-  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve7(access2.cwd, file.document.path), file.document]));
-  documents.set(resolve7(access2.cwd, target.document.path), target.document);
-  const sourceAt = await semanticSources(access2.cwd, documents.values());
-  const references = await withTypeScript(access2.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
-    textDocument: { uri: await semanticUri(access2.cwd, target.document.path) },
+  const documents = new Map(files.filter((file) => file.document.utf8 && ["javascript", "typescript", "tsx"].includes(syntaxLanguage(file.document.path) ?? "")).map((file) => [resolve7(access.cwd, file.document.path), file.document]));
+  documents.set(resolve7(access.cwd, target.document.path), target.document);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
+  const references = await withTypeScript(access.cwd, [...documents.values()], async (channel) => locations(await channel.request("textDocument/references", {
+    textDocument: { uri: await semanticUri(access.cwd, target.document.path) },
     position: lspPosition(target.document, name.start),
     context: { includeDeclaration: true }
-  })), access2.signal);
+  })), access.signal);
   const retained = new Map(occurrences.map((item) => [
-    `${resolve7(access2.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
+    `${resolve7(access.cwd, item.path)}:${String(item.range?.start)}:${String(item.range?.end)}`,
     item
   ]));
   let bound = 0;
@@ -2697,7 +2695,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     if (!document)
       continue;
     const range = byteRange(document, reference.range);
-    const key = `${resolve7(access2.cwd, document.path)}:${String(range.start)}:${String(range.end)}`;
+    const key = `${resolve7(access.cwd, document.path)}:${String(range.start)}:${String(range.end)}`;
     const existing = retained.get(key);
     const line = document.lineAt(range.start);
     const evidence = sourceEvidence(document, range);
@@ -2726,7 +2724,7 @@ async function bindImpactCandidates(target, files, occurrences, access2) {
     bound += 1;
   }
   for (const document of documents.values()) {
-    await access2.refresh(document.path, document.reference);
+    await access.refresh(document.path, document.reference);
   }
   return { items: [...retained.values()], bound };
 }
@@ -4333,11 +4331,11 @@ function validateConceptQuery(query) {
     throw new SignalGrepError("Concept query requires nonempty, single-line well-formed text of at most 256 characters");
   return query;
 }
-async function runConceptSearch(input, access2, infer) {
+async function runConceptSearch(input, access, infer) {
   const query = validateConceptQuery(input.query);
   const started = performance.now();
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -4356,7 +4354,7 @@ async function runConceptSearch(input, access2, infer) {
   let filesUnavailable = 0;
   for (const path of files.paths) {
     try {
-      const document = await access2.load(path);
+      const document = await access.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", "Not lossless UTF-8");
       if (!document.text.trim()) {
@@ -4402,7 +4400,7 @@ async function runConceptSearch(input, access2, infer) {
     passagesQueued: passages.length
   };
   if (passages.length) {
-    const inferred = await infer(query, passages, access2.signal);
+    const inferred = await infer(query, passages, access.signal);
     result.reasons.push(...inferred.warnings);
     result.items = passages.map((item, index) => {
       const similarity = inferred.scores[index];
@@ -4440,8 +4438,8 @@ async function runConceptSearch(input, access2, infer) {
       scoreProfile: scoreProfile(inferred.scores)
     };
   }
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.stats = {
     ...result.stats,
     elapsedMs: Math.round(performance.now() - started),
@@ -4464,19 +4462,19 @@ async function runConceptSearch(input, access2, infer) {
   };
   return result;
 }
-function conceptSearch(input, access2) {
-  return runConceptSearchWithDeadline(input, access2, similarities);
+function conceptSearch(input, access) {
+  return runConceptSearchWithDeadline(input, access, similarities);
 }
-async function runConceptSearchWithDeadline(input, access2, infer, timeout = resolveConceptTimeoutMs) {
+async function runConceptSearchWithDeadline(input, access, infer, timeout = resolveConceptTimeoutMs) {
   const timeoutMs = timeout();
   const controller = new AbortController;
-  const signal = access2.signal ? AbortSignal.any([access2.signal, controller.signal]) : controller.signal;
-  const scopedAccess = access2.withSignal(signal);
+  const signal = access.signal ? AbortSignal.any([access.signal, controller.signal]) : controller.signal;
+  const scopedAccess = access.withSignal(signal);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await inferenceQueue.run(() => runConceptSearch(input, scopedAccess, infer), scopedAccess.signal);
   } catch (error) {
-    if (access2.signal?.aborted)
+    if (access.signal?.aborted)
       throw abortError();
     if (controller.signal.aborted) {
       throw new ConceptUnavailableError(`Concept request exceeded the ${String(timeoutMs)} ms deadline`, { cause: error });
@@ -4488,11 +4486,11 @@ async function runConceptSearchWithDeadline(input, access2, infer, timeout = res
 }
 
 // src/structural-search.ts
-async function structuralSearch(input, access2) {
+async function structuralSearch(input, access) {
   if (!input.pattern?.trim() || Buffer.byteLength(input.pattern) > 4096 || !input.pattern.isWellFormed())
     throw new SignalGrepError("Structural pattern must be nonempty, well-formed and at most 4 KiB; ast-grep $NAME/$$$ARGS metavariables are supported");
   const request = normalizeRequest({ ...input, pattern: "" });
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+  const files = await listWorkspaceFiles(access.cwd, access.signal, {
     ...request.path ? { path: request.path } : {},
     glob: request.glob,
     exclude: request.exclude,
@@ -4518,8 +4516,8 @@ async function structuralSearch(input, access2) {
     if (!syntaxLanguage(path))
       continue;
     try {
-      const document = await access2.load(path);
-      const syntax = await access2.pattern(document, input.pattern);
+      const document = await access.load(path);
+      const syntax = await access.pattern(document, input.pattern);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${path}: syntax ${syntax.status}; structural matches withheld`);
@@ -4570,8 +4568,8 @@ async function structuralSearch(input, access2) {
       result.reasons.push(`${path}: ${error.message}`);
     }
   }
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.coverage = { astPatterns: result.partial ? "partial" : "complete" };
   result.scope = {
     path: request.path ?? ".",
@@ -4701,29 +4699,29 @@ function semanticWorkspacePaths(files) {
     return language !== undefined && language !== "go" || semanticMetadataPath.test(path);
   }).toSorted((left, right) => left.localeCompare(right));
 }
-async function semanticProject(access2, targetPath) {
-  const root = await resolveSemanticProjectRoot(access2.cwd, targetPath, access2.signal);
-  const files = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+async function semanticProject(access, targetPath) {
+  const root = await resolveSemanticProjectRoot(access.cwd, targetPath, access.signal);
+  const files = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
   const trackedPaths = semanticWorkspacePaths(files);
   const paths = files.paths.filter((path) => {
     const language = syntaxLanguage(path);
     return language && language !== "go";
   });
   const metadataPaths = files.paths.filter((path) => semanticMetadataPath.test(path));
-  const target = resolve14(access2.cwd, targetPath);
-  if (!paths.some((path) => resolve14(access2.cwd, path) === target))
+  const target = resolve14(access.cwd, targetPath);
+  if (!paths.some((path) => resolve14(access.cwd, path) === target))
     throw new SignalGrepError("Semantic target must be an admitted JS/TS workspace file under current ignore rules");
-  paths.sort((a, b) => Number(resolve14(access2.cwd, b) === target) - Number(resolve14(access2.cwd, a) === target) || a.localeCompare(b));
+  paths.sort((a, b) => Number(resolve14(access.cwd, b) === target) - Number(resolve14(access.cwd, a) === target) || a.localeCompare(b));
   const documents = new Map;
   const reasons = [...files.reasons];
   const metadata = [];
   for (const path of [...paths, ...metadataPaths]) {
     try {
-      const document = await access2.load(path);
+      const document = await access.load(path);
       if (!document.utf8)
         throw new SourceDocumentError("encoding", `Non-UTF-8 semantic source: ${path}`);
       if (paths.includes(path))
-        documents.set(resolve14(access2.cwd, path), document);
+        documents.set(resolve14(access.cwd, path), document);
       else
         metadata.push(document);
     } catch (error) {
@@ -4743,9 +4741,9 @@ async function semanticProject(access2, targetPath) {
     for (const document of [...documents.values(), ...metadata]) {
       if (document.reference.origin.kind !== "worktree")
         throw new Error("Expected worktree semantic source");
-      await access2.refresh(document.path, document.reference);
+      await access.refresh(document.path, document.reference);
     }
-    const after = await listWorkspaceFiles(access2.cwd, access2.signal, { path: root });
+    const after = await listWorkspaceFiles(access.cwd, access.signal, { path: root });
     if (JSON.stringify(semanticWorkspacePaths(after)) !== JSON.stringify(trackedPaths))
       throw new SignalGrepError("Workspace file set changed during semantic query; retry");
   };
@@ -4755,8 +4753,8 @@ async function semanticProject(access2, targetPath) {
     items: [],
     partial: reasons.length > 0,
     reasons,
-    filesRead: access2.filesRead,
-    bytesRead: access2.bytesRead,
+    filesRead: access.filesRead,
+    bytesRead: access.bytesRead,
     coverage: {
       admittedSources: reasons.length ? "partial" : "complete",
       runtimeDispatch: "not-applicable"
@@ -4768,7 +4766,7 @@ async function semanticProject(access2, targetPath) {
 
 // src/semantic-navigation.ts
 var semanticRequestQueue = new OwnedTaskQueue;
-async function selection(input, access2, document) {
+async function selection(input, access, document) {
   if (input.column !== undefined) {
     if (input.line === undefined || !Number.isSafeInteger(input.column) || input.column < 1 || input.symbol !== undefined)
       throw new SignalGrepError("Semantic column requires line and no symbol; both are 1-based UTF-16 positions");
@@ -4776,7 +4774,7 @@ async function selection(input, access2, document) {
     byteAt(document, position);
     return position;
   }
-  const syntax = await access2.syntax(document);
+  const syntax = await access.syntax(document);
   if (syntax.status !== "ok")
     throw new SignalGrepError("Selecting a semantic symbol requires valid syntax; supply an exact line+column position");
   const candidates = syntax.nodes.filter((node) => /^(?:identifier|property_identifier|type_identifier|shorthand_property_identifier(?:_pattern)?)$/.test(node.kind) && (input.symbol === undefined || document.text.slice(node.start, node.end) === input.symbol) && (input.line === undefined || document.lineAt(document.toByteOffset(node.start)) === input.line));
@@ -4850,10 +4848,10 @@ async function queryLocations(channel, mode, params) {
     ...method === "references" ? { context: { includeDeclaration: true } } : {}
   }));
 }
-async function runSemanticNavigation(input, access2) {
+async function runSemanticNavigation(input, access) {
   if (!input.path || !isSemanticMode(input.mode))
     throw new SignalGrepError("Semantic navigation requires a mode and workspace path");
-  const project = await semanticProject(access2, input.path);
+  const project = await semanticProject(access, input.path);
   const { result, documents, primary, root } = project;
   result.kind = input.mode;
   result.redact = input.redact ?? false;
@@ -4861,8 +4859,8 @@ async function runSemanticNavigation(input, access2) {
   const graph = mode === "dependencies" || mode === "dependents";
   if (graph && (input.line !== undefined || input.column !== undefined || input.symbol !== undefined))
     throw new SignalGrepError("File dependencies/dependents accept path without line, column or symbol");
-  const position = graph ? undefined : await selection(input, access2, primary);
-  const sourceAt = await semanticSources(access2.cwd, documents.values());
+  const position = graph ? undefined : await selection(input, access, primary);
+  const sourceAt = await semanticSources(access.cwd, documents.values());
   const add = async (location, relation) => {
     const document = await sourceAt(location.path);
     if (document)
@@ -4875,7 +4873,7 @@ async function runSemanticNavigation(input, access2) {
   await withTypeScript(root, [...documents.values()], async (channel) => {
     if (!graph) {
       const found = await queryLocations(channel, mode, {
-        textDocument: { uri: await semanticUri(access2.cwd, primary.path) },
+        textDocument: { uri: await semanticUri(access.cwd, primary.path) },
         position
       });
       for (const location of found) {
@@ -4884,13 +4882,13 @@ async function runSemanticNavigation(input, access2) {
       return;
     }
     for (const document of mode === "dependencies" ? [primary] : documents.values()) {
-      const syntax = await access2.syntax(document);
+      const syntax = await access.syntax(document);
       if (syntax.status !== "ok") {
         result.partial = true;
         result.reasons.push(`${document.path}: module syntax ${syntax.status}`);
         continue;
       }
-      const uri = await semanticUri(access2.cwd, document.path);
+      const uri = await semanticUri(access.cwd, document.path);
       const specifiers = syntax.nodes.filter((node) => node.kind === "string" && node.parent !== null && (() => {
         const parent = syntax.nodes[node.parent];
         if (!parent)
@@ -4917,7 +4915,7 @@ async function runSemanticNavigation(input, access2) {
             await add(target, "dependency");
           } else if (targetDocument === primary) {
             await add({
-              path: resolve15(access2.cwd, document.path),
+              path: resolve15(access.cwd, document.path),
               range: {
                 start: lspPosition(document, specifier.start),
                 end: lspPosition(document, specifier.end)
@@ -4926,12 +4924,12 @@ async function runSemanticNavigation(input, access2) {
           }
         }
       }
-      access2.releaseSyntax(document);
+      access.releaseSyntax(document);
     }
-  }, access2.signal, access2.cwd);
+  }, access.signal, access.cwd);
   await project.recheck();
-  result.filesRead = access2.filesRead;
-  result.bytesRead = access2.bytesRead;
+  result.filesRead = access.filesRead;
+  result.bytesRead = access.bytesRead;
   result.items = rankEvidence([
     ...new Map(result.items.map((item) => [
       `${item.path}:${String(item.range?.start)}:${String(item.range?.end)}`,
@@ -4945,8 +4943,8 @@ async function runSemanticNavigation(input, access2) {
   };
   return result;
 }
-function navigateSemantics(input, access2) {
-  return semanticRequestQueue.run(() => runSemanticNavigation(input, access2), access2.signal);
+function navigateSemantics(input, access) {
+  return semanticRequestQueue.run(() => runSemanticNavigation(input, access), access.signal);
 }
 
 // src/evidence-service.ts
@@ -5977,14 +5975,14 @@ class NavigationContext {
     const cached = this.modules.get(path);
     if (cached) {
       if (retainSyntax && cached.syntax.nodes.length === 0) {
-        let retained2 = false;
+        let retained = false;
         try {
           cached.syntax = await this.host.syntax(cached.document);
           if (cached.syntax.status !== "ok")
             throw new NavigationFailure(`syntax-${cached.syntax.status}`);
-          retained2 = true;
+          retained = true;
         } finally {
-          if (!retained2)
+          if (!retained)
             this.release(cached);
         }
       }
@@ -6545,13 +6543,13 @@ function basenameStem(path) {
 function targetSymbol(facts, input) {
   if (input.line === undefined && input.symbol === undefined)
     return;
-  const symbols = facts.syntax.symbols.filter((symbol2) => {
-    if (!symbol2.hasBody)
+  const symbols = facts.syntax.symbols.filter((symbol) => {
+    if (!symbol.hasBody)
       return false;
-    if (input.symbol !== undefined && symbol2.name !== input.symbol)
+    if (input.symbol !== undefined && symbol.name !== input.symbol)
       return false;
-    const start = facts.document.lineAt(facts.document.toByteOffset(symbol2.start));
-    const end = facts.document.lineAt(Math.max(facts.document.toByteOffset(symbol2.start), facts.document.toByteOffset(symbol2.end) - 1));
+    const start = facts.document.lineAt(facts.document.toByteOffset(symbol.start));
+    const end = facts.document.lineAt(Math.max(facts.document.toByteOffset(symbol.start), facts.document.toByteOffset(symbol.end) - 1));
     return input.line === undefined || start <= input.line && input.line <= end;
   }).toSorted((a, b) => a.end - a.start - (b.end - b.start));
   if (symbols.length === 0)
@@ -7645,10 +7643,10 @@ function errorStatus(error) {
     return "source-unavailable";
   return;
 }
-async function prepare(target, access2, structure) {
+async function prepare(target, access, structure) {
   if (target.unverified)
     throw new SourceDocumentError("source-unavailable", "Snapshot source revision is unverified; refresh the search");
-  const document = await access2.load(target.path, target.reference);
+  const document = await access.load(target.path, target.reference);
   if (target.expectedRevision && (document.reference.origin.kind !== "worktree" || !sameSourceRevision(target.expectedRevision, document.reference.origin.revision)))
     throw new SourceDocumentError("source-changed", "Source changed; refresh the search");
   if (target.line > document.lineStarts.length)
@@ -7659,7 +7657,7 @@ async function prepare(target, access2, structure) {
   let details = { status: "no-symbol" };
   const language = syntaxLanguage(document.path);
   if (document.utf8 && language && language !== "go") {
-    const syntax = await access2.syntax(document);
+    const syntax = await access.syntax(document);
     details = {
       status: syntax.status === "ok" ? "no-symbol" : syntax.status === "unsupported" ? "provider-unavailable" : "parse-error",
       provider: "tree-sitter",
@@ -7667,7 +7665,7 @@ async function prepare(target, access2, structure) {
     };
     if (syntax.status === "ok") {
       const character = document.toCharacterOffset(focus);
-      const symbols = syntax.symbols.filter((symbol2) => symbol2.hasBody && symbol2.start <= character && character < symbol2.end).toSorted((a, b) => a.end - a.start - (b.end - b.start));
+      const symbols = syntax.symbols.filter((symbol) => symbol.hasBody && symbol.start <= character && character < symbol.end).toSorted((a, b) => a.end - a.start - (b.end - b.start));
       const symbol = symbols[0] ?? syntax.symbols.find((item) => item.hasBody && document.lineAt(document.toByteOffset(item.start)) === target.line);
       if (symbol && !target.range) {
         range = {
@@ -7694,11 +7692,11 @@ async function prepare(target, access2, structure) {
     }
   } else if (document.utf8 && structure && document.reference.origin.kind === "worktree" && !target.range && !usesDocumentLineWindow(document.path)) {
     const result = await structure.inspect({
-      absolutePath: resolve20(access2.cwd, target.path),
-      cwd: access2.cwd,
+      absolutePath: resolve20(access.cwd, target.path),
+      cwd: access.cwd,
       line: target.line,
       expectedRevision: document.reference.origin.revision
-    }, access2.signal);
+    }, access.signal);
     details = result.details;
     if (["source-changed", "source-unavailable", "file-too-large"].includes(details.status))
       throw new SourceDocumentError(details.status === "source-changed" ? "source-changed" : "source-unavailable", `Source inspection: ${details.status}`);
@@ -7784,13 +7782,13 @@ function fallbackContinuationRange(document, ranges) {
     return;
   return document.lineRange(nextStartLine, Math.min(document.lineStarts.length, nextFocusLine + 10));
 }
-async function inspectDocuments(targets, access2, continuations, structure) {
+async function inspectDocuments(targets, access, continuations, structure) {
   const items = [];
   const blocks = [];
   for (const [index, target] of targets.entries()) {
     try {
-      const prepared = await prepare(target, access2, structure);
-      let blockIndex = blocks.findIndex((block2) => block2.document === prepared.document);
+      const prepared = await prepare(target, access, structure);
+      let blockIndex = blocks.findIndex((block) => block.document === prepared.document);
       if (blockIndex < 0) {
         blockIndex = blocks.length;
         blocks.push({
@@ -7820,7 +7818,7 @@ async function inspectDocuments(targets, access2, continuations, structure) {
         structure: prepared.structure
       });
     } catch (error) {
-      if (access2.signal?.aborted || error instanceof Error && error.name === "AbortError")
+      if (access.signal?.aborted || error instanceof Error && error.name === "AbortError")
         throw abortError();
       const status = errorStatus(error);
       if (!status)
@@ -7912,7 +7910,7 @@ ${preview.text}`);
     if (continuationGaps.length)
       block.continuation = continuations.create(block.document.reference, continuationTarget, continuationGaps, block.boundary);
     if (block.document.reference.origin.kind === "worktree") {
-      const current = await getSourceRevision(resolve20(access2.cwd, block.document.path));
+      const current = await getSourceRevision(resolve20(access.cwd, block.document.path));
       if (!current || !sameSourceRevision(current, block.document.reference.origin.revision)) {
         block.text = [];
         block.fragments = [];
@@ -7933,7 +7931,7 @@ ${preview.text}`);
       if (item?.status === "returned")
         item.source = blockDetails(block);
     }
-    if (access2.signal?.aborted)
+    if (access.signal?.aborted)
       throw abortError();
     if (index >= 5)
       throw new Error("Inspection target limit was not validated");
@@ -7967,9 +7965,9 @@ ${preview.text}`);
     }
   };
 }
-async function continueSource(cursor, access2, continuations) {
+async function continueSource(cursor, access, continuations) {
   const state = continuations.resolve(cursor);
-  const document = await access2.load(state.source.path, state.source);
+  const document = await access.load(state.source.path, state.source);
   const page = sourcePage(document, state.remaining, MAX_RESULT_BYTES - 1400);
   const next = continuations.advance(cursor, page.fragment);
   const block = {
@@ -8306,14 +8304,14 @@ function indentation(line) {
 function stripStringsAndComments(line, state) {
   const code = line.split("");
   const blank = (start, end) => {
-    for (let index2 = start;index2 < end; index2 += 1)
-      code[index2] = " ";
+    for (let index = start;index < end; index += 1)
+      code[index] = " ";
   };
   let index = 0;
   while (index < line.length) {
     if (state.tripleQuote) {
-      const delimiter2 = state.tripleQuote.repeat(3);
-      const close = line.indexOf(delimiter2, index);
+      const delimiter = state.tripleQuote.repeat(3);
+      const close = line.indexOf(delimiter, index);
       if (close < 0) {
         blank(index, line.length);
         return code.join("");
@@ -8420,10 +8418,10 @@ function scanTopLevelColon(code, initialDepth) {
   }
   return { depth, colon };
 }
-function hasBody(lines, declaration2, endLine) {
+function hasBody(lines, declaration, endLine) {
   let headerEnded = false;
   let depth = 0;
-  for (let lineIndex = declaration2.lineIndex;lineIndex < endLine; lineIndex += 1) {
+  for (let lineIndex = declaration.lineIndex;lineIndex < endLine; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line)
       continue;
@@ -8438,9 +8436,9 @@ function hasBody(lines, declaration2, endLine) {
   }
   if (!headerEnded)
     return false;
-  for (let lineIndex = declaration2.lineIndex + 1;lineIndex < endLine; lineIndex += 1) {
+  for (let lineIndex = declaration.lineIndex + 1;lineIndex < endLine; lineIndex += 1) {
     const line = lines[lineIndex];
-    if (line?.meaningful && line.indent > declaration2.indent)
+    if (line?.meaningful && line.indent > declaration.indent)
       return true;
   }
   return false;
@@ -8452,34 +8450,34 @@ function parsePythonOutline(document) {
   const found = declarations(lines);
   const boundaries = endLines(lines);
   const active = [];
-  return found.map((declaration2) => {
-    while (active.at(-1) && (active.at(-1)?.lineIndex ?? 0) >= declaration2.lineIndex) {
+  return found.map((declaration) => {
+    while (active.at(-1) && (active.at(-1)?.lineIndex ?? 0) >= declaration.lineIndex) {
       active.pop();
     }
-    while (active.at(-1) && (active.at(-1)?.indent ?? 0) >= declaration2.indent) {
+    while (active.at(-1) && (active.at(-1)?.indent ?? 0) >= declaration.indent) {
       active.pop();
     }
     const parents = [...active];
-    const boundary = boundaries[declaration2.lineIndex] ?? lines.length;
+    const boundary = boundaries[declaration.lineIndex] ?? lines.length;
     const endLine = boundary === lines.length ? lines.length : boundary;
     const nearestParent = parents.at(-1);
-    const kind = declaration2.kind === "function" && nearestParent?.kind === "class" ? "method" : declaration2.kind;
-    const scope = parents.map((item2) => item2.name);
-    const range = document.lineRange(declaration2.lineIndex + 1, endLine);
+    const kind = declaration.kind === "function" && nearestParent?.kind === "class" ? "method" : declaration.kind;
+    const scope = parents.map((item) => item.name);
+    const range = document.lineRange(declaration.lineIndex + 1, endLine);
     const lineStart = document.toCharacterOffset(range.start);
     const signature = document.text.slice(lineStart, Math.min(document.toCharacterOffset(range.end), lineStart + 600)).split(`
 `, 1)[0]?.trimEnd() ?? "";
     const item = {
-      name: declaration2.name,
+      name: declaration.name,
       kind,
-      startLine: declaration2.lineIndex + 1,
+      startLine: declaration.lineIndex + 1,
       endLine,
       scope,
-      hasBody: hasBody(lines, declaration2, boundary),
+      hasBody: hasBody(lines, declaration, boundary),
       range,
       signature
     };
-    active.push(declaration2);
+    active.push(declaration);
     return item;
   });
 }
@@ -8502,23 +8500,23 @@ function absoluteOccurrenceRanges(document, line, match) {
     end: lineRange.start + occurrence.byteEnd
   }));
 }
-async function literalEvidence(scan, access2) {
+async function literalEvidence(scan, access) {
   const documents = new Map;
-  const unavailable2 = new Map;
+  const unavailable = new Map;
   for (const match of scan.matches) {
-    if (documents.has(match.absolutePath) || unavailable2.has(match.absolutePath))
+    if (documents.has(match.absolutePath) || unavailable.has(match.absolutePath))
       continue;
     try {
-      const document = await access2.load(match.absolutePath);
+      const document = await access.load(match.absolutePath);
       const expected = scan.sourceRevisions.get(match.absolutePath);
       if (!expected || document.reference.origin.kind !== "worktree" || !sameSourceRevision(expected, document.reference.origin.revision)) {
-        unavailable2.set(match.absolutePath, "source revision was not stable across hybrid search");
+        unavailable.set(match.absolutePath, "source revision was not stable across hybrid search");
         continue;
       }
       documents.set(match.absolutePath, document);
     } catch (error) {
       if (error instanceof SourceBudgetError || error instanceof SourceDocumentError) {
-        unavailable2.set(match.absolutePath, error.message);
+        unavailable.set(match.absolutePath, error.message);
         continue;
       }
       throw error;
@@ -8552,11 +8550,11 @@ async function literalEvidence(scan, access2) {
       }
     };
   });
-  const reasons = [...new Set(unavailable2.values())].map((reason) => `Literal source inspection is unavailable for retained evidence: ${reason}`);
+  const reasons = [...new Set(unavailable.values())].map((reason) => `Literal source inspection is unavailable for retained evidence: ${reason}`);
   return {
     items,
     rangesByPath,
-    sourceCoverage: unavailable2.size ? "partial" : "complete",
+    sourceCoverage: unavailable.size ? "partial" : "complete",
     reasons
   };
 }
@@ -8566,10 +8564,10 @@ function isLiteralOverlap(item, rangesByPath) {
     return false;
   return (rangesByPath.get(item.path) ?? []).some((range) => rangesOverlap(range, itemRange));
 }
-async function combineHybridSearch(scan, concept, access2, conceptLimit) {
+async function combineHybridSearch(scan, concept, access, conceptLimit) {
   if (concept.kind !== "concept")
     throw new Error("Hybrid search requires concept evidence");
-  const literal = await literalEvidence(scan, access2);
+  const literal = await literalEvidence(scan, access);
   const eligibleConcept = concept.items.filter((item) => !isLiteralOverlap(item, literal.rangesByPath));
   const duplicateConceptCandidates = concept.items.length - eligibleConcept.length;
   const selectedConcept = [];
@@ -8597,8 +8595,8 @@ async function combineHybridSearch(scan, concept, access2, conceptLimit) {
       ...literal.reasons,
       ...selectionReason ? [selectionReason] : []
     ],
-    filesRead: (concept.filesRead ?? 0) + access2.filesRead,
-    bytesRead: (concept.bytesRead ?? 0) + access2.bytesRead,
+    filesRead: (concept.filesRead ?? 0) + access.filesRead,
+    bytesRead: (concept.bytesRead ?? 0) + access.bytesRead,
     counts: {
       ...concept.counts,
       literalMatchingLinesFound: scan.totalMatches,
@@ -8781,11 +8779,11 @@ class EvidenceService {
   #queue = new SyntaxQueue;
   #analyses = new AnalysisStore;
   #continuations = new SourceContinuations;
-  constructor(runner, snapshots, structure, runConceptSearch2 = conceptSearch) {
+  constructor(runner, snapshots, structure, runConceptSearch = conceptSearch) {
     this.#runner = runner;
     this.#snapshots = snapshots;
     this.#structure = structure;
-    this.#conceptSearch = runConceptSearch2;
+    this.#conceptSearch = runConceptSearch;
   }
   clear() {
     this.#analyses.clear();
@@ -8810,15 +8808,15 @@ class EvidenceService {
     const contentCandidates = new Set(scan.fileCounts.keys());
     return files.filter((path) => isLikelyTestPath(path) || contentCandidates.has(workspaceRelativePath(cwd, path)));
   }
-  async#candidates(request, input, access2) {
+  async#candidates(request, input, access) {
     const collect = (candidateRequest) => collectEvidenceCandidates({
       request: candidateRequest,
       ...input.changes ? { changes: input.changes } : {},
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      access: access2,
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      access,
       runRipgrep: this.#runner,
-      maxFiles: access2.maxFiles
+      maxFiles: access.maxFiles
     });
     const candidates = await collect(request);
     if (input.changes || request.scope === "strict" || request.path === undefined || candidates.files.length > 0 || candidates.partial) {
@@ -8835,10 +8833,10 @@ class EvidenceService {
       throw new SignalGrepError("modifiedAfter and modifiedBefore apply to worktree searches and cannot be combined with changes");
     const analysisStarted = performance.now();
     const fileLimit = maxFilesToParse(input.maxFilesToParse);
-    const access2 = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
+    const access = new SourceAccess(cwd, this.#queue, signal, { maxFiles: fileLimit });
     if (isSemanticMode(input.mode)) {
       rejectFields(input, [...searchFields, ...inspectFields, "cursor", "matchIndex"], `mode=${input.mode}`);
-      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await navigateSemantics(input, access)));
     }
     if (input.column !== undefined)
       throw new SignalGrepError("column requires semantic navigation");
@@ -8859,12 +8857,12 @@ class EvidenceService {
         "symbol",
         "maxFilesToParse"
       ], "Source continuation", true);
-      return continueSource(input.sourceCursor, access2, this.#continuations);
+      return continueSource(input.sourceCursor, access, this.#continuations);
     }
     if (input.mode === "inspect") {
       rejectFields(input, [...searchFields, "paths", "symbol", "maxFilesToParse"], "mode=inspect");
       const targets = this.#inspectionTargets(input, cwd);
-      return inspectDocuments(targets, access2, this.#continuations, this.#structure);
+      return inspectDocuments(targets, access, this.#continuations, this.#structure);
     }
     if (input.mode === "concept") {
       rejectFields(input, [
@@ -8875,7 +8873,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=concept", false, "use only mode, query, path, glob, exclude, hidden and redact");
-      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await this.#conceptSearch(input, access)));
     }
     if (input.mode === "hybrid") {
       rejectFields(input, [
@@ -8906,17 +8904,15 @@ class EvidenceService {
       await runOwnedParallel((groupSignal) => {
         conceptAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return [
-          this.#runner(literalRequest, cwd, groupSignal).then((result2) => {
-            literalResult = result2;
+          this.#runner(literalRequest, cwd, groupSignal).then((result) => {
+            literalResult = result;
             return;
           }),
-          this.#conceptSearch(input, conceptAccess).then((result2) => {
-            conceptResult = result2;
+          this.#conceptSearch(input, conceptAccess).then((result) => {
+            conceptResult = result;
             return;
           }).catch((error) => {
             if (signal?.aborted || groupSignal.aborted)
-              throw error;
-            if (!(error instanceof ConceptUnavailableError))
               throw error;
             conceptFailure = error;
             return;
@@ -8953,7 +8949,7 @@ class EvidenceService {
         "symbol",
         "matchIndex"
       ], "mode=structure");
-      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access2)));
+      return this.#analyses.page(this.#analyses.create(await structuralSearch(input, access)));
     }
     if (input.mode === "files") {
       rejectFields(input, [
@@ -8980,7 +8976,7 @@ class EvidenceService {
       return this.#analyses.page(this.#analyses.create(await discoverFiles(input, cwd, signal)));
     }
     if (input.mode === "impact")
-      return this.#impact(input, access2);
+      return this.#impact(input, access);
     if (input.cursor?.includes(".analysis") && !input.mode?.match(/^(outline|imports|tests)$/)) {
       this.#analyses.resolve(input.cursor);
       rejectFields(input, [
@@ -8997,7 +8993,7 @@ class EvidenceService {
       return this.#analyses.page(input.cursor);
     }
     if (input.mode === "outline" || input.mode === "imports" || input.mode === "tests")
-      return this.#navigate(input, access2);
+      return this.#navigate(input, access);
     rejectFields(input, [...inspectFields, "query", "line", "matchIndex", "symbol", "cursor", "conceptLimit"], "Evidence search", false, "a new search accepts one path; split multiple paths into separate requests without widening their scope");
     const anyOf = validateAnyOf(input.anyOf);
     if (anyOf) {
@@ -9007,18 +9003,18 @@ class EvidenceService {
         throw new SignalGrepError("anyOf mode must be omitted, auto, or matches");
       const chunks = Array.from({ length: Math.ceil(anyOf.length / MAX_ANY_OF_TERMS) }, (_, index) => anyOf.slice(index * MAX_ANY_OF_TERMS, (index + 1) * MAX_ANY_OF_TERMS));
       const { path: _inputPath, ...unscopedInput } = input;
-      let chunkAccess = access2;
+      let chunkAccess = access;
       const runChunks = async (expandedFromPath) => runOwnedParallel((groupSignal) => {
         chunkAccess = new SourceAccess(cwd, this.#queue, groupSignal, { maxFiles: fileLimit });
         return chunks.map(async (chunk) => {
-          const request2 = normalizeRequest({
+          const request = normalizeRequest({
             ...expandedFromPath === undefined ? input : unscopedInput,
             pattern: chunk.map(escapeRegexLiteral).join("|"),
             literal: false,
             ignoreCase: false
           });
-          const effectiveRequest = expandedFromPath === undefined ? request2 : { ...request2, expandedFromPath };
-          const candidates2 = await collectEvidenceCandidates({
+          const effectiveRequest = expandedFromPath === undefined ? request : { ...request, expandedFromPath };
+          const candidates = await collectEvidenceCandidates({
             request: effectiveRequest,
             ...input.changes ? { changes: input.changes } : {},
             cwd,
@@ -9027,11 +9023,11 @@ class EvidenceService {
             runRipgrep: this.#runner,
             maxFiles: fileLimit
           });
-          return { chunk, request: effectiveRequest, candidates: candidates2 };
+          return { chunk, request: effectiveRequest, candidates };
         });
       }, signal);
       let chunkResults = await runChunks();
-      if (!input.changes && input.path !== undefined && input.scope !== "strict" && chunkResults.every(({ candidates: candidates2 }) => !candidates2.partial && candidates2.files.length === 0)) {
+      if (!input.changes && input.path !== undefined && input.scope !== "strict" && chunkResults.every(({ candidates }) => !candidates.partial && candidates.files.length === 0)) {
         chunkResults = await runChunks(input.path.replace(/^@/, ""));
       }
       const reasons = new Set;
@@ -9039,12 +9035,12 @@ class EvidenceService {
       let changes;
       const candidateFiles = new Map;
       const invalidatedPaths = new Set;
-      for (const { candidates: candidates2 } of chunkResults) {
-        partial ||= candidates2.partial;
-        changes ??= candidates2.changes;
-        for (const reason of candidates2.reasons)
+      for (const { candidates } of chunkResults) {
+        partial ||= candidates.partial;
+        changes ??= candidates.changes;
+        for (const reason of candidates.reasons)
           reasons.add(reason);
-        for (const file of candidates2.files) {
+        for (const file of candidates.files) {
           if (invalidatedPaths.has(file.document.path))
             continue;
           const existing = candidateFiles.get(file.document.path);
@@ -9067,7 +9063,7 @@ class EvidenceService {
         literal: false,
         ignoreCase: false
       }));
-      const result2 = {
+      const result = {
         kind: "any-of",
         unit: "occurrences",
         items: expanded.items,
@@ -9086,7 +9082,7 @@ class EvidenceService {
         coverage: { exactOccurrences: partial ? "partial" : "complete" },
         redact: input.redact ?? false
       };
-      return this.#analyses.page(this.#analyses.create(result2, (retainedItems) => ({
+      return this.#analyses.page(this.#analyses.create(result, (retainedItems) => ({
         termCounts: retainedTermCounts(anyOf, retainedItems)
       })));
     }
@@ -9109,7 +9105,7 @@ class EvidenceService {
       literal: false,
       ignoreCase: false
     } : input);
-    const selected = await this.#candidates(request, input, access2);
+    const selected = await this.#candidates(request, input, access);
     const candidates = selected.candidates;
     const kind = terms ? input.within === "function" ? "function-and" : "file-and" : input.roles ? "roles" : "changes";
     const result = {
@@ -9144,7 +9140,7 @@ class EvidenceService {
         } else if (terms || input.roles) {
           if (syntaxLanguage(file.document.path))
             syntaxCapableFiles += 1;
-          const syntax = await access2.syntax(file.document);
+          const syntax = await access.syntax(file.document);
           const classified = terms ? findFunctionConjunctions(file.document, syntax, terms, input.changes?.scope === "lines" ? file.changedRanges : undefined) : filterRoleOccurrences(file.document, syntax, file.occurrences, input.roles ?? []);
           result.items.push(...classified.items);
           result.partial ||= classified.partial;
@@ -9172,7 +9168,7 @@ class EvidenceService {
         result.reasons.push(error.message);
         return;
       } finally {
-        access2.releaseSyntax(file.document);
+        access.releaseSyntax(file.document);
       }
       await processFile(index + 1);
     };
@@ -9184,9 +9180,9 @@ class EvidenceService {
     if (terms || input.roles) {
       result.stats = {
         filesEnumerated: candidates.files.length,
-        filesParsed: access2.syntaxParses,
+        filesParsed: access.syntaxParses,
         filesSkipped: Math.max(0, candidates.files.length - syntaxCapableFiles),
-        cacheHits: access2.syntaxCacheHits,
+        cacheHits: access.syntaxCacheHits,
         parseMs: Math.round(performance.now() - analysisStarted),
         budgetExhausted: result.reasons.some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       };
@@ -9233,7 +9229,7 @@ class EvidenceService {
       ...input.matchIndex !== undefined ? { matchIndex: input.matchIndex } : {}
     };
   }
-  async#impact(input, access2) {
+  async#impact(input, access) {
     const impactStarted = performance.now();
     rejectFields(input, [...searchFields.filter((field) => !navigationFilterFields.has(field)), ...inspectFields], "mode=impact");
     const filters = navigationFilters(input);
@@ -9245,12 +9241,12 @@ class EvidenceService {
         throw new CursorError("Impact requires an ordinary search snapshot, not an analysis cursor");
       if (input.matchIndex === undefined || input.path !== undefined || input.line !== undefined || input.symbol !== undefined)
         throw new SignalGrepError("Snapshot impact requires cursor+matchIndex instead of path, line, or symbol");
-      const selected = resolveInspectionTarget(input, access2.cwd, this.#snapshots);
+      const selected = resolveInspectionTarget(input, access.cwd, this.#snapshots);
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       path = selected.path;
       line = selected.line;
-      document = await access2.load(path);
+      document = await access.load(path);
       if (selected.expectedRevision && (document.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, document.reference.origin.revision)))
         throw new SignalGrepError("Source changed; refresh the search");
     } else {
@@ -9259,12 +9255,12 @@ class EvidenceService {
       if (!input.path || input.line === undefined && input.symbol === undefined)
         throw new SignalGrepError("Direct impact requires path and at least one of symbol or line");
       path = input.path;
-      document = await access2.load(path);
+      document = await access.load(path);
     }
     if (document.reference.origin.kind !== "worktree")
       throw new SignalGrepError("Impact currently supports worktree sources only");
-    const root = await navigationRoot(access2.cwd, document.path, access2.signal);
-    const targetSyntax = await access2.syntax(document);
+    const root = await navigationRoot(access.cwd, document.path, access.signal);
+    const targetSyntax = await access.syntax(document);
     let target;
     try {
       target = selectImpactTarget(document, targetSyntax, {
@@ -9272,7 +9268,7 @@ class EvidenceService {
         ...input.symbol !== undefined ? { symbol: input.symbol } : {}
       });
     } finally {
-      access2.releaseSyntax(document);
+      access.releaseSyntax(document);
     }
     const request = normalizeRequest({
       pattern: target.symbol.name,
@@ -9285,14 +9281,14 @@ class EvidenceService {
     });
     const candidates = await collectEvidenceCandidates({
       request,
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      access: access2,
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      access,
       runRipgrep: this.#runner,
-      maxFiles: access2.maxFiles
+      maxFiles: access.maxFiles
     });
-    const occurrences = await classifyImpactOccurrences(candidates.files, target, access2);
-    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access2);
+    const occurrences = await classifyImpactOccurrences(candidates.files, target, access);
+    const bound = await bindImpactCandidates(target, candidates.files, occurrences.items, access);
     occurrences.items = bound.items;
     const reasons = new Set([...candidates.reasons, ...occurrences.reasons]);
     let partial = candidates.partial || occurrences.partial;
@@ -9306,33 +9302,33 @@ class EvidenceService {
       partial = true;
       reasons.add("Related-test augmentation skipped: exact occurrences exhausted the shared analysis budget");
     } else {
-      const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+      const files = await listWorkspaceFiles(access.cwd, access.signal, {
         path: root,
         glob: filters.glob,
         exclude: filters.exclude,
         hidden: filters.hidden
       });
-      const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
-      const primaryPath = resolve21(access2.cwd, document.path);
+      const allowed = new Set(files.paths.map((file) => resolve21(access.cwd, file)));
+      const primaryPath = resolve21(access.cwd, document.path);
       allowed.add(primaryPath);
       const host = {
-        cwd: access2.cwd,
-        ...access2.signal ? { signal: access2.signal } : {},
-        normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
+        cwd: access.cwd,
+        ...access.signal ? { signal: access.signal } : {},
+        normalizePath: (file) => workspaceRelativePath(access.cwd, file),
         load: async (file, expected) => {
-          const absolutePath = resolve21(access2.cwd, file);
+          const absolutePath = resolve21(access.cwd, file);
           if (!allowed.has(absolutePath))
             throw new SignalGrepError("Navigation source is excluded by current ignore rules");
           if (absolutePath === primaryPath && expected === undefined)
             return document;
-          return expected ? access2.refresh(file, expected) : access2.load(file);
+          return expected ? access.refresh(file, expected) : access.load(file);
         },
-        syntax: (source) => access2.syntax(source),
-        releaseSyntax: (source) => access2.releaseSyntax(source),
+        syntax: (source) => access.syntax(source),
+        releaseSyntax: (source) => access.releaseSyntax(source),
         listFiles: async () => files,
-        maxFilesToParse: access2.maxFiles
+        maxFilesToParse: access.maxFiles
       };
-      const entryPaths = await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal);
+      const entryPaths = await this.#testEntryPaths(root, files.paths, access.cwd, filters, access.signal);
       const tests = await findRelatedTests(host, {
         path: document.path,
         line: target.item.line,
@@ -9342,8 +9338,8 @@ class EvidenceService {
       testStats = {
         filesEnumerated: files.paths.length,
         ...tests.stats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits
       };
       relatedTestsCoverage = tests.partial || files.partial ? "partial" : "complete";
       partial ||= tests.partial || files.partial;
@@ -9356,12 +9352,12 @@ class EvidenceService {
       items: mergeImpactItems(target.item, occurrences.items, testItems),
       partial,
       reasons: [...reasons],
-      filesRead: access2.filesRead,
-      bytesRead: access2.bytesRead,
+      filesRead: access.filesRead,
+      bytesRead: access.bytesRead,
       stats: {
         ...testStats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits,
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits,
         parseMs: testStats?.parseMs ?? Math.round(performance.now() - impactStarted),
         budgetExhausted: testStats?.budgetExhausted ?? [...reasons].some((reason) => reason.includes("limit") || reason.includes("budget-exhausted"))
       },
@@ -9371,12 +9367,12 @@ class EvidenceService {
         syntaxClassification: occurrences.partial ? "partial" : "complete",
         relatedTests: relatedTestsCoverage
       },
-      scope: navigationScope(access2.cwd, root, document.path, filters),
+      scope: navigationScope(access.cwd, root, document.path, filters),
       redact: input.redact ?? false
     };
     return this.#analyses.page(this.#analyses.create(result, (items) => retainedImpactCounts(items), impactRetentionPriority));
   }
-  async#navigate(input, access2) {
+  async#navigate(input, access) {
     const navigationStarted = performance.now();
     const allowsFilters = input.mode === "imports" || input.mode === "tests";
     rejectFields(input, [
@@ -9390,14 +9386,14 @@ class EvidenceService {
     if (input.cursor) {
       if (input.path !== undefined || input.line !== undefined || input.matchIndex === undefined)
         throw new SignalGrepError("Snapshot navigation requires cursor+matchIndex instead of path/line");
-      const selected = this.#singleTarget(input, access2.cwd);
+      const selected = this.#singleTarget(input, access.cwd);
       path = selected.path;
       line = selected.line;
       reference = selected.reference;
       if (selected.unverified)
         throw new SignalGrepError("Snapshot source revision is unverified; refresh the search");
       if (selected.expectedRevision) {
-        const doc = await access2.load(path);
+        const doc = await access.load(path);
         if (doc.reference.origin.kind !== "worktree" || !sameSourceRevision(selected.expectedRevision, doc.reference.origin.revision))
           throw new SignalGrepError("Source changed; refresh the search");
         reference = doc.reference;
@@ -9407,14 +9403,14 @@ class EvidenceService {
       throw new SignalGrepError("matchIndex requires a cursor");
     if (!path)
       throw new SignalGrepError(`${input.mode} requires path or cursor+matchIndex`);
-    const document = loaded ?? await access2.load(path, reference);
+    const document = loaded ?? await access.load(path, reference);
     const language = syntaxLanguage(document.path);
     const isPython = /\.py$/iu.test(document.path);
     if (!language && !isPython || language === "go") {
       throw new SignalGrepError(`${input.mode} requires reliable JS/TS/TSX or Python outline syntax (${language ?? "unsupported"})`);
     }
     if (input.mode === "outline") {
-      const syntax = isPython ? undefined : await access2.syntax(document);
+      const syntax = isPython ? undefined : await access.syntax(document);
       const supported = isPython || syntax?.status === "ok" && syntax.language !== "go";
       const items = supported ? isPython ? parsePythonOutline(document).map((symbol) => ({
         path: document.path,
@@ -9467,13 +9463,13 @@ class EvidenceService {
         ] : [] : [
           `Outline requires reliable JS/TS/TSX or Python syntax (${syntax?.language ?? "unsupported"}: ${syntax?.status ?? "unsupported"})`
         ],
-        filesRead: access2.filesRead,
-        bytesRead: access2.bytesRead,
+        filesRead: access.filesRead,
+        bytesRead: access.bytesRead,
         stats: {
           filesEnumerated: 1,
-          filesParsed: isPython ? 0 : access2.syntaxParses,
+          filesParsed: isPython ? 0 : access.syntaxParses,
           filesSkipped: 0,
-          cacheHits: isPython ? 0 : access2.syntaxCacheHits,
+          cacheHits: isPython ? 0 : access.syntaxCacheHits,
           parseMs: Math.round(performance.now() - navigationStarted),
           budgetExhausted: false
         },
@@ -9490,7 +9486,7 @@ class EvidenceService {
           "Import and related-test navigation currently support worktree sources only; historical sources are not switched to the worktree"
         ]
       }));
-    const root = await navigationRoot(access2.cwd, document.path, access2.signal);
+    const root = await navigationRoot(access.cwd, document.path, access.signal);
     const filters = navigationFilters(input);
     if (input.mode === "tests" && isPython)
       return this.#analyses.page(this.#analyses.create({
@@ -9501,8 +9497,8 @@ class EvidenceService {
         reasons: [
           'Python related-test navigation is not supported; use mode="outline" for Python source structure'
         ],
-        filesRead: access2.filesRead,
-        bytesRead: access2.bytesRead,
+        filesRead: access.filesRead,
+        bytesRead: access.bytesRead,
         stats: {
           filesEnumerated: 0,
           filesParsed: 0,
@@ -9512,34 +9508,34 @@ class EvidenceService {
           budgetExhausted: false
         },
         coverage: { navigation: "not-applicable" },
-        scope: navigationScope(access2.cwd, root, document.path, filters),
+        scope: navigationScope(access.cwd, root, document.path, filters),
         redact: input.redact ?? false
       }));
-    const files = await listWorkspaceFiles(access2.cwd, access2.signal, {
+    const files = await listWorkspaceFiles(access.cwd, access.signal, {
       path: root,
       glob: filters.glob,
       exclude: filters.exclude,
       hidden: filters.hidden
     });
-    const allowed = new Set(files.paths.map((file) => resolve21(access2.cwd, file)));
-    const primaryPath = resolve21(access2.cwd, document.path);
+    const allowed = new Set(files.paths.map((file) => resolve21(access.cwd, file)));
+    const primaryPath = resolve21(access.cwd, document.path);
     allowed.add(primaryPath);
     const host = {
-      cwd: access2.cwd,
-      ...access2.signal ? { signal: access2.signal } : {},
-      normalizePath: (file) => workspaceRelativePath(access2.cwd, file),
+      cwd: access.cwd,
+      ...access.signal ? { signal: access.signal } : {},
+      normalizePath: (file) => workspaceRelativePath(access.cwd, file),
       load: async (file, expected) => {
-        const absolutePath = resolve21(access2.cwd, file);
+        const absolutePath = resolve21(access.cwd, file);
         if (!allowed.has(absolutePath))
           throw new SignalGrepError("Navigation source is excluded by current ignore rules");
         if (absolutePath === primaryPath && expected === undefined)
           return document;
-        return expected ? access2.refresh(file, expected) : access2.load(file);
+        return expected ? access.refresh(file, expected) : access.load(file);
       },
-      syntax: (doc) => access2.syntax(doc),
-      releaseSyntax: (doc) => access2.releaseSyntax(doc),
+      syntax: (doc) => access.syntax(doc),
+      releaseSyntax: (doc) => access.releaseSyntax(doc),
       listFiles: async () => files,
-      maxFilesToParse: access2.maxFiles
+      maxFilesToParse: access.maxFiles
     };
     const request = {
       path: document.path,
@@ -9547,7 +9543,7 @@ class EvidenceService {
       ...input.symbol !== undefined ? { symbol: input.symbol } : {}
     };
     const result = input.mode === "imports" ? await navigateImports(host, request) : await findRelatedTests(host, request, {
-      entryPaths: await this.#testEntryPaths(root, files.paths, access2.cwd, filters, access2.signal)
+      entryPaths: await this.#testEntryPaths(root, files.paths, access.cwd, filters, access.signal)
     });
     return this.#analyses.page(this.#analyses.create({
       ...result,
@@ -9561,10 +9557,10 @@ class EvidenceService {
       stats: {
         filesEnumerated: files.paths.length,
         ...result.stats,
-        filesParsed: access2.syntaxParses,
-        cacheHits: access2.syntaxCacheHits
+        filesParsed: access.syntaxParses,
+        cacheHits: access.syntaxCacheHits
       },
-      scope: navigationScope(access2.cwd, root, document.path, filters),
+      scope: navigationScope(access.cwd, root, document.path, filters),
       redact: input.redact ?? false
     }));
   }
@@ -9623,9 +9619,9 @@ async function loadContextLines(match, expectedRevision, cache, signal) {
     if (signal?.aborted)
       throw abortError();
     if (!expectedRevision || expectedRevision.size > MAX_SOURCE_FILE_BYTES) {
-      const unavailable2 = { status: "unavailable" };
-      cache.set(match.absolutePath, unavailable2);
-      return unavailable2;
+      const unavailable = { status: "unavailable" };
+      cache.set(match.absolutePath, unavailable);
+      return unavailable;
     }
     const beforeRevision = await getSourceRevision(match.absolutePath);
     if (!beforeRevision || !sameSourceRevision(expectedRevision, beforeRevision)) {
@@ -9651,9 +9647,9 @@ async function loadContextLines(match, expectedRevision, cache, signal) {
     if (signal?.aborted || error instanceof Error && error.name === "AbortError") {
       throw abortError();
     }
-    const unavailable2 = { status: "unavailable" };
-    cache.set(match.absolutePath, unavailable2);
-    return unavailable2;
+    const unavailable = { status: "unavailable" };
+    cache.set(match.absolutePath, unavailable);
+    return unavailable;
   }
 }
 function matchContextWindows(snapshot, include) {
@@ -9976,17 +9972,17 @@ function redactInPlace(value, seen) {
     return 0;
   seen.add(value);
   if (Array.isArray(value)) {
-    let count2 = 0;
+    let count = 0;
     for (let index = 0;index < value.length; index += 1) {
       const item = value[index];
       if (typeof item === "string") {
         const redacted = redactString(item);
         value[index] = redacted.value;
-        count2 += redacted.count;
+        count += redacted.count;
       } else
-        count2 += redactInPlace(item, seen);
+        count += redactInPlace(item, seen);
     }
-    return count2;
+    return count;
   }
   let count = 0;
   for (const [key, item] of Object.entries(value)) {
@@ -10443,14 +10439,14 @@ class SignalGrepService {
       }
       return this.#summary(snapshot, mode, cwd, signal, offset);
     }
-    const selection2 = cursorPathSelection(input, cwd);
-    const requestedSelectionKey = selection2?.key ?? "all";
+    const selection = cursorPathSelection(input, cwd);
+    const requestedSelectionKey = selection?.key ?? "all";
     if (kind === "matches" && selectionKey !== requestedSelectionKey) {
       throw new CursorError("A match cursor must continue with the same path selection.", "E_CURSOR_OPTIONS_CONFLICT");
     }
     const pageOffset = kind === "summary" ? 0 : offset;
-    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection2);
-    return this.#finalize(snapshot, result, kind === "summary" || selection2 !== undefined);
+    const result = await this.#page(snapshot, pageOffset, "matches", signal, selection);
+    return this.#finalize(snapshot, result, kind === "summary" || selection !== undefined);
   }
   #finalize(snapshot, result, retainSnapshot = false) {
     if (!result.details.cursor && !retainSnapshot && !this.#reusableSummarySnapshots.has(snapshot)) {
@@ -10509,35 +10505,35 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsTex
       }
     };
   }
-  async#page(snapshot, offset, mode, signal, selection2) {
+  async#page(snapshot, offset, mode, signal, selection) {
     if (offset === snapshot.matches.length) {
       throw new CursorError("Cursor is already at the end of the retained snapshot.");
     }
-    const pageOptions = selection2 ? {
-      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection2.labels })),
-      include: (match) => selection2.absolutePaths.has(match.absolutePath)
+    const pageOptions = selection ? {
+      metadataReserveBytes: 1536 + Buffer.byteLength(JSON.stringify({ paths: selection.labels })),
+      include: (match) => selection.absolutePaths.has(match.absolutePath)
     } : {};
     const page = await formatMatchPage(snapshot, offset, signal, pageOptions);
-    if (page.returnedMatches === 0 && selection2) {
+    if (page.returnedMatches === 0 && selection) {
       throw new CursorError("No retained matches exist for the selected paths.");
     }
     const missingPaths = [];
-    if (selection2) {
+    if (selection) {
       const matchedAbsolutePaths = new Set;
       for (const match of snapshot.matches) {
-        if (selection2.absolutePaths.has(match.absolutePath)) {
+        if (selection.absolutePaths.has(match.absolutePath)) {
           matchedAbsolutePaths.add(match.absolutePath);
         }
       }
-      const selectedAbsolutePaths = [...selection2.absolutePaths];
-      for (const [index, label] of selection2.labels.entries()) {
+      const selectedAbsolutePaths = [...selection.absolutePaths];
+      for (const [index, label] of selection.labels.entries()) {
         const absolutePath = selectedAbsolutePaths[index];
         if (absolutePath !== undefined && !matchedAbsolutePaths.has(absolutePath)) {
           missingPaths.push(label);
         }
       }
     }
-    return this.#pageResult(snapshot, offset, mode, page, selection2?.labels, missingPaths, selection2?.key ?? "all");
+    return this.#pageResult(snapshot, offset, mode, page, selection?.labels, missingPaths, selection?.key ?? "all");
   }
   #pageResult(snapshot, offset, mode, page, selectedPaths, selectionMissingPaths = [], selectionKey = "all") {
     if (page.returnedMatches === 0) {
@@ -10547,7 +10543,7 @@ ${summary.body}${omitted}${samples}${sampleOmissions}${modificationTimeBoundsTex
     const firstMatch = page.firstMatchIndex ?? offset;
     const lastMatch = page.lastMatchIndex ?? firstMatch;
     const range = `${firstMatch + 1}-${lastMatch + 1}`;
-    const selection2 = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
+    const selection = selectedPaths ? `; selected ${String(selectedPaths.length)} path(s)` : "";
     const next = cursor ? `
 
 Continue with cursor="${cursor}".
@@ -10572,7 +10568,7 @@ Next request: ${JSON.stringify({ cursor, ...selectedPaths ? { paths: selectedPat
     return {
       text: `${page.body}${rangeNote}${contextNote}${missingSelectionNote}
 
-[Matches ${range} of ${snapshot.totalMatches}${selection2}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
+[Matches ${range} of ${snapshot.totalMatches}${selection}; ${completenessNote(snapshot)}.]${modificationTimeBoundsText(details.scope?.modifiedAfterMs, details.scope?.modifiedBeforeMs)}${next}${sourceVerificationNote(details)}`,
       details: {
         ...details,
         returnedMatches: page.returnedMatches,
@@ -11205,14 +11201,14 @@ async function startSignalGrepMcpServer(options = {}) {
   const host = options.host ?? DEFAULT_MCP_HOST;
   const port = options.port ?? DEFAULT_MCP_PORT;
   try {
-    await new Promise((resolve23, reject) => {
+    await new Promise((resolve, reject) => {
       const onError = (error) => {
         httpServer.off("listening", onListening);
         reject(error);
       };
       const onListening = () => {
         httpServer.off("error", onError);
-        resolve23();
+        resolve();
       };
       httpServer.once("error", onError);
       httpServer.once("listening", onListening);
@@ -11234,8 +11230,8 @@ async function startSignalGrepMcpServer(options = {}) {
     closePromise = (async () => {
       state.closing = true;
       clearInterval(sweepTimer);
-      const stopListening = new Promise((resolve23, reject) => {
-        httpServer.close((error) => error ? reject(error) : resolve23());
+      const stopListening = new Promise((resolve, reject) => {
+        httpServer.close((error) => error ? reject(error) : resolve());
       });
       const initialCleanup = await Promise.allSettled([
         ...[...state.ownedSessions].map((session) => cleanupOwnedSession(state, session)),
